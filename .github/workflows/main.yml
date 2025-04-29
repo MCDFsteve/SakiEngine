@@ -1,0 +1,322 @@
+name: Build & Release
+
+# Trigger on push to master branch or with a tag
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '0.*'
+
+# If previous workflow is still running, we push again, we will cancel the previous workflow
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  Build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Android
+            os: ubuntu-latest
+            artifact_name: release-Android
+            artifact_path: build/app/outputs/apk/release/*.apk
+          - target: Windows
+            os: windows-latest
+            artifact_name: release-Windows
+            artifact_path: build/windows/*.zip
+            arch: x64
+          - target: Linux
+            os: ubuntu-latest
+            arch: amd64
+            artifact_name: release-Linux-amd64
+            artifact_path: build/linux/*amd64.deb
+          - target: iOS
+            os: macos-latest
+            cache_pod_key: ios-pods
+            cache_pod_path: ios/Pods
+            cache_pod_restore_keys_hash_file: ios/Podfile.lock
+            artifact_name: release-iOS
+            artifact_path: build/**/*.ipa
+          - target: macOS
+            os: macos-latest
+            cache_pod_key: macos-pods
+            cache_pod_path: macos/Pods
+            cache_pod_restore_keys_hash_file: macos/Podfile.lock
+            artifact_name: release-macOS
+            artifact_path: sakiengine_*_macOS_Universal.dmg
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    runs-on: ${{ matrix.os }}
+    env:
+      FLUTTER_VERSION: 3.29.3
+    steps:
+      # Checkout branch
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      # Get app version
+      - name: Get app version
+        id: get_version
+        run: |
+          echo "::set-output name=version::$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2)"
+      
+      # Setup Android keystore (for Android)
+      - name: Setup Android keystore
+        if: matrix.target == 'Android'
+        run: |
+          echo "${{ secrets.ENCODED_KEYSTORE }}" | base64 -di > android/app/upload-keystore.jks
+          echo "${{ secrets.KEY_PROPERTIES }}" > android/key.properties
+      
+      # Setup Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+      
+      # Cache CocoaPods (for iOS/macOS)
+      - name: Cache Pod
+        if: matrix.cache_pod_key != null
+        uses: actions/cache@v4
+        with:
+          key: ${{ matrix.cache_pod_key }}
+          path: ${{ matrix.cache_pod_path }}
+          restore-keys: ${{ matrix.cache_pod_key }}-${{ hashFiles(matrix.cache_pod_restore_keys_hash_file) }}
+      
+      # Setup JDK for Android
+      - name: Setup JDK 17 (Android)
+        if: matrix.target == 'Android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: gradle
+
+      # Build Android
+      - name: Build Android
+        if: matrix.target == 'Android'
+        run: |
+          # 下载并安装 mdk-sdk
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          curl -L -o mdk-sdk-android.7z https://sourceforge.net/projects/mdk-sdk/files/nightly/mdk-sdk-android.7z/download
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full
+          7z x mdk-sdk-android.7z -oandroid/app/src/main/jniLibs/arm64-v8a -y
+          
+          # 构建 APK
+          flutter build apk --release --split-per-abi
+          cd build/app/outputs/apk/release
+          mv app-arm64-v8a-release.apk sakiengine-${{ steps.get_version.outputs.version }}-Android-arm64.apk
+          mv app-armeabi-v7a-release.apk sakiengine-${{ steps.get_version.outputs.version }}-Android-arm32.apk
+          mv app-x86_64-release.apk sakiengine-${{ steps.get_version.outputs.version }}-Android-x86_64.apk
+      
+      # Xcode build for iOS/macOS
+      - name: Build Xcode (iOS/macOS)
+        if: matrix.os == 'macos-latest'
+        run: xcodebuild -resolvePackageDependencies -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release
+      
+      # Flutter Pub Get
+      - name: Flutter Pub Get
+        run: |
+          git config --global core.longpaths true
+          flutter pub get
+      
+      # Build iOS .ipa
+      - name: Build iOS
+        if: matrix.target == 'iOS'
+        run: |
+          cd ios
+          pod update
+          cd ..
+          flutter build ios --release --no-codesign
+          sh thin-payload.sh build/ios/iphoneos/*.app
+          cd build
+          mkdir -p Payload
+          mv ios/iphoneos/*.app Payload
+          zip -9 sakiengine_${{ steps.get_version.outputs.version }}_iOS_arm64.ipa -r Payload
+      
+      # Build macOS .dmg
+      - name: Build macOS
+        if: matrix.target == 'macOS'
+        run: |
+          flutter build macos --release
+          cd macos
+          # 设置 CocoaPods 环境为简体中文
+          export LANG=zh_CN.UTF-8
+          export LC_ALL=zh_CN.UTF-8
+          # 配置 CocoaPods 源
+          mkdir -p ~/.cocoapods
+          echo 'source "https://cdn.cocoapods.org/"' > ~/.cocoapods/config
+          # 清理并重新安装 pods
+          rm -rf Pods Podfile.lock
+          pod cache clean --all
+          pod install --repo-update
+          cd ..
+          brew install create-dmg imagemagick
+          chmod +x dmg.sh
+          ./dmg.sh
+          ls -la *.dmg
+      
+      # Build Windows .zip
+      - name: Build Windows
+        if: matrix.target == 'Windows'
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          $arch = "${{ matrix.arch }}"
+          $version = "${{ steps.get_version.outputs.version }}"
+          
+          if ($arch -eq "arm64") {
+            $DestDir = "build\windows\sakiengine_${version}_Windows_arm64"
+            $SrcDir = "build\windows\arm64\runner\Release"
+          } else {
+            $DestDir = "build\windows\sakiengine_${version}_Windows_x64"
+            $SrcDir = "build\windows\x64\runner\Release"
+          }
+          
+          New-Item -Path $DestDir -ItemType Directory -Force
+          Copy-Item -Path "$SrcDir\*" -Destination $DestDir -Recurse -Force
+          Copy-Item -Path "windows\*.dll" -Destination $DestDir -Force
+          Compress-Archive -Path $DestDir -DestinationPath "build\windows\sakiengine_${version}_Windows_x64.zip" -Force
+      
+      # Build Linux .deb
+      - name: Build Linux .deb
+        if: matrix.target == 'Linux'
+        shell: /usr/bin/bash -e {0}
+        run: |
+          # AMD64 build
+          sudo apt-get update -y
+          sudo apt-get install -y mpv libmpv-dev pkg-config clang cmake libgtk-3-dev ninja-build libasound2-dev libass-dev
+          
+          flutter config --enable-linux-desktop
+          flutter build linux --release
+          
+          mkdir -p build/linux/sakiengine-${{ steps.get_version.outputs.version }}-Linux-${{ matrix.arch }}
+          cd build/linux/sakiengine-${{ steps.get_version.outputs.version }}-Linux-${{ matrix.arch }}
+          mkdir -p opt/sakiengine usr/share/applications usr/share/icons/hicolor/512x512/apps
+          cp -r ../x64/release/bundle/* opt/sakiengine
+          mkdir -p DEBIAN
+          chmod 0755 DEBIAN
+          
+          sed -e "s/VERSION_PLACEHOLDER/${{ steps.get_version.outputs.version }}/g" \
+              -e "s/ARCH_PLACEHOLDER/amd64/g" \
+              ../../../assets/linux/DEBIAN/control.template > DEBIAN/control
+          
+          if [ -f ../../../assets/linux/DEBIAN/postinst ]; then
+            cp ../../../assets/linux/DEBIAN/postinst DEBIAN/
+            chmod 0755 DEBIAN/postinst
+          fi
+          if [ -f ../../../assets/linux/DEBIAN/postrm ]; then
+            cp ../../../assets/linux/DEBIAN/postrm DEBIAN/
+            chmod 0755 DEBIAN/postrm
+          fi
+          
+          cp ../../../assets/linux/io.github.MCDFsteve.sakiengine.desktop usr/share/applications
+          cp ../../../assets/images/logo512.png usr/share/icons/hicolor/512x512/apps/io.github.MCDFsteve.sakiengine.png
+          cd ..
+          dpkg-deb --build --root-owner-group sakiengine-${{ steps.get_version.outputs.version }}-Linux-${{ matrix.arch }}
+      
+      # Upload Artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+
+  Publish:
+    name: Publish
+    needs: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Make tmp dir
+        run: mkdir /tmp/artifacts
+      
+      - name: Download all Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+      
+      - name: List all Artifacts
+        run: ls -R /tmp/artifacts
+      
+      - name: Get commit message
+        id: commit_message
+        run: |
+          echo "::set-output name=message::$(git log -1 --pretty=%B)"
+      
+      - name: Get commit range
+        id: commit_range
+        run: |
+          # 获取最近10次提交的标题，排除自动版本更新的提交
+          echo "::set-output name=range::$(git log --pretty=format:'- %s' -n 10 | grep -v 'chore: bump version')"
+      
+      - name: Upload to release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.Build.outputs.version }}
+          name: Release v${{ needs.Build.outputs.version }}
+          body: |
+            ## 版本 v${{ needs.Build.outputs.version }}
+            
+            ### 更新内容
+            ${{ steps.commit_message.outputs.message }}
+            
+            ### 构建信息
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 提交: ${{ github.sha }}
+            - 分支: ${{ github.ref_name }}
+          allowUpdates: true
+          artifacts: /tmp/artifacts/release-Android/*.apk,/tmp/artifacts/release-iOS/*.ipa,/tmp/artifacts/release-macOS/*.dmg,/tmp/artifacts/release-Windows/*.zip,/tmp/artifacts/release-Linux-amd64/*.deb
+          artifactErrorsFailBuild: true
+          replacesArtifacts: true
+
+  # Add new job for version update
+  UpdateVersion:
+    needs: [Build, Publish]
+    if: github.ref == 'refs/heads/main' && success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          
+      - name: Update version
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Get latest code
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          git checkout -B main refs/remotes/origin/main
+          
+          # Read and update version
+          CURRENT_VERSION=$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2)
+          echo "Current version: $CURRENT_VERSION"
+          
+          MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+          MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+          
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          echo "New version: $NEW_VERSION"
+          
+          # Update pubspec.yaml
+          sed -i "s/^version: .*$/version: $NEW_VERSION/" pubspec.yaml
+          
+          # Commit and push changes
+          git add pubspec.yaml
+          git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
+          git push origin refs/heads/main
