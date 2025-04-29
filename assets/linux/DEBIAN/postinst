@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+ln -sf /opt/fsakiengine/fsakiengine /usr/bin/fsakiengine
+chmod +x /usr/bin/fsakiengine
+update-mime-database /usr/share/mime || true
+update-desktop-database /usr/share/applications || true
+exit 0

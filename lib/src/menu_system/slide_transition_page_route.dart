@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart'; // Keep import for .ms extension
 
 class SlideTransitionPageRoute<T> extends PageRouteBuilder<T> {
   final Widget page;
@@ -7,51 +8,27 @@ class SlideTransitionPageRoute<T> extends PageRouteBuilder<T> {
       : super(
           pageBuilder: (context, animation, secondaryAnimation) => page,
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            // Curves for animations
-            const Curve enteringCurve = Curves.easeInOut; 
-            const Curve exitingCurve = Curves.easeInOut;
             
-            // --- Entering Page Animation (0ms -> 150ms) ---
-            // Use Interval(0.0, 0.75) to map the first 150ms of the total duration (200ms * 0.75 = 150ms)
-            final CurvedAnimation enteringAnimation = CurvedAnimation(
-              parent: animation, 
-              curve: const Interval(0.0, 0.75, curve: enteringCurve),
+            // --- 设置页面动画 (Fade Transition, driven by animation) ---
+            // Simplify the top page animation for debugging pop transition
+            final Widget settingsPageAnimated = FadeTransition(
+                opacity: animation, // Fades in on push (0->1), fades out on pop (1->0)
+                child: child,
             );
-            
-            // Entering Fade (0ms -> 150ms)
-            final Animation<double> enteringFade = enteringAnimation;
-            
-            // Entering Slide (0ms -> 100ms)
-            const Offset slideFrom = Offset(1.0, 0.0);
-            const Offset slideTo = Offset.zero;
-            final Tween<Offset> enteringTween = Tween(begin: slideFrom, end: slideTo);
-            final Animation<Offset> enteringOffset = enteringTween.animate(enteringAnimation);
 
-            // --- Exiting Page Animation (0ms -> 200ms) ---
-            // Use secondaryAnimation directly, it spans the full duration
-            final CurvedAnimation exitingAnimation = CurvedAnimation(
-              parent: secondaryAnimation, 
-              curve: exitingCurve,
+            // --- 主菜单页面动画 (Slide Transition, driven by secondaryAnimation) ---
+            final Tween<Offset> mainMenuTween = Tween(begin: Offset.zero, end: const Offset(-0.3, 0.0));
+            final Animation<Offset> mainMenuOffset = mainMenuTween.animate(
+              CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeOut)
             );
-            
-            // Exiting Slide (0ms -> 200ms)
-            const Offset exitTo = Offset(-0.3, 0.0); // Slight left slide
-            final Tween<Offset> exitingTween = Tween(begin: Offset.zero, end: exitTo);
-            final Animation<Offset> exitingOffset = exitingTween.animate(exitingAnimation);
-            
-            // Combine transitions
-            return FadeTransition(
-              opacity: enteringFade, // Entering page fade
-              child: SlideTransition(
-                position: enteringOffset, // Entering page slide
-                child: SlideTransition( 
-                   position: exitingOffset, // Exiting page slide
-                   child: child,
-                ),
-              ),
+
+            // Apply secondary animation (main menu slide) to the structure
+            return SlideTransition(
+              position: mainMenuOffset, // Controls main menu (underneath) slide
+              child: settingsPageAnimated, // Apply settings page fade
             );
           },
-          // Set total duration to the longer one (200ms)
+          // Keep user set duration
           transitionDuration: const Duration(milliseconds: 300),
         );
 } 
