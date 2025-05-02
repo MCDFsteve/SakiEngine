@@ -1,0 +1,44 @@
+# SakiEngine 姿势定义文件
+#
+# --- 参数说明 ---
+# 格式: 姿势名称: scale=<缩放> xcenter=<水平位置> ycenter=<垂直位置> anchor=<锚点>
+#
+# scale: 缩放系数。
+#   scale=0:  特殊值，表示进行"边缘贴合 (Aspect Fit)"缩放，确保立绘完整显示在屏幕内。
+#   scale>0:  表示立绘最终渲染高度为 [屏幕高度 * scale] 值。与源文件分辨率无关。
+#
+# xcenter / ycenter: 锚点在屏幕上的归一化位置 (0.0 到 1.0)。
+#   xcenter=0.0 (最左), xcenter=0.5 (水平居中), xcenter=1.0 (最右)
+#   ycenter=0.0 (最顶), ycenter=0.5 (垂直居中), ycenter=1.0 (最底)
+#
+# anchor: 指定用立绘自身的哪个点去对齐屏幕上的 (xcenter, ycenter) 坐标点。
+#   常用锚点: center(中心), bottomCenter(底部中心), topCenter(顶部中心),
+#             centerLeft(左边缘中心), centerRight(右边缘中心), 等等。
+#
+# --- 重要：xcenter 与 anchor 的组合效果 ---
+#   要实现视觉上的"左/中/右"定位，需要合理组合 xcenter 和 anchor：
+#   * 视觉居中: 通常设置 xcenter=0.5, 并使用 anchor=center/bottomCenter/topCenter。
+#   * 视觉靠左: 通常需要将目标点 xcenter 设置得偏小 (如 0.25)，并可能配合 anchor=centerRight。
+#   * 视觉靠右: 通常需要将目标点 xcenter 设置得偏大 (如 0.75)，并可能配合 anchor=centerLeft。
+#   * 特别注意: 若 xcenter=0.5 (屏幕中心)，使用 anchor=centerLeft 会把立绘的左边缘放在屏幕中心，导致立绘整体偏右！反之 anchor=centerRight 会导致立绘整体偏左。
+#
+# --- 姿势定义示例 ---
+
+# 【常用】默认底部对齐姿势 (边缘贴合)
+center_default: scale=0 xcenter=0.5 ycenter=1.0 anchor=bottomCenter
+left_default:   scale=0 xcenter=0.15 ycenter=1.0 anchor=bottomCenter # 技术性左侧(锚点在屏幕15%处)
+right_default:  scale=0 xcenter=0.85 ycenter=1.0 anchor=bottomCenter # 技术性右侧(锚点在屏幕85%处)
+
+# 【常用】符合直觉的"视觉"定位 (边缘贴合)
+visual_left:   scale=0 xcenter=0.25 ycenter=1.0 anchor=bottomCenter # 立绘大致在屏幕左半边
+visual_right:  scale=0 xcenter=0.75 ycenter=1.0 anchor=bottomCenter # 立绘大致在屏幕右半边
+visual_center: scale=0 xcenter=0.5  ycenter=1.0 anchor=bottomCenter # 等同 center_default
+
+# 【特殊】稍微放大并居中靠上的姿势 (固定缩放，高度为屏幕80%)
+closeup_center: scale=0.8 xcenter=0.5 ycenter=0.8 anchor=center # 用立绘中心点对齐屏幕80%高度处
+
+# 【特殊】极限放大测试 (固定缩放，高度为屏幕3倍)
+# test_large_center: scale=3.0 xcenter=0.5 ycenter=0.5 anchor=center
+
+###实际使用区域
+pose: scale=1.5 ycenter=0.8 anchor=center

@@ -1,0 +1,44 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "SakiPose",
+    "scopeName": "source.skp",
+    "patterns": [
+        { "include": "#comment" },
+        { "include": "#pose_name" },
+        { "include": "#colon" },
+        { "include": "#parameter_key" },
+        { "include": "#assignment_operator" },
+        { "include": "#numeric_value" },
+        { "include": "#anchor_value" }
+    ],
+    "repository": {
+        "comment": {
+            "name": "comment.line.number-sign.skp",
+            "match": "#.*$"
+        },
+        "pose_name": {
+            "name": "entity.name.function.pose.skp",
+            "match": "^\\s*([\\w_]+)(?=\\s*:)"
+        },
+        "colon": {
+            "name": "punctuation.separator.colon.skp",
+            "match": ":"
+        },
+        "parameter_key": {
+            "name": "variable.parameter.skp",
+            "match": "\\b(scale|xcenter|ycenter|anchor)(?=\\s*=)"
+        },
+        "assignment_operator": {
+            "name": "keyword.operator.assignment.skp",
+            "match": "="
+        },
+        "numeric_value": {
+            "name": "constant.numeric.skp",
+            "match": "(?<==)\\s*\\d*\\.?\\d+\\b"
+        },
+        "anchor_value": {
+            "name": "constant.language.anchor.skp",
+            "match": "(?<=anchor\\s*=)\\s*[a-zA-Z]+\\b"
+        }
+    }
+}

@@ -1,0 +1,40 @@
+{
+    "scopeName": "source.skn",
+    "patterns": [
+      { "include": "#comment" },
+      { "include": "#character_line" }
+    ],
+    "repository": {
+      "comment": {
+        "match": "(#).*$",
+        "name": "comment.line.number-sign.skn"
+      },
+      "character_line": {
+        "patterns": [
+          {
+            "match": "^([^:]*?)\\s*(:)",
+            "captures": {
+              "1": { "name": "entity.name.type.character.skn" },
+              "2": { "name": "punctuation.separator.colon.skn" }
+            }
+          },
+          {
+            "match": "\\s*(\")([^\"]*)(\")\\s*(:)",
+            "captures": {
+              "1": { "name": "punctuation.definition.string.begin.skn" },
+              "2": { "name": "string.quoted.double.skn" },
+              "3": { "name": "punctuation.definition.string.end.skn" },
+              "4": { "name": "punctuation.separator.colon.skn" }
+            }
+          },
+          {
+            "match": "\\s*([^#\\n]*?)(\\s*(#.*))?$",
+            "captures": {
+              "1": { "name": "variable.parameter.skn" },
+              "3": { "name": "comment.line.number-sign.skn" }
+            }
+          }
+        ]
+      }
+    }
+  } 

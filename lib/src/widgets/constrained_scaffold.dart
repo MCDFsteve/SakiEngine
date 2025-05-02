@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:math'; // Import math for min
+// Import math for min
 import '../../main.dart'; // To access kIsDesktopOS
 
 /// A Scaffold that automatically constrains its body to a 16:9 aspect ratio

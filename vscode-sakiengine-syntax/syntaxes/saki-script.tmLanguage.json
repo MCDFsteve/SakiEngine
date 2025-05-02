@@ -1,0 +1,99 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "SakiScript",
+    "scopeName": "source.skr",
+    "patterns": [
+      {
+        "include": "#comments"
+      },
+      {
+        "include": "#keywords"
+      },
+      {
+        "include": "#strings"
+      },
+      {
+        "include": "#variables"
+      },
+      {
+        "include": "#labels"
+      },
+      {
+         "include": "#characters"
+      },
+      {
+         "include": "#menu_choices"
+      }
+    ],
+    "repository": {
+      "comments": {
+        "patterns": [
+          {
+            "name": "comment.line.number-sign.skr",
+            "match": "#.*$"
+          }
+        ]
+      },
+      "keywords": {
+        "patterns": [
+          {
+            "name": "keyword.control.skr",
+            "match": "\\b(label|scene|show|at|menu|endmenu|jump|if|else|endif|return)\\b"
+          }
+        ]
+      },
+      "strings": {
+        "patterns": [
+          {
+            "name": "string.quoted.double.skr",
+            "begin": "\"",
+            "end": "\"",
+            "patterns": [
+              {
+                "name": "constant.character.escape.skr",
+                "match": "\\\\."
+              }
+            ]
+          }
+        ]
+      },
+      "variables": {
+         "patterns": [
+           {
+             "name": "variable.other.skr",
+             "match": "\\$\\w+"
+           }
+         ]
+      },
+      "labels": {
+        "patterns": [
+            {
+                "name": "entity.name.function.label.skr",
+                "match": "^\\s*label\\s+([\\w_]+):"
+            }
+        ]
+      },
+      "characters": {
+          "patterns": [
+              {
+                  "comment": "Match character name before a quote",
+                  "name": "entity.name.type.character.skr",
+                   "match": "^\\s*([\\w_]+)(?=\\s*\\\")"
+              },
+              {
+                  "comment": "Match character name before 'angry', 'happy' etc.",
+                  "name": "entity.name.type.character.skr",
+                   "match": "^\\s*([\\w_]+)(?=\\s+\\w+\\s*\\\")"
+              }
+          ]
+      },
+      "menu_choices": {
+          "patterns": [
+              {
+                  "name": "string.quoted.double.menu-choice.skr",
+                  "match": "^\\s*(\".*?\")"
+              }
+          ]
+      }
+    }
+  }

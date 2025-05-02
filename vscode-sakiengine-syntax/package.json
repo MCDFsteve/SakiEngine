@@ -1,0 +1,52 @@
+{
+    "name": "sakiengine-syntax",
+    "displayName": "SakiEngine Script & Pose Syntax",
+    "description": "Syntax highlighting for SakiEngine .skr scripts, .skp pose definitions, and .skn character definitions.",
+    "version": "0.0.2",
+    "publisher": "saki-dev",
+    "engines": {
+      "vscode": "^1.80.0"
+    },
+    "categories": [
+      "Programming Languages"
+    ],
+    "contributes": {
+      "languages": [
+        {
+          "id": "saki-script",
+          "aliases": ["SakiScript", "sakiscript"],
+          "extensions": [".skr"],
+          "configuration": "./language-configuration.json"
+        },
+        {
+          "id": "saki-pose",
+          "aliases": ["Saki Pose Definition", "sakipose"],
+          "extensions": [".skp"],
+          "configuration": "./language-configuration.json"
+        },
+        {
+          "id": "saki-character",
+          "aliases": ["Saki Character Definition", "sakicharacter"],
+          "extensions": [".skn"],
+          "configuration": "./language-configuration.json"
+        }
+      ],
+      "grammars": [
+        {
+          "language": "saki-script",
+          "scopeName": "source.skr",
+          "path": "./syntaxes/saki-script.tmLanguage.json"
+        },
+        {
+          "language": "saki-pose",
+          "scopeName": "source.skp",
+          "path": "./syntaxes/saki-pose.tmLanguage.json"
+        },
+        {
+          "language": "saki-character",
+          "scopeName": "source.skn",
+          "path": "./syntaxes/saki-character.tmLanguage.json"
+        }
+      ]
+    }
+  }

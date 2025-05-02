@@ -5,6 +5,7 @@ import 'dart:io'; // For exit()
 import 'settings_menu.dart';
 import 'slide_transition_page_route.dart';
 import 'ui/main_menu_screen.dart';
+import '../game/visual_novel_scene.dart'; // Import the visual novel screen
 
 class MainMenu extends StatelessWidget {
   const MainMenu({super.key});
@@ -12,8 +13,10 @@ class MainMenu extends StatelessWidget {
   // --- Logic --- 
 
   void _handleStartNewGame(BuildContext context) {
-    // TODO: Implement Start New Game Logic
-    print('Start New Game logic executed');
+    // Navigate to the Visual Novel Screen
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const VisualNovelScreen()),
+    );
   }
 
   void _handleContinueGame(BuildContext context) {

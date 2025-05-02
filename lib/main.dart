@@ -20,6 +20,9 @@ Future<void> main() async {
   // Initialize window manager only on desktop OS
   if (kIsDesktopOS) {
     await windowManager.ensureInitialized();
+    
+    // Disable maximization
+    await windowManager.setMaximizable(false);
   }
 
   final appWindowState = AppWindowState();

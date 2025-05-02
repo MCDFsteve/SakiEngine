@@ -1,0 +1,22 @@
+label start:
+scene bg school 
+show yk happy at pose
+yk "欢迎来到SakiEngine！"
+
+menu:
+  "给她巧克力" -> after_choice1
+  "保持沉默" -> after_choice2
+endmenu
+
+label after_choice1:
+yk "呀，谢谢！"
+"嘿嘿，喜欢吗？"
+"那我以后每天都给你带巧克力哦！"
+yk "嗯嗯！"
+return
+
+label after_choice2:
+yk sad "……你怎么不说话？"
+yk "不理你了。"
+yk happy "哼，生气了。"
+return 

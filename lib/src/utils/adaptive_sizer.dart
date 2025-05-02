@@ -1,6 +1,6 @@
 import 'dart:ui';
-import 'dart:math';
 import 'package:flutter/foundation.dart'; // Import ChangeNotifier
+import 'dart:math'; // Import math library for min function
 
 /// Calculates sizes based on the largest 16:9 rectangle that fits within the actual screen size.
 /// Notifies listeners when the fitted size changes.
@@ -74,15 +74,24 @@ extension AdaptiveSizerExt on num {
   /// e.g., 0.1.sw is 10% of the fitted 16:9 width.
   double get sw => this * AdaptiveSizer.instance.fittedWidth;
 
-  /// Calculates a font size scaled relative to the design size, based ONLY on height ratio for testing.
+  /// Calculates a font size scaled relative to the design size,
+  /// using the minimum of the width and height scaling factors for better adaptability.
   double get sp {
+    final double fittedW = AdaptiveSizer.instance.fittedWidth;
     final double fittedH = AdaptiveSizer.instance.fittedHeight;
+    final double designW = AdaptiveSizer.instance.designSize.width;
     final double designH = AdaptiveSizer.instance.designSize.height;
 
     // Prevent division by zero
-    if (designH <= 0) return toDouble();
+    if (designW <= 0 || designH <= 0) return toDouble();
 
-    final double scaleFactor = fittedH / designH;
+    // Calculate both width and height scale factors
+    final double scaleW = fittedW / designW;
+    final double scaleH = fittedH / designH;
+
+    // Use the smaller scale factor to ensure text fits well in both dimensions
+    final double scaleFactor = min(scaleW, scaleH);
+
     return this * scaleFactor;
   }
 } 

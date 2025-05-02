@@ -69,7 +69,7 @@ class MainMenuScreen extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    MenuButton(text: '新航迹', onPressed: onStartNewGame),
+                    MenuButton(text: '新游戏', onPressed: onStartNewGame),
                     SizedBox(height: 0.015.sh),
                     MenuButton(text: '继续游戏', onPressed: onContinueGame),
                     SizedBox(height: 0.015.sh),
