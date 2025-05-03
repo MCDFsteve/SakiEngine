@@ -1,3 +1,4 @@
+import 'dart:async'; // Keep for Completer
 import 'dart:math'; // Import math for max/min
 
 import 'package:flame/game.dart';
@@ -8,13 +9,15 @@ import 'package:flutter/services.dart' show rootBundle; // Import rootBundle
 import 'package:flame/events.dart'; // Import events for TapCallbacks
 import '../utils/adaptive_sizer.dart'; // Import the sizer extension
 import '../widgets/constrained_scaffold.dart';
-import 'package:provider/provider.dart'; // Import Provider for context.watch
+// import 'package:provider/provider.dart'; // REMOVE - Not needed directly in game
 import 'background_manager.dart'; // Keep import for findFirstComponentOfType
 import 'character_manager.dart'; // <<< RE-ADD missing import
-import 'dialogue_manager.dart'; // Import DialogueManager
-import 'indicator_component.dart'; // Import IndicatorComponent
+// import 'dialogue_manager.dart'; // <<< REMOVE DialogueManager import
+// import 'indicator_component.dart'; // <<< REMOVE IndicatorComponent import
 import '../widgets/menu_view.dart'; // Import MenuView
-// REMOVE: import 'menu_manager.dart';
+import '../state/dialogue_state.dart'; // <<< ADD DialogueState import
+import 'package:provider/provider.dart'; // <<< ADD Provider import for Overlay
+import '../widgets/dialogue_overlay.dart'; // <<< ADD DialogueOverlayWidget import
 
 // --- Data class for Menu Items (moved here or keep separate?) ---
 class MenuItem {
@@ -72,6 +75,7 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
   List<String> _scriptLines = [];
   int _currentLine = 0;
   bool _executing = false; // Flag to prevent concurrent execution
+  Completer<void>? _dialogueCompleter; // <<< ADD Completer for dialogue sync
 
   // Simple variable store (replace with a more robust system later)
   final Map<String, dynamic> _variables = {};
@@ -92,8 +96,7 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
   // REMOVED: SpriteComponent? _backgroundComponent;
   // REMOVED: final Map<String, ({SpriteComponent component, String poseName})> _characterComponents = {};
   late final CharacterManager characterManager; // <<< ADD CharacterManager instance
-  late final DialogueManager dialogueManager; // <<< ADD DialogueManager instance
-  // REMOVED: late final MenuManager menuManager;
+  // REMOVE: late final MenuManager menuManager;
 
   // Pose definitions (Keep here, passed to CharacterManager)
   final Map<String, PoseDefinition> _poses = {};
@@ -130,8 +133,13 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
   // <<< ADD State to track current character poses >>>
   final Map<String, String> _characterCurrentPose = {};
 
+  // <<< ADD Dialogue State Notifier >>>
+  late final DialogueStateNotifier dialogueStateNotifier;
+
   // <<< ADD Constructor to accept callback >>>
-  VisualNovelGame({this.onReturnRequested});
+  VisualNovelGame({this.onReturnRequested}) {
+    dialogueStateNotifier = DialogueStateNotifier(); // Initialize notifier
+  }
 
   @override
   Future<void> onLoad() async {
@@ -153,11 +161,6 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
     );
     add(characterManager);
     // <<< END CharacterManager initialization >>>
-
-    // <<< INITIALIZE and ADD DialogueManager >>>
-    dialogueManager = DialogueManager();
-    add(dialogueManager);
-    // <<< END DialogueManager initialization >>>
 
     await _loadScript('assets/scripts/start.skr'); // Load script LAST
 
@@ -323,7 +326,8 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
           _executing = true;
           _variables.clear(); // Clear variables at start
           _lastIfConditionResult = null;
-          dialogueManager.dismissDialogue(); // Ensure no leftover dialogue from previous runs
+          // Ensure dialogue overlay is hidden initially
+          dialogueStateNotifier.clearAndHideDialogue(); 
           _hideMenuOverlay(); // Ensure menu overlay is hidden initially
           _executeNextCommandLoop(); // Start the loop
       }
@@ -500,14 +504,35 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
              );
           }
           
-          await dialogueManager.showDialogue(displayName, dialogue);
-          print("--- Dialogue dismissed, resuming execution ---");
-          _executing = true; 
+          // <<< UPDATE Dialogue State and wait for acknowledgment >>>
+          _dialogueCompleter = Completer<void>();
+          dialogueStateNotifier.showDialogue(displayName, dialogue);
+          await _dialogueCompleter!.future; // Wait here
+          _dialogueCompleter = null; // Reset completer after acknowledged
+          print("--- Dialogue acknowledged, resuming execution ---"); // Changed print msg
+          // Execution continues automatically after await
 
       } else {
            print('  -> Error parsing say command (Regex failed or wrong group count): $line');
-           _executing = false; 
+           _executing = false; // Stop execution on error
       }
+  }
+
+  // --- NEW: Method called by Overlay to acknowledge dialogue --- 
+  void acknowledgeDialogue() {
+    if (_dialogueCompleter != null && !_dialogueCompleter!.isCompleted) {
+      print("VisualNovelGame: Dialogue acknowledged by UI.");
+      _dialogueCompleter!.complete();
+    } else {
+      print("VisualNovelGame: acknowledgeDialogue called but no active completer.");
+      // If no completer, maybe advance script anyway if dialogue is visible?
+      // Or maybe this indicates a logic error.
+      // For now, just log it.
+      if (dialogueStateNotifier.state.isVisible && _executing) {
+         print("VisualNovelGame: Warning - No completer, but dialogue visible and executing. Force resuming (experimental). ");
+         // This might break things if called unexpectedly
+      }
+    }
   }
 
   // --- REWRITTEN Menu Handlers ---
@@ -544,7 +569,7 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
       }
   }
 
-  // --- MODIFIED _handleMenuEnd - Remove recursive call ---
+  // --- MODIFIED _handleMenuEnd - Hide Dialogue --- 
   void _handleMenuEnd(String line) async {
       print('  -> Menu End: Preparing to show menu overlay.');
       if (_activeMenuItems.isEmpty) {
@@ -552,6 +577,7 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
           return; // Loop will auto-increment past endmenu
       }
 
+      dialogueStateNotifier.hideDialogue(); // <<< HIDE dialogue before showing menu >>>
       isMenuVisible = true;
       overlays.add('MenuOverlay');
       _executing = false; // PAUSE script execution
@@ -560,7 +586,7 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
       // Wait for the overlay to call selectMenuOption which will resume execution
   }
 
-  // --- MODIFIED selectMenuOption - Handles resume ---
+  // --- MODIFIED selectMenuOption - Show Dialogue --- 
   void selectMenuOption(int targetLineIndex) {
       print("VisualNovelGame: Menu option selected! Target line: $targetLineIndex");
       if (!isMenuVisible) {
@@ -569,6 +595,11 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
       }
       
       _hideMenuOverlay(); // Hide the menu
+      dialogueStateNotifier.showDialogue( // <<< SHOW dialogue after hiding menu
+         dialogueStateNotifier.state.character, // Reshow previous character/dialogue
+         dialogueStateNotifier.state.dialogue // Or clear it? Let's reshow for now.
+      );
+      // Note: showDialogue here doesn't wait for acknowledgment.
 
       if (targetLineIndex >= 0) {
          _currentLine = targetLineIndex; // Set jump target
@@ -771,32 +802,6 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
       // If callback is null, it just stops execution as before.
   }
 
-  // --- MODIFIED onTapUp - Global Tap Handling ---
-  @override
-  void onTapUp(TapUpEvent event) {
-    super.onTapUp(event);
-    print("VisualNovelGame: Global onTapUp detected.");
-
-    // Important: Check dialogue visibility FIRST. 
-    // If dialogue is visible, tap should *only* advance dialogue.
-    if (dialogueManager.isDialogueVisible) {
-      print("  -> Dialogue is visible. Dismissing dialogue.");
-      dialogueManager.dismissDialogue();
-      // Note: dismissDialogue() completes the future, which resumes execution
-      // in the _handleSay method if it was awaiting.
-      return; // Don't process further if dialogue was dismissed.
-    }
-
-    // If dialogue is NOT visible, check for other potential tap targets.
-    // Currently, none defined, but could be added later (e.g., interactable elements)
-    print("  -> Dialogue not visible. No action defined for this tap.");
-
-    // REMOVED the old incorrect logic:
-    /*
-    print("VisualNovelGame onTapUp - No action defined for this tap.");
-    */
-  }
-
   // --- MODIFIED onGameResize (No changes needed, CharacterManager handles itself) ---
   @override
   void onGameResize(Vector2 size) {
@@ -804,6 +809,33 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
     print("VisualNovelGame onGameResize called with: $size");
     // Managers handle their own resize via Component lifecycle
   }
+
+  // <<< ADD dispose method for Notifier >>>
+  @override
+  void onRemove() {
+    dialogueStateNotifier.dispose();
+    super.onRemove();
+  }
+
+  // --- ADD onTapUp BACK - Global Tap Handling for Dialogue --- 
+  @override
+  void onTapUp(TapUpEvent event) {
+    super.onTapUp(event);
+    // print("VisualNovelGame: Global onTapUp detected."); // Optional debug log
+
+    // If dialogue is visible via the overlay, acknowledge it.
+    if (dialogueStateNotifier.state.isVisible) {
+      print("  -> Dialogue Overlay is visible. Acknowledging dialogue.");
+      acknowledgeDialogue(); // Call the existing acknowledge method
+      // We don't need to return here, as acknowledgeDialogue only completes the completer.
+      // Further game logic (if any based on tap outside dialogue) could potentially run,
+      // but currently, taps only matter when dialogue is visible.
+    } else {
+      // Optional: Handle taps when dialogue is *not* visible, if needed later.
+      // print("  -> Dialogue Overlay not visible. No action defined for this tap.");
+    }
+  }
+  // <<< END onTapUp >>>
 
 }
 
@@ -825,9 +857,8 @@ class VisualNovelScreen extends StatelessWidget {
         ), 
         overlayBuilderMap: {
           'MenuOverlay': (context, game) {
-            // <<< Use the new MenuView widget >>>
+            // Use the new MenuView widget
              if (!game.isMenuVisible || game._activeMenuItems.isEmpty) {
-               // Avoid building if not visible or no items
                return const SizedBox.shrink(); 
              }
              print("Building MenuOverlay with MenuView. Items count: ${game._activeMenuItems.length}");
@@ -835,33 +866,22 @@ class VisualNovelScreen extends StatelessWidget {
               menuItems: game._activeMenuItems,
               onOptionSelected: game.selectMenuOption,
             );
-            // <<< End MenuView usage >>>
-            
-            // REMOVED Temporary builder:
-            /*
-            print("Building MenuOverlay. Items count: ${game._activeMenuItems.length}"); 
-            return Center(
-               child: Container(
-                 padding: const EdgeInsets.all(20),
-                 color: Colors.black.withOpacity(0.7),
-                 child: Column(
-                   mainAxisSize: MainAxisSize.min,
-                   children: game._activeMenuItems.map((item) {
-                     print("  Mapping menu item: ${item.text} -> ${item.targetLineIndex}");
-                     return ElevatedButton(
-                       onPressed: () {
-                         print("  Button pressed for item: ${item.text}");
-                         game.selectMenuOption(item.targetLineIndex);
-                       },
-                       child: Text(item.text),
-                     );
-                   }).toList(),
-                 ),
-               ),
+          },
+          // <<< Entry for Dialogue Overlay >>>
+          'DialogueOverlay': (context, game) {
+             print("Building DialogueOverlay...");
+            // Provide the DialogueStateNotifier to the overlay widget
+            return ChangeNotifierProvider.value(
+              value: game.dialogueStateNotifier,
+              // Provide game reference for acknowledge callback
+              child: Provider.value( 
+                  value: game, 
+                  child: const DialogueOverlayWidget()
+              ),
             );
-            */
           },
         },
+        initialActiveOverlays: const ['DialogueOverlay'],
       ),
     );
   }
