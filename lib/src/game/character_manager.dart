@@ -1,53 +1,59 @@
-import 'dart:math'; // Import math for max/min
+import 'dart:math'; // Import math for min
 
 import 'package:flame/components.dart';
-import 'package:flame/game.dart'; 
-import 'package:flutter/material.dart'; 
-import 'package:flame/sprite.dart';
+import 'package:flame/game.dart';
+import 'package:flutter/material.dart'; // For Duration
+import 'package:flame/sprite.dart'; // Keep for Sprite loading
 
-// Import necessary classes from visual_novel_scene.dart
-// It's better if these definitions are moved to separate files too, but for now:
+// Import the new DissolvingSprite component
+import 'dissolving_sprite.dart';
+// Import PoseDefinition and CharacterDefinition
 import 'visual_novel_scene.dart' show PoseDefinition, CharacterDefinition;
 
-// A component to manage character sprites (立绘)
+// A component to manage character sprites (立绘) with dissolve effects
 class CharacterManager extends Component with HasGameReference<FlameGame> {
-  // Store component and the pose name used to create it
-  final Map<String, ({SpriteComponent component, String poseName})> _characterComponents = {};
+  // Store DissolvingSprite component and the pose name
+  final Map<String, ({DissolvingSprite component, String poseName})> _characterComponents = {};
 
-  // Pose and Character definitions loaded from the main game
+  // Definitions loaded from the main game
   final Map<String, PoseDefinition> poses;
   final Map<String, CharacterDefinition> characters;
-  final PoseDefinition defaultPose; // Pass the default pose
+  final PoseDefinition defaultPose;
+
+  // Configuration for the effects
+  final Duration initialFadeInDuration; // Duration for the first appearance
+  final Duration dissolveDuration;      // Duration for transitions
 
   CharacterManager({
     required this.poses,
     required this.characters,
     required this.defaultPose,
+    // Set separate default durations
+    this.initialFadeInDuration = const Duration(milliseconds: 500),
+    this.dissolveDuration = const Duration(milliseconds: 150), 
   });
 
-  @override
-  Future<void> onLoad() async {
-    super.onLoad();
-  }
+  // No onLoad needed here unless CharacterManager needs specific setup
 
   Future<void> showCharacter({
     required String characterAlias,
     String expression = 'default',
     String poseName = 'center_default',
   }) async {
-    print('CharacterManager: Showing $characterAlias ($expression) at $poseName');
+    print('CharacterManager: Request to show $characterAlias ($expression) at $poseName');
     final characterDef = characters[characterAlias];
     if (characterDef == null) {
         print('  -> Error: Unknown character alias "$characterAlias"');
         return;
     }
     final assetId = characterDef.assetId;
-    final pose = poses[poseName] ?? defaultPose;
+    final targetPose = poses[poseName] ?? defaultPose;
     if (!poses.containsKey(poseName)) {
-        print("    Warning: Pose '$poseName' not found. Using default pose: $defaultPose");
+        print("    Warning: Pose '$poseName' not found. Using default pose.");
     }
-    print("    Using PoseDefinition: ${pose.toString()}");
+    print("    Using PoseDefinition: (${targetPose.toString()})");
 
+    // --- Sprite Loading Logic (same as before) ---
     Sprite? loadedSprite;
     String? loadedFileName;
     final baseFileName = '$assetId-$expression';
@@ -55,14 +61,13 @@ class CharacterManager extends Component with HasGameReference<FlameGame> {
 
     for (final ext in extensionsToTry) {
       final potentialFileName = '$baseFileName$ext';
-      // Path relative to assets/images/
-      final imagePath = 'characters/$potentialFileName'; 
+      final imagePath = 'characters/$potentialFileName';
       try {
         print("    Attempting to load character: assets/images/$imagePath");
         loadedSprite = await game.loadSprite(imagePath);
         loadedFileName = potentialFileName;
         print("      Success! Loaded '$loadedFileName'.");
-        break; 
+        break;
       } catch (e) {
          print("      'assets/images/$imagePath' not found or failed to load. Trying next...");
       }
@@ -72,101 +77,70 @@ class CharacterManager extends Component with HasGameReference<FlameGame> {
        print('    Error: Could not load character asset \'$baseFileName\' with any supported extension (${extensionsToTry.join(', ')}).');
        return;
     }
+    // --- End Sprite Loading ---
 
+
+    // --- Component Creation / Update Logic ---
     try {
-        final imageSize = loadedSprite.srcSize;
-        final currentSize = game.size;
+        if (_characterComponents.containsKey(characterAlias)) {
+            // Character exists, start dissolve transition
+            print("    Character '$characterAlias' exists. Starting dissolve...");
+            final existingData = _characterComponents[characterAlias]!;
+            // Use dissolveDuration for transitions
+            existingData.component.startDissolve(loadedSprite, targetPose, dissolveDuration);
+            _characterComponents[characterAlias] = (component: existingData.component, poseName: poseName);
 
-        _characterComponents[characterAlias]?.component.removeFromParent();
+        } else {
+            // Character is new, create and add DissolvingSprite
+            print("    Character '$characterAlias' is new. Creating component for initial fade-in...");
 
-        double finalScale = _calculateScale(pose, imageSize, currentSize);
-        final Anchor finalAnchor = pose.anchor;
-        final Vector2 finalPosition = Vector2(
-            currentSize.x * pose.xcenter,
-            currentSize.y * pose.ycenter,
-        );
+             final characterComponent = DissolvingSprite(
+                initialSprite: loadedSprite,
+                initialPose: targetPose, 
+                characterAlias: characterAlias, 
+                // Use initialFadeInDuration for the first appearance
+                fadeInDuration: initialFadeInDuration, 
+                priority: 0, 
+             );
 
-        final characterComponent = SpriteComponent(
-            sprite: loadedSprite,
-            anchor: finalAnchor,
-            position: finalPosition,
-            scale: Vector2.all(finalScale),
-            priority: 0, 
-        );
-
-        _characterComponents[characterAlias] = (component: characterComponent, poseName: poseName);
-        await add(characterComponent); // Add to the CharacterManager itself
-
-        String scaleMode = (pose.scale > 0) ? "Relative(H*${pose.scale})" : "AspectFit";
-        print("    Character '$loadedFileName' loaded using pose '$poseName' (ScaleMode: $scaleMode, AppliedScale: ${finalScale.toStringAsFixed(3)}). Added at $finalPosition (Anchor: $finalAnchor).");
+            await add(characterComponent);
+            _characterComponents[characterAlias] = (component: characterComponent, poseName: poseName);
+            print("    New character '$characterAlias' component added and fade-in started.");
+        }
 
     } catch (e) {
-         print('    Error adding character component for $loadedFileName: $e');
+         print('    Error creating/updating character component for $characterAlias: $e');
     }
   }
 
   void hideCharacter(String characterAlias) {
     print('CharacterManager: Hiding $characterAlias');
      final data = _characterComponents.remove(characterAlias);
+     // `removeFromParent` triggers the component's `onRemove`, cleaning up effects.
      data?.component.removeFromParent();
+     if (data == null) {
+        print("    Warning: Tried to hide character '$characterAlias', but it wasn't found.");
+     }
   }
 
   void hideAllCharacters() {
      print('CharacterManager: Hiding all characters');
-     removeAll(_characterComponents.values.map((data) => data.component));
+     // Use `toList` to avoid modification during iteration issues
+     final componentsToRemove = _characterComponents.values.map((data) => data.component).toList();
+     removeAll(componentsToRemove);
      _characterComponents.clear();
   }
 
    @override
    void onGameResize(Vector2 size) {
      super.onGameResize(size);
-     print("CharacterManager onGameResize called with: $size");
-     _characterComponents.forEach((alias, data) {
-        print("  Resizing character: $alias using pose: ${data.poseName}");
-        _updateCharacterSizeAndPosition(alias, data.component, data.poseName, size);
-     });
+     print("CharacterManager onGameResize called with: $size. Child components will handle resizing.");
+     // No need to manually iterate and resize children here.
+     // DissolvingSprite components will receive onGameResize call automatically
+     // and use their `updateTransform` logic.
    }
 
-   void _updateCharacterSizeAndPosition(String characterAlias, SpriteComponent component, String poseName, Vector2 targetSize) {
-      final pose = poses[poseName] ?? defaultPose;
-      final sprite = component.sprite;
+   // _updateCharacterSizeAndPosition is no longer needed as DissolvingSprite handles its own transform.
 
-      if (sprite == null || targetSize.x <= 0 || targetSize.y <= 0) {
-          print("  Cannot resize character $characterAlias: Missing sprite or invalid target size.");
-          return;
-      }
-      final imageSize = sprite.srcSize;
-
-      double finalScale = _calculateScale(pose, imageSize, targetSize);
-      final Vector2 finalPosition = Vector2(
-          targetSize.x * pose.xcenter,
-          targetSize.y * pose.ycenter,
-      );
-
-      component.scale = Vector2.all(finalScale);
-      component.position = finalPosition;
-
-      print("  Character $characterAlias resized/repositioned based on $targetSize. AppliedScale: ${finalScale.toStringAsFixed(3)}, Position: $finalPosition");
-   }
-
-   double _calculateScale(PoseDefinition pose, Vector2 imageSize, Vector2 targetSize) {
-       double finalScale;
-       if (pose.scale > 0) {
-          if (imageSize.y != 0) {
-             final targetHeight = targetSize.y * pose.scale;
-             finalScale = targetHeight / imageSize.y;
-          } else {
-             finalScale = 1.0;
-          }
-       } else {
-          if (imageSize.x != 0 && imageSize.y != 0) {
-             final scaleX = targetSize.x / imageSize.x;
-             final scaleY = targetSize.y / imageSize.y;
-             finalScale = min(scaleX, scaleY); 
-          } else {
-             finalScale = 1.0;
-          }
-       }
-       return finalScale;
-   }
+   // _calculateScale is no longer needed here as it's encapsulated within DissolvingSprite.
 } 

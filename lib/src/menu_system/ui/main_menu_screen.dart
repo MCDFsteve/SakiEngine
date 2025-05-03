@@ -6,6 +6,7 @@ import 'package:provider/provider.dart'; // Import Provider
 import 'dart:math'; // Import for min
 import '../widgets/menu_button.dart'; // 引入可复用的按钮
 import '../../widgets/constrained_scaffold.dart'; // Import the wrapper
+import '../../app_window_state.dart'; // Correct import path for AppWindowState
 
 // 主菜单的 UI 界面 (StatelessWidget)
 class MainMenuScreen extends StatelessWidget {
@@ -28,6 +29,8 @@ class MainMenuScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     // Watch for sizer changes to rebuild
     context.watch<AdaptiveSizer>();
+    // Also watch AppWindowState to force rebuild on resolution/fullscreen changes
+    context.watch<AppWindowState>(); 
     
     // Center the potentially scrollable content block
     return Constrained16x9Scaffold(

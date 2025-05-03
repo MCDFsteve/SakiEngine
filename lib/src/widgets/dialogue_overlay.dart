@@ -65,41 +65,47 @@ class DialogueOverlayWidget extends StatelessWidget {
       left: mainBoxLeftX,
       right: horizontalMargin, // Use right margin to constrain width implicitly
       height: boxHeight,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10.0),
-        child: Container(
-          padding: EdgeInsets.only(
-            left: paddingH,
-            right: paddingH,
-            top: paddingV + (nameOffset / 2), // Add space for name box overlap
-            bottom: paddingV,
-          ),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.5),
-          ),
-          child: Stack(
-            children: [
-              // --- Dialogue Text Column (No Character Name Here) ---
-              // Padding is now handled by the Container's padding
-              Column(
-                 crossAxisAlignment: CrossAxisAlignment.start,
-                 children: [
-                   Expanded(
-                     child: SingleChildScrollView(
-                       child: Text(
-                         dialogue,
-                         style: dialogueTextStyle,
+      child: GestureDetector(
+        onTap: () {
+          print("DialogueOverlayWidget: Tapped! Acknowledging dialogue...");
+          game.acknowledgeDialogue(); // Call acknowledge on tap
+        },
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10.0),
+          child: Container(
+            padding: EdgeInsets.only(
+              left: paddingH,
+              right: paddingH,
+              top: paddingV + (nameOffset / 2), // Add space for name box overlap
+              bottom: paddingV,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.75),
+            ),
+            child: Stack(
+              children: [
+                // --- Dialogue Text Column (No Character Name Here) ---
+                // Padding is now handled by the Container's padding
+                Column(
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                     Expanded(
+                       child: SingleChildScrollView(
+                         child: Text(
+                           dialogue,
+                           style: dialogueTextStyle,
+                         ),
                        ),
                      ),
-                   ),
-                 ],
-               ),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: IndicatorWidget(size: indicatorSize),
-              ),
-            ],
+                   ],
+                 ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: IndicatorWidget(size: indicatorSize),
+                ),
+              ],
+            ),
           ),
         ),
       ),

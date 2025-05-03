@@ -1,12 +1,33 @@
 // lib/src/game/background_manager.dart
 import 'package:flame/components.dart';
 import 'package:flame/game.dart';
-// For min
+import 'package:flutter/material.dart'; // For Duration
 
-class BackgroundManager extends Component {
-  SpriteComponent? _backgroundComponent;
+// Import DissolvingSprite and PoseDefinition
+import 'dissolving_sprite.dart';
+import 'visual_novel_scene.dart' show PoseDefinition;
 
-  FlameGame get _game => findGame()!;
+// Manages the background image, including transitions
+class BackgroundManager extends Component with HasGameReference<FlameGame> {
+  DissolvingSprite? _backgroundComponent; // Store the dissolving component
+  String? _currentBackgroundPath;
+
+  // Durations for background effects
+  final Duration initialFadeInDuration;
+  final Duration dissolveDuration;
+
+  // Static default pose for backgrounds (aspect fill, centered)
+  static final PoseDefinition _backgroundPose = PoseDefinition(
+      scale: -1, // -1 = aspect fill (cover)
+      xcenter: 0.5,
+      ycenter: 0.5,
+      anchor: Anchor.center, 
+  );
+
+  BackgroundManager({
+    this.initialFadeInDuration = const Duration(milliseconds: 800), // Default fade-in for BG
+    this.dissolveDuration = const Duration(milliseconds: 500),      // Default dissolve for BG
+  });
 
   @override
   Future<void> onLoad() async {
@@ -22,123 +43,88 @@ class BackgroundManager extends Component {
 
   @override
   void onRemove() {
-    removeBackground();
+    removeCurrentBackground();
     super.onRemove();
     print("  BG Manager Component: Removed.");
   }
 
-  Future<void> changeBackground(String sceneIdentifier) async {
-    print('  BG Manager Component: Received scene identifier "$sceneIdentifier"');
-    if (sceneIdentifier.isEmpty) {
-      print('    Error: Empty scene identifier provided.');
-      removeBackground();
+  Future<void> changeBackground(String identifier) async {
+    print("  BG Manager Component: Received scene identifier \"$identifier\"");
+    final baseName = identifier.replaceAll(' ', '-').toLowerCase(); // Handle spaces
+    print("    Processed base name (hyphenated): '$baseName'");
+    
+    String? potentialPath;
+    Sprite? loadedSprite;
+    String? loadedFileName;
+    final extensions = ['.webp', '.png'];
+
+    for (final ext in extensions) {
+      // Construct path relative to 'assets/images/'
+      potentialPath = 'backgrounds/$baseName$ext';
+      print("    Attempting to load from assets/images/: $potentialPath"); // Updated log
+      try {
+        // Pass the path relative to 'assets/images/'
+        loadedSprite = await game.loadSprite(potentialPath);
+        loadedFileName = '$baseName$ext';
+        print("      Success! Loaded '$loadedFileName'.");
+        break;
+      } catch (e) {
+        // Log the path that failed
+        print("      Failed to load 'assets/images/$potentialPath': $e");
+        loadedSprite = null;
+      }
+    }
+
+    if (loadedSprite == null || loadedFileName == null) {
+      print("    Error: Could not load background '$baseName' with any extension.");
+      removeCurrentBackground(); 
       return;
     }
 
-    // --- Logic to find base name and try extensions --- 
-    String baseName = sceneIdentifier;
-    // Remove potential existing extension first, to handle cases like "scene intro.png"
-    const supportedExtensions = ['.webp', '.png', '.jpg', '.jpeg'];
-    for (var ext in supportedExtensions) {
-      if (baseName.toLowerCase().endsWith(ext)) {
-        baseName = baseName.substring(0, baseName.length - ext.length);
-        break; // Found and removed extension
-      }
+    // Use the path relative to 'assets/images/' for comparison
+    if (potentialPath == _currentBackgroundPath && _backgroundComponent != null) { 
+      print("    Background '$loadedFileName' is already displayed. Skipping transition.");
+      return;
     }
 
-    // Replace spaces with hyphens
-    String processedBaseName = baseName.replaceAll(' ', '-').trim();
-    if (processedBaseName.isEmpty) {
-       print('    Error: Processed base name is empty for identifier "$sceneIdentifier"');
-       removeBackground();
-       return;
-    }
-    print("    Processed base name (hyphenated): '$processedBaseName'");
-
-    // Define the order of extensions to try
-    const List<String> extensionsToTry = ['.webp', '.png']; // Prioritize webp
-    Sprite? loadedSprite;
-    String? loadedFileName;
-
-    for (final ext in extensionsToTry) {
-      final potentialFileName = '$processedBaseName$ext';
-      final imagePath = 'backgrounds/$potentialFileName';
-      try {
-        print("    Attempting to load: assets/images/$imagePath");
-        loadedSprite = await _game.loadSprite(imagePath);
-        loadedFileName = potentialFileName; // Store the successful filename
-        print("      Success! Loaded '$loadedFileName'.");
-        break; // Stop trying once loaded
-      } catch (e) {
-        // Check if it's specifically an asset loading error
-        // Note: This check might need refinement based on actual error types
-        if (e.toString().contains('Unable to load asset')) {
-          print("      '$potentialFileName' not found or failed to load. Trying next...");
-        } else {
-           print("      An unexpected error occurred while trying to load '$potentialFileName': $e");
-           // Decide if we should stop or continue on other errors
-           // For now, let's continue to try other formats
-        }
-      }
-    }
-    // --- End logic --- 
-
-    // Check if a sprite was successfully loaded
-    if (loadedSprite != null && loadedFileName != null) {
-      removeBackground(); // Remove previous background if any
-      _backgroundComponent = SpriteComponent(
-        sprite: loadedSprite,
-        anchor: Anchor.center,
-        priority: -10,
-      );
-      _updateSizeAndPosition(_game.size); // Set initial size/pos
-      await _game.add(_backgroundComponent!); // Add to game
-      print("    Background '$loadedFileName' successfully added.");
+    // --- Handle Component Creation/Update ---
+    if (_backgroundComponent != null) {
+      // Background exists, start dissolve transition
+      print("    Background exists. Starting dissolve to '$loadedFileName'...");
+      _backgroundComponent!.startDissolve(loadedSprite, _backgroundPose, dissolveDuration);
+      // No need to update size/position here, DissolvingSprite handles it based on pose
+      print("      Dissolve initiated for background.");
     } else {
-      // If loop finished and no sprite was loaded
-      print('    Error: Could not load background asset \'$processedBaseName\' with any supported extension (${extensionsToTry.join(', ')}).');
-      removeBackground(); // Ensure no old background remains
+      // No background exists, create a new one with fade-in
+      print("    No background exists. Creating new component for '$loadedFileName' with fade-in...");
+      _backgroundComponent = DissolvingSprite(
+        initialSprite: loadedSprite,
+        initialPose: _backgroundPose, 
+        characterAlias: 'background', // Use a generic alias
+        fadeInDuration: initialFadeInDuration,
+        priority: -10, // Ensure background is behind characters
+        // Position, scale, anchor set by DissolvingSprite based on pose
+      );
+      await add(_backgroundComponent!); // Add to the manager
+      print("      New background component added and fade-in started.");
     }
+
+    _currentBackgroundPath = potentialPath; // Store the path relative to 'assets/images/'
+  }
+
+  void removeCurrentBackground() {
+    print("  BG Manager Component: Background removed logic executed.");
+    _backgroundComponent?.removeFromParent(); // Trigger component removal (handles effects)
+    _backgroundComponent = null;
+    _currentBackgroundPath = null;
   }
 
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
-    print("  BG Manager Component: onGameResize called with $size");
-    _updateSizeAndPosition(size);
-  }
-
-  void _updateSizeAndPosition(Vector2 targetSize) {
-    if (_backgroundComponent == null || _backgroundComponent!.sprite == null) {
-        print("    Cannot update size: background component or sprite is null.");
-        return;
-    }
-
-    final imageSize = _backgroundComponent!.sprite!.srcSize;
-    if (imageSize.x <= 0 || imageSize.y <= 0 || targetSize.x <= 0 || targetSize.y <= 0) {
-        print("    Cannot update size: Invalid image or target dimensions.");
-        return; 
-    }
-
-    final screenAspect = targetSize.x / targetSize.y;
-    final imageAspect = imageSize.x / imageSize.y;
-    double scale;
-    if (screenAspect > imageAspect) {
-      scale = targetSize.x / imageSize.x;
-    } else {
-      scale = targetSize.y / imageSize.y;
-    }
-
-    _backgroundComponent!.scale = Vector2.all(scale);
-    _backgroundComponent!.position = targetSize / 2;
-    print("    Background component updated: Scale=${_backgroundComponent!.scale.x.toStringAsFixed(3)}, Position=${_backgroundComponent!.position}");
-  }
-
-  void removeBackground() {
-      if (_backgroundComponent != null && _backgroundComponent!.isMounted) {
-         _backgroundComponent!.removeFromParent();
-      }
-      _backgroundComponent = null;
-       print("  BG Manager Component: Background removed logic executed.");
+    // Log message is simplified as DissolvingSprite handles its own resizing.
+    print("  BG Manager Component: onGameResize called with $size. Child component handles resize.");
+    // The DissolvingSprite component ('_backgroundComponent') will handle its own 
+    // resizing internally based on the _backgroundPose when its onGameResize is called.
   }
 } 
