@@ -76,14 +76,14 @@
       "characters": {
           "patterns": [
               {
-                  "comment": "Match character name before a quote",
+                  "comment": "Match character name directly before a quote (e.g., yk \"...\")",
                   "name": "entity.name.type.character.skr",
-                   "match": "^\\s*([\\w_]+)(?=\\s*\\\")"
+                  "match": "^\\s*([\\w_]+)(?=\\s*\\\")"
               },
               {
-                  "comment": "Match character name before 'angry', 'happy' etc.",
+                  "comment": "Match character name followed by one or more words before a quote (e.g., yk pose1 sad \"...\")",
                   "name": "entity.name.type.character.skr",
-                   "match": "^\\s*([\\w_]+)(?=\\s+\\w+\\s*\\\")"
+                  "match": "^\\s*([\\w_]+)(?=\\s+[^\\\"\\n]+.*?\\\")"
               }
           ]
       },

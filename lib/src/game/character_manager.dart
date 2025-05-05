@@ -1,4 +1,5 @@
 import 'dart:math'; // Import math for min
+import 'dart:ui' as ui; // Import dart:ui for Canvas compositing
 
 import 'package:flame/components.dart';
 import 'package:flame/game.dart';
@@ -10,7 +11,7 @@ import 'dissolving_sprite.dart';
 // Import PoseDefinition and CharacterDefinition
 import 'visual_novel_scene.dart' show PoseDefinition, CharacterDefinition;
 
-// A component to manage character sprites (立绘) with dissolve effects
+// A component to manage character sprites (立绘) with dissolve effects and layering
 class CharacterManager extends Component with HasGameReference<FlameGame> {
   // Store DissolvingSprite component and the pose name
   final Map<String, ({DissolvingSprite component, String poseName})> _characterComponents = {};
@@ -35,72 +36,93 @@ class CharacterManager extends Component with HasGameReference<FlameGame> {
 
   // No onLoad needed here unless CharacterManager needs specific setup
 
+  // --- Layered Character Display ---
   Future<void> showCharacter({
     required String characterAlias,
-    String expression = 'default',
-    String poseName = 'center_default',
+    List<String> attributes = const ['default'], // Attributes like 'happy', 'sad', 'glasses'. 'default' is handled.
+    String? basePoseAttribute, // Base body pose like 'pose1', 'pose2'. Null uses default.
+    String poseName = 'center_default',       // Screen position pose name from poses map
   }) async {
-    print('CharacterManager: Request to show $characterAlias ($expression) at $poseName');
+    print('CharacterManager: Request to show $characterAlias with attributes $attributes (Base: ${basePoseAttribute ?? 'pose1'}) at $poseName');
     final characterDef = characters[characterAlias];
     if (characterDef == null) {
         print('  -> Error: Unknown character alias "$characterAlias"');
         return;
     }
     final assetId = characterDef.assetId;
-    final targetPose = poses[poseName] ?? defaultPose;
+    final targetPose = poses[poseName] ?? defaultPose; // Screen position/scale definition
     if (!poses.containsKey(poseName)) {
         print("    Warning: Pose '$poseName' not found. Using default pose.");
     }
-    print("    Using PoseDefinition: (${targetPose.toString()})");
+    print("    Using Screen PoseDefinition: (${targetPose.toString()})");
 
-    // --- Sprite Loading Logic (same as before) ---
-    Sprite? loadedSprite;
-    String? loadedFileName;
-    final baseFileName = '$assetId-$expression';
-    const List<String> extensionsToTry = ['.webp', '.png'];
+    // --- 1. Load Base Sprite ---
+    String actualBasePoseAttr = basePoseAttribute ?? 'pose1'; // Default base pose attribute
+    Sprite? baseSprite = await _loadCharacterPart(assetId, actualBasePoseAttr);
+    if (baseSprite == null) {
+        print('  -> Error: Could not load base pose "$actualBasePoseAttr" for asset ID "$assetId" (Alias: "$characterAlias"). Cannot show character.');
+        return; // Cannot proceed without a base sprite
+    }
+    print("    Base sprite '$actualBasePoseAttr' loaded successfully.");
 
-    for (final ext in extensionsToTry) {
-      final potentialFileName = '$baseFileName$ext';
-      final imagePath = 'characters/$potentialFileName';
-      try {
-        print("    Attempting to load character: assets/images/$imagePath");
-        loadedSprite = await game.loadSprite(imagePath);
-        loadedFileName = potentialFileName;
-        print("      Success! Loaded '$loadedFileName'.");
-        break;
-      } catch (e) {
-         print("      'assets/images/$imagePath' not found or failed to load. Trying next...");
-      }
+    // --- 2. Determine and Load Layer Sprites ---
+    // Handle 'default' attribute: if 'default' is present or list is empty, use ['happy'] as default layers.
+    // Otherwise, use the provided list excluding 'default'.
+    List<String> finalAttributes;
+    if (attributes.isEmpty || attributes.contains('default')) {
+        finalAttributes = ['happy']; // Default expression layer
+        print("    Using default attribute 'happy'.");
+    } else {
+        finalAttributes = attributes.where((attr) => attr != 'default').toList();
+        // If after removing 'default', the list is empty, revert to default 'happy'
+        if (finalAttributes.isEmpty) {
+            finalAttributes = ['happy'];
+            print("    Only 'default' attribute provided or resulting list empty, using default 'happy'.");
+        } else {
+             print("    Using specified attributes: $finalAttributes");
+        }
     }
 
-    if (loadedSprite == null || loadedFileName == null) {
-       print('    Error: Could not load character asset \'$baseFileName\' with any supported extension (${extensionsToTry.join(', ')}).');
-       return;
+
+    List<Sprite> layerSprites = [];
+    for (final attr in finalAttributes) {
+        Sprite? layerSprite = await _loadCharacterPart(assetId, attr);
+        if (layerSprite != null) {
+            layerSprites.add(layerSprite);
+            print("      Layer sprite '$attr' loaded.");
+        } else {
+            print('    Warning: Could not load layer attribute "$attr" for asset ID "$assetId" (Alias: "$characterAlias"). Skipping this layer.');
+            // Optionally continue without this layer
+        }
     }
-    // --- End Sprite Loading ---
+
+    // --- 3. Composite Sprites ---
+    // The composite function now handles the case with no layers gracefully
+    Sprite finalSprite = await _compositeCharacterSprites(baseSprite, layerSprites);
+    print("    Base and layer sprites composited.");
 
 
-    // --- Component Creation / Update Logic ---
+    // --- 4. Component Creation / Update Logic ---
     try {
         if (_characterComponents.containsKey(characterAlias)) {
-            // Character exists, start dissolve transition
-            print("    Character '$characterAlias' exists. Starting dissolve...");
+            // Character exists, start dissolve transition to the new composite sprite
+            print("    Character '$characterAlias' exists. Starting dissolve transition...");
             final existingData = _characterComponents[characterAlias]!;
             // Use dissolveDuration for transitions
-            existingData.component.startDissolve(loadedSprite, targetPose, dissolveDuration);
-            _characterComponents[characterAlias] = (component: existingData.component, poseName: poseName);
+            existingData.component.startDissolve(finalSprite, targetPose, dissolveDuration); // Pass the composited sprite
+            _characterComponents[characterAlias] = (component: existingData.component, poseName: poseName); // Update poseName if needed
 
         } else {
-            // Character is new, create and add DissolvingSprite
+            // Character is new, create and add DissolvingSprite with the composite sprite
             print("    Character '$characterAlias' is new. Creating component for initial fade-in...");
 
              final characterComponent = DissolvingSprite(
-                initialSprite: loadedSprite,
-                initialPose: targetPose, 
-                characterAlias: characterAlias, 
+                initialSprite: finalSprite, // Use the composited sprite
+                initialPose: targetPose,
+                characterAlias: characterAlias,
                 // Use initialFadeInDuration for the first appearance
-                fadeInDuration: initialFadeInDuration, 
-                priority: 0, 
+                fadeInDuration: initialFadeInDuration,
+                priority: 0, // Manage priority if needed
              );
 
             await add(characterComponent);
@@ -112,6 +134,69 @@ class CharacterManager extends Component with HasGameReference<FlameGame> {
          print('    Error creating/updating character component for $characterAlias: $e');
     }
   }
+
+
+  // Helper to load a single character part (base or layer) based on asset ID and part name
+  Future<Sprite?> _loadCharacterPart(String assetId, String partName) async {
+      Sprite? loadedSprite;
+      final baseFileName = '$assetId-$partName'; // e.g., yuki-pose1 or yuki-happy
+      const List<String> extensionsToTry = ['.webp', '.png']; // Prioritize webp?
+
+      for (final ext in extensionsToTry) {
+          final potentialFileName = '$baseFileName$ext';
+          final imagePath = 'characters/$potentialFileName'; // Path relative to assets/images/
+          try {
+              // print("    Attempting to load character part: assets/images/$imagePath"); // Can be noisy
+              loadedSprite = await game.loadSprite(imagePath);
+              // print("      Success! Loaded '$potentialFileName'."); // Can be noisy
+              break; // Found it
+          } catch (e) {
+              // print("      'assets/images/$imagePath' not found or failed to load. Trying next..."); // Expected case
+          }
+      }
+       // Warning moved to caller for context
+       // if (loadedSprite == null) {
+       //   print('    Warning: Could not load character part '$partName' for asset '$assetId' with any supported extension (${extensionsToTry.join(', ')}).');
+       // }
+      return loadedSprite;
+  }
+
+  // Helper to composite a base sprite and a list of layer sprites using dart:ui.Canvas
+  Future<Sprite> _compositeCharacterSprites(Sprite baseSprite, List<Sprite> layerSprites) async {
+      final recorder = ui.PictureRecorder();
+      final baseImage = baseSprite.image; // ui.Image
+      final imageWidth = baseImage.width.toDouble();
+      final imageHeight = baseImage.height.toDouble();
+
+      // Create a canvas with the dimensions of the base image
+      final canvas = ui.Canvas(recorder, ui.Rect.fromLTWH(0, 0, imageWidth, imageHeight));
+
+      final paint = ui.Paint(); // Use default paint settings
+
+      // 1. Draw the base image first
+      canvas.drawImage(baseImage, ui.Offset.zero, paint);
+
+      // 2. Draw each layer image on top of the base
+      for (final layerSprite in layerSprites) {
+          // Assuming layers are the same size as the base and positioned at (0,0)
+          // If layers could have different offsets/sizes, more complex logic needed here.
+          canvas.drawImage(layerSprite.image, ui.Offset.zero, paint);
+      }
+
+      // Finalize the drawing and convert the recorded picture to an image
+      final picture = recorder.endRecording();
+      // Ensure correct dimensions are passed to toImage
+      final compositedUiImage = await picture.toImage(imageWidth.toInt(), imageHeight.toInt());
+
+      // Create a new Flame Sprite from the composited ui.Image
+      return Sprite(
+          compositedUiImage,
+          // Source position and size cover the entire new image
+          srcPosition: Vector2.zero(),
+          srcSize: Vector2(imageWidth, imageHeight),
+      );
+  }
+
 
   void hideCharacter(String characterAlias) {
     print('CharacterManager: Hiding $characterAlias');

@@ -84,10 +84,13 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
   // Stack to handle nested ifs? For now, just the last result.
   bool? _lastIfConditionResult;
 
-  // Regex patterns for parsing
-  // MODIFIED _sayRegex to make speaker optional
-  static final RegExp _sayRegex = RegExp(r'^\s*(?:([\w\d_]+)(?:\s+([\w\d_]+))?\s+)?"(.*?)"\s*$');
-  // Group 1: Optional Alias, Group 2: Optional Expression, Group 3: Dialogue
+  // --- Regex Patterns --- 
+  // Matches: [alias] [optional attributes/pose...] "dialogue" OR "dialogue"
+  // Group 1: Optional character alias
+  // Group 2: Optional string containing all attributes/pose tokens between alias and dialogue quote
+  // Group 3: Dialogue content inside quotes
+  static final RegExp _sayRegex = RegExp(r'^\s*(?:([\w\d_]+)\s*(.*?))?\s*"(.*?)"\s*$');
+
   static final RegExp _menuOptionRegex = RegExp(r'^\s*"(.*?)"\s*->\s*(\w+)\s*$'); 
   static final RegExp _assignmentRegex = RegExp(r'^\s*\$(\w+)\s*=\s*(.*)$');
   static final RegExp _jumpRegex = RegExp(r'^\s*jump\s+(\w+)\s*$');
@@ -135,6 +138,9 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
 
   // <<< ADD Dialogue State Notifier >>>
   late final DialogueStateNotifier dialogueStateNotifier;
+
+  // <<< ADD Map to store the last used base pose attribute for each character >>>
+  final Map<String, String?> _characterCurrentBasePose = {};
 
   // <<< ADD Constructor to accept callback >>>
   VisualNovelGame({this.onReturnRequested}) {
@@ -436,42 +442,73 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
     }
   }
 
-  // --- MODIFIED _handleShow to track pose ---
+  // --- REWRITTEN _handleShow for Layered Images (and storing base pose) ---
   Future<void> _handleShow(String line) async {
-    final parts = line.substring('show '.length).trim().split(' ');
-    if (parts.isNotEmpty && parts[0].isNotEmpty) {
-        final characterAlias = parts[0];
-        String expression = 'default';
-        String poseName = 'center_default'; 
-        int currentPartIndex = 1;
-        if (currentPartIndex < parts.length && parts[currentPartIndex] != 'at') {
-            expression = parts[currentPartIndex];
-            currentPartIndex++;
-        }
-        if (currentPartIndex < parts.length - 1 && parts[currentPartIndex] == 'at') {
-            poseName = parts[currentPartIndex + 1];
-        }
-        print('  -> Show command: Alias "$characterAlias" (Expression: "$expression") at pose "$poseName"');
-        await characterManager.showCharacter(
-          characterAlias: characterAlias,
-          expression: expression,
-          poseName: poseName,
-        );
-        // <<< Record the pose used for this character >>>
-        _characterCurrentPose[characterAlias] = poseName;
+    final commandParts = line.substring('show '.length).trim().split(RegExp(r'\s+')); // Split by whitespace
 
-    } else {
-        print('  -> Error parsing show command: Invalid format in "$line"');
+    if (commandParts.isEmpty || commandParts[0].isEmpty) {
+        print('  -> Error parsing show command: Missing character alias in "$line"');
+        return;
     }
-}
+
+    final characterAlias = commandParts[0];
+    List<String> attributes = [];
+    String? basePoseAttribute;
+    String poseName = 'center_default'; // Default screen pose
+    final RegExp basePoseRegex = RegExp(r'^pose\d+$'); // Matches pose1, pose2, etc.
+
+    // Parse parts after the alias
+    for (int i = 1; i < commandParts.length; i++) {
+        final part = commandParts[i];
+
+        if (part == 'at') {
+            if (i + 1 < commandParts.length) {
+                poseName = commandParts[i + 1];
+                break; // 'at' should be the last keyword followed by its value
+            } else {
+                print('  -> Error parsing show command: Missing value after "at" in "$line"');
+                return; // Or handle error differently
+            }
+        } else if (basePoseRegex.hasMatch(part)) {
+            if (basePoseAttribute == null) {
+                basePoseAttribute = part;
+            } else {
+                print('  -> Warning: Multiple base pose attributes specified in "$line". Using the first one: "$basePoseAttribute". Ignoring "$part".');
+            }
+        } else {
+            // Assume it's a layer attribute
+            attributes.add(part);
+        }
+    }
+
+    // If no specific attributes were provided, the CharacterManager will use its default (e.g., 'happy')
+    // An empty list is fine here; CharacterManager handles the 'default' logic internally if empty.
+
+    print('  -> Show command: Alias "$characterAlias" (Base: ${basePoseAttribute ?? 'default'}, Attributes: ${attributes.isEmpty ? '[default]' : attributes}) at screen pose "$poseName"');
+
+    try {
+      await characterManager.showCharacter(
+        characterAlias: characterAlias,
+        basePoseAttribute: basePoseAttribute, // Pass null if not specified
+        attributes: attributes,         // Pass the collected attributes (empty list is okay)
+        poseName: poseName,             // Pass the screen position pose
+      );
+       // Store the screen pose name AND the base pose attribute used
+      _characterCurrentPose[characterAlias] = poseName; 
+      _characterCurrentBasePose[characterAlias] = basePoseAttribute; // Store null if default was used
+    } catch (e) {
+        print('  -> Error calling characterManager.showCharacter: $e');
+    }
+  }
 
   // --- MODIFIED _handleSay - Default speaker is literal "空白" --- 
   Future<void> _handleSay(String line) async { 
-      final match = _sayRegex.firstMatch(line);
-      if (match != null && match.groupCount >= 3) { 
-          String? characterAlias = match.group(1); // Explicitly check if alias was provided
-          final expression = match.group(2); 
-          final dialogue = match.group(3)?.trim() ?? ''; 
+       final match = _sayRegex.firstMatch(line);
+      if (match != null) { 
+          // Use the new regex groups
+          String? characterAlias = match.group(1); // Group 1: Optional alias
+          String middlePart = (match.group(2) ?? '').trim(); // Group 2: Optional middle tokens string
+          final dialogue = match.group(3)?.trim() ?? ''; // Group 3: Dialogue
 
           // Determine Display Name
           String displayName;
@@ -490,19 +527,56 @@ class VisualNovelGame extends FlameGame with TapCallbacks { // Add TapCallbacks 
               }
           }
 
-          final exprLog = expression != null ? " ($expression)" : "";
+          final exprLog = middlePart.isNotEmpty ? " ($middlePart)" : "";
           print('  -> Say command: $displayName$exprLog says "$dialogue" (Alias: ${characterAlias ?? 'none'})');
           
           // Update character sprite if expression provided AND it's not the empty speaker
-          if (expression != null && expression.isNotEmpty && characterAlias != null) { // Check alias is not null
-             final currentPose = _characterCurrentPose[characterAlias] ?? 'center_default';
-             print('    Updating character $characterAlias to expression "$expression" at pose "$currentPose"');
-             await characterManager.showCharacter(
-                 characterAlias: characterAlias, 
-                 expression: expression, 
-                 poseName: currentPose
-             );
-          }
+          if (characterAlias != null) { // Check alias is not null
+              // Now use the middlePart captured directly by the new regex
+              // Only proceed if there *was* something between alias and quote
+              if (middlePart.isNotEmpty) {
+                  final middleTokens = middlePart.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+                  final RegExp basePoseRegex = RegExp(r'^pose\d+$'); 
+                  final currentScreenPose = _characterCurrentPose[characterAlias] ?? 'center_default';
+                  String? newBasePoseAttribute;
+                  List<String> newAttributes = [];
+                  bool basePoseSpecifiedInThisCmd = false;
+
+                  for (final token in middleTokens) {
+                      if (basePoseRegex.hasMatch(token)) {
+                          if (newBasePoseAttribute == null) {
+                              newBasePoseAttribute = token;
+                              basePoseSpecifiedInThisCmd = true;
+                          } else {
+                              print('    Warning: Multiple base poses specified in \'say\' command for $characterAlias. Using first: $newBasePoseAttribute. Ignoring $token.');
+                          }
+                      } else {
+                          newAttributes.add(token); // Assume anything else is an attribute
+                      }
+                  }
+
+                  // If no base pose was specified *in this command*, use the currently stored one.
+                  if (!basePoseSpecifiedInThisCmd) {
+                      newBasePoseAttribute = _characterCurrentBasePose[characterAlias];
+                  }
+
+                  // Logging the result of parsing
+                  print('    Updating character $characterAlias display. Base: ${newBasePoseAttribute ?? 'default'}, Attributes: ${newAttributes.isEmpty ? '[default]' : newAttributes}, Screen Pose: $currentScreenPose');
+
+                  await characterManager.showCharacter(
+                      characterAlias: characterAlias, 
+                      basePoseAttribute: newBasePoseAttribute, 
+                      attributes: newAttributes,        
+                      poseName: currentScreenPose       
+                  );
+
+                  // Update the stored base pose only if it was explicitly set in *this* command
+                  if (basePoseSpecifiedInThisCmd) {
+                      _characterCurrentBasePose[characterAlias] = newBasePoseAttribute;
+                  }
+              } // End if (middlePart.isNotEmpty) 
+              // else: If middlePart is empty (e.g., yk "dialogue"), no visual update needed here.
+          } // End if (characterAlias != null)
           
           // <<< UPDATE Dialogue State and wait for acknowledgment >>>
           _dialogueCompleter = Completer<void>();
