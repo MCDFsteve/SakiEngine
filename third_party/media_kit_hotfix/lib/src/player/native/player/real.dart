@@ -23,6 +23,7 @@ import 'package:media_kit/src/models/media/media.dart';
 import 'package:media_kit/src/models/playable.dart';
 import 'package:media_kit/src/models/player_log.dart';
 import 'package:media_kit/src/models/player_state.dart';
+import 'package:media_kit/src/models/playback_direction.dart';
 import 'package:media_kit/src/models/playlist_mode.dart';
 import 'package:media_kit/src/models/playlist.dart';
 import 'package:media_kit/src/models/track.dart';
@@ -837,6 +838,29 @@ class NativePlayer extends PlatformPlayer {
         }
         await _setPropertyDouble('speed', rate);
       }
+    }
+
+    if (synchronized) {
+      return lock.synchronized(function);
+    } else {
+      return function();
+    }
+  }
+
+  /// Sets playback direction for the internal mpv instance.
+  @override
+  Future<void> setPlaybackDirection(
+    PlaybackDirection direction, {
+    bool synchronized = true,
+  }) {
+    Future<void> function() async {
+      if (disposed) {
+        throw AssertionError('[Player] has been disposed');
+      }
+      await waitForPlayerInitialization;
+      await waitForVideoControllerInitializationIfAttached;
+
+      await _setPropertyString('play-direction', direction.mpvValue);
     }
 
     if (synchronized) {

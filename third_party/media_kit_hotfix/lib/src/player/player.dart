@@ -12,6 +12,7 @@ import 'package:media_kit/src/models/playlist.dart';
 import 'package:media_kit/src/models/media/media.dart';
 import 'package:media_kit/src/models/audio_device.dart';
 import 'package:media_kit/src/models/player_state.dart';
+import 'package:media_kit/src/models/playback_direction.dart';
 import 'package:media_kit/src/models/playlist_mode.dart';
 import 'package:media_kit/src/models/player_stream.dart';
 
@@ -238,6 +239,14 @@ class Player {
   /// Defaults to `1.0`.
   Future<void> setRate(double rate) async {
     return platform?.setRate(rate);
+  }
+
+  /// Sets playback direction.
+  ///
+  /// Native backends map this to mpv's `play-direction` property. Web backends
+  /// only support [PlaybackDirection.forward].
+  Future<void> setPlaybackDirection(PlaybackDirection direction) async {
+    return platform?.setPlaybackDirection(direction);
   }
 
   /// Sets the relative pitch of the [Player].

@@ -13,6 +13,7 @@ class MoviePlayer extends StatefulWidget {
   final int? repeatCount; // null 表示仅播放一次
   final Duration? loopStart;
   final bool backgroundMode;
+  final bool pingPongLoop;
   final BoxFit fit;
   final Alignment alignment;
 
@@ -25,6 +26,7 @@ class MoviePlayer extends StatefulWidget {
     this.repeatCount,
     this.loopStart,
     this.backgroundMode = false,
+    this.pingPongLoop = false,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
   });
@@ -38,11 +40,30 @@ class _MoviePlayerState extends State<MoviePlayer> {
   VideoController? _videoController;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<String>? _errorSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
   bool _hasCalledOnEnd = false;
   int _currentPlayCount = 0;
+  Duration _mediaDuration = Duration.zero;
+  bool _isPingPongReversePhase = false;
+  bool _isPingPongTransitioning = false;
+
+  bool get _isPingPongLoopEnabled =>
+      widget.pingPongLoop && widget.loopStart != null;
+
+  Duration? _currentDuration() {
+    if (_mediaDuration > Duration.zero) {
+      return _mediaDuration;
+    }
+    final duration = _player?.state.duration ?? Duration.zero;
+    if (duration > Duration.zero) {
+      return duration;
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -53,7 +74,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
   @override
   void didUpdateWidget(MoviePlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.movieFile != widget.movieFile) {
+    if (oldWidget.movieFile != widget.movieFile ||
+        oldWidget.looping != widget.looping ||
+        oldWidget.loopStart != widget.loopStart ||
+        oldWidget.pingPongLoop != widget.pingPongLoop) {
       _initializeVideo();
     }
   }
@@ -73,6 +97,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
         _errorMessage = null;
         _hasCalledOnEnd = false;
         _currentPlayCount = 0;
+        _mediaDuration = Duration.zero;
+        _isPingPongReversePhase = false;
+        _isPingPongTransitioning = false;
       });
 
       String? videoPath = await AssetManager().findAsset(widget.movieFile);
@@ -92,10 +119,11 @@ class _MoviePlayerState extends State<MoviePlayer> {
       _videoController = VideoController(_player!);
       _listenPlayerEvents();
 
-      final playlistMode =
-          widget.looping && widget.loopStart == null
+      final playlistMode = _isPingPongLoopEnabled
+          ? PlaylistMode.none
+          : (widget.looping && widget.loopStart == null
               ? PlaylistMode.loop
-              : PlaylistMode.none;
+              : PlaylistMode.none);
       await _player!.setPlaylistMode(playlistMode);
 
       final mediaSource = _buildMediaSource(videoPath);
@@ -119,6 +147,14 @@ class _MoviePlayerState extends State<MoviePlayer> {
       }
     });
 
+    _durationSubscription = _player!.stream.duration.listen((duration) {
+      _mediaDuration = duration;
+    });
+
+    _positionSubscription = _player!.stream.position.listen((position) {
+      _handlePingPongPosition(position);
+    });
+
     _errorSubscription = _player!.stream.error.listen((message) {
       if (message.isNotEmpty) {
         _setError('视频播放出错: $message');
@@ -126,20 +162,105 @@ class _MoviePlayerState extends State<MoviePlayer> {
     });
   }
 
-  void _handlePlaybackCompleted() async {
-    if (_player == null) {
+  void _handlePingPongPosition(Duration position) {
+    if (!_isPingPongLoopEnabled || _isPingPongTransitioning) {
       return;
     }
 
-    if (widget.looping && widget.loopStart != null) {
+    final loopStart = widget.loopStart;
+    if (loopStart == null) {
+      return;
+    }
+
+    const threshold = Duration(milliseconds: 120);
+    if (_isPingPongReversePhase) {
+      if (position <= loopStart + threshold) {
+        unawaited(_switchPingPongToForward());
+      }
+    }
+  }
+
+  Future<void> _startPingPongReverse() async {
+    final player = _player;
+    final loopStart = widget.loopStart;
+    if (player == null || loopStart == null) {
+      return;
+    }
+
+    final duration = _currentDuration();
+    if (duration == null || duration <= loopStart) {
+      return;
+    }
+
+    _isPingPongTransitioning = true;
+    try {
+      await player.setPlaybackDirection(PlaybackDirection.backward);
+      await player.seek(duration);
+      _isPingPongReversePhase = true;
+      await player.play();
+    } on UnsupportedError {
+      _isPingPongReversePhase = false;
       try {
-        await _player!.seek(widget.loopStart!);
-        await _player!.play();
+        await player.seek(loopStart);
+        await player.play();
       } catch (_) {}
+    } catch (_) {} finally {
+      _isPingPongTransitioning = false;
+    }
+  }
+
+  Future<void> _switchPingPongToForward() async {
+    final player = _player;
+    final loopStart = widget.loopStart;
+    if (player == null || loopStart == null) {
+      return;
+    }
+    if (_isPingPongTransitioning) {
+      return;
+    }
+
+    _isPingPongTransitioning = true;
+    try {
+      await player.setPlaybackDirection(PlaybackDirection.forward);
+      await player.seek(loopStart);
+      _isPingPongReversePhase = false;
+      await player.play();
+    } on UnsupportedError {
+      _isPingPongReversePhase = false;
+      try {
+        await player.seek(loopStart);
+        await player.play();
+      } catch (_) {}
+    } catch (_) {} finally {
+      _isPingPongTransitioning = false;
+    }
+  }
+
+  void _handlePlaybackCompleted() async {
+    final player = _player;
+    if (player == null) {
+      return;
+    }
+
+    if (_isPingPongLoopEnabled) {
+      if (_isPingPongTransitioning) {
+        return;
+      }
+      if (_isPingPongReversePhase) {
+        await _switchPingPongToForward();
+      } else {
+        await _startPingPongReverse();
+      }
       return;
     }
 
     if (_hasCalledOnEnd || widget.looping) {
+      if (widget.looping && widget.loopStart != null) {
+        try {
+          await _player!.seek(widget.loopStart!);
+          await _player!.play();
+        } catch (_) {}
+      }
       return;
     }
 
@@ -198,8 +319,12 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
   Future<void> _disposePlayer() async {
     await _completedSubscription?.cancel();
+    await _durationSubscription?.cancel();
+    await _positionSubscription?.cancel();
     await _errorSubscription?.cancel();
     _completedSubscription = null;
+    _durationSubscription = null;
+    _positionSubscription = null;
     _errorSubscription = null;
 
     final player = _player;
@@ -207,6 +332,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
     _videoController = null;
     _hasCalledOnEnd = false;
     _currentPlayCount = 0;
+    _mediaDuration = Duration.zero;
+    _isPingPongReversePhase = false;
+    _isPingPongTransitioning = false;
 
     await player?.dispose();
   }

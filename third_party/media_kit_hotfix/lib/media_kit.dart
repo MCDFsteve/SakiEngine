@@ -15,6 +15,7 @@ export 'package:media_kit/src/models/playable.dart';
 export 'package:media_kit/src/models/player_log.dart';
 export 'package:media_kit/src/models/player_state.dart';
 export 'package:media_kit/src/models/player_stream.dart';
+export 'package:media_kit/src/models/playback_direction.dart';
 export 'package:media_kit/src/models/playlist_mode.dart';
 export 'package:media_kit/src/models/playlist.dart';
 export 'package:media_kit/src/models/track.dart';

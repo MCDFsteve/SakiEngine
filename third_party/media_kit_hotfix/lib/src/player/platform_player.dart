@@ -18,6 +18,7 @@ import 'package:media_kit/src/models/audio_device.dart';
 import 'package:media_kit/src/models/audio_params.dart';
 import 'package:media_kit/src/models/video_params.dart';
 import 'package:media_kit/src/models/player_state.dart';
+import 'package:media_kit/src/models/playback_direction.dart';
 import 'package:media_kit/src/models/playlist_mode.dart';
 import 'package:media_kit/src/models/player_stream.dart';
 
@@ -248,6 +249,12 @@ abstract class PlatformPlayer {
   Future<void> setRate(double rate) {
     throw UnimplementedError(
       '[PlatformPlayer.rate] is not implemented',
+    );
+  }
+
+  Future<void> setPlaybackDirection(PlaybackDirection direction) {
+    throw UnimplementedError(
+      '[PlatformPlayer.setPlaybackDirection] is not implemented',
     );
   }
 

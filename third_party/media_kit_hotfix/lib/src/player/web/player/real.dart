@@ -26,6 +26,7 @@ import 'package:media_kit/src/models/audio_device.dart';
 import 'package:media_kit/src/models/player_state.dart';
 import 'package:media_kit/src/models/audio_params.dart';
 import 'package:media_kit/src/models/video_params.dart';
+import 'package:media_kit/src/models/playback_direction.dart';
 import 'package:media_kit/src/models/playlist_mode.dart';
 
 /// Initializes the web backend for package:media_kit.
@@ -1108,6 +1109,33 @@ class WebPlayer extends PlatformPlayer {
         );
       }
       element.playbackRate = rate;
+    }
+
+    if (synchronized) {
+      return lock.synchronized(function);
+    } else {
+      return function();
+    }
+  }
+
+  @override
+  Future<void> setPlaybackDirection(
+    PlaybackDirection direction, {
+    bool synchronized = true,
+  }) async {
+    Future<void> function() async {
+      if (disposed) {
+        throw AssertionError('[Player] has been disposed');
+      }
+
+      await waitForPlayerInitialization;
+      await waitForVideoControllerInitializationIfAttached;
+
+      if (direction == PlaybackDirection.backward) {
+        throw UnsupportedError(
+          'Backward playback is not supported by the web backend.',
+        );
+      }
     }
 
     if (synchronized) {

@@ -78,3 +78,5 @@ Engine/.flutter-plugins-dependencies
 /Launcher/build
 /Launcher/windows/flutter/ephemeral
 /Launcher/linux/flutter/ephemeral
+/third_party/media_kit_libs_macos_video_hotfix/macos/Frameworks
+/third_party/media_kit_libs_macos_video_hotfix/macos/.cache
