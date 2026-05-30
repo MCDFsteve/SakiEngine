@@ -18,7 +18,7 @@ class TransitionPrewarmingManager {
   bool _isPrewarmed = false;
 
   /// 执行预热
-  /// 预热dissolve着色器和图片加载流程
+  /// 预热转场着色器和图片加载流程
   Future<void> prewarm(BuildContext context) async {
     if (_isPrewarming || _isPrewarmed) return;
 
@@ -30,8 +30,9 @@ class TransitionPrewarmingManager {
       if (kIsWeb) {
         await _prewarmWeb();
       } else {
-        // 预热dissolve着色器
+        // 预热转场着色器
         await _prewarmDissolveShader();
+        await _prewarmPixelShader();
 
         // 预热图片加载流程
         await _prewarmImageLoading();
@@ -54,6 +55,16 @@ class TransitionPrewarmingManager {
           'assets/shaders/dissolve.frag');
     } catch (e) {
       //print('[TransitionPrewarming] 着色器预热失败: $e');
+    }
+  }
+
+  /// 预热pixel转场着色器
+  Future<void> _prewarmPixelShader() async {
+    try {
+      await EngineAssetLoader.loadFragmentProgram(
+          'assets/shaders/pixelate.frag');
+    } catch (e) {
+      //print('[TransitionPrewarming] pixel着色器预热失败: $e');
     }
   }
 
@@ -91,6 +102,7 @@ class TransitionPrewarmingManager {
       // Web平台只预热着色器，不进行图片加载预热
       // 避免在启动阶段进行复杂的资产搜索
       await _prewarmDissolveShader();
+      await _prewarmPixelShader();
 
       // Web平台跳过图片加载预热，因为AssetManager查询可能触发不当的上下文访问
       //print('[TransitionPrewarming] Web平台预热完成，跳过图片预热');

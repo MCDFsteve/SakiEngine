@@ -41,8 +41,16 @@ flutter:
     - default_game.txt
     - Assets/
     - Assets/fonts/
+    - Assets/gui/
+    - Assets/images/
     - Assets/images/backgrounds/
+    - Assets/images/cg/
+    - Assets/images/cg/chapter1/
     - Assets/images/characters/
+    - Assets/images/items/
+    - Assets/music/
+    - Assets/sound/
+    - Assets/voice/
     - GameScript/
     - GameScript/configs/
     - GameScript/labels/

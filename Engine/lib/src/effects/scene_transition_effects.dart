@@ -44,6 +44,7 @@ class SceneTransitionEffectManager {
     Duration duration = const Duration(milliseconds: 800),
     String? oldBackground,
     String? newBackground,
+    Future<ui.Image?> Function()? captureFrame,
   }) async {
     //print('[SceneTransition] 请求${transitionType.name}转场，当前状态: isTransitioning=$_isTransitioning');
     if (_isTransitioning) return;
@@ -60,9 +61,9 @@ class SceneTransitionEffectManager {
     //print('[SceneTransition] 开始${transitionType.name}转场，时长: ${duration.inMilliseconds}ms');
 
     final completer = Completer<void>();
-    final oldFrame = transitionType == TransitionType.pixel
-        ? await _captureTransitionFrame(context)
-        : null;
+    final frameCapturer = captureFrame ?? (() => _captureTransitionFrame(context));
+    final oldFrame =
+        transitionType == TransitionType.pixel ? await frameCapturer() : null;
 
     // 根据转场类型创建不同的覆盖层
     Widget transitionWidget;
@@ -121,7 +122,7 @@ class SceneTransitionEffectManager {
         transitionWidget = _PixelTransitionOverlay(
           duration: duration,
           oldFrame: oldFrame,
-          captureFrame: () => _captureTransitionFrame(context),
+          captureFrame: frameCapturer,
           onMidTransition: onMidTransition,
           onComplete: () {
             //print('[SceneTransition] pixel转场完成，移除覆盖层');
@@ -729,10 +730,14 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
     with TickerProviderStateMixin {
   late final AnimationController _pixelateController;
   late final AnimationController _restoreController;
+  ui.FragmentProgram? _pixelateProgram;
   ui.Image? _newFrame;
   bool _showNewFrame = false;
   bool _midTransitionExecuted = false;
   bool _completed = false;
+  bool _shaderReady = false;
+  bool _shaderLoadingFailed = false;
+  bool _restorationRequested = false;
 
   @override
   void initState() {
@@ -758,7 +763,31 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
         }
       });
 
+    _loadShader();
     _pixelateController.forward();
+  }
+
+  Future<void> _loadShader() async {
+    try {
+      _pixelateProgram ??=
+          await EngineAssetLoader.loadFragmentProgram('assets/shaders/pixelate.frag');
+      if (!mounted || _completed) {
+        return;
+      }
+      setState(() {
+        _shaderReady = true;
+      });
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('[PixelTransition] 像素着色器加载失败: $e');
+      }
+      if (!mounted || _completed) {
+        return;
+      }
+      setState(() {
+        _shaderLoadingFailed = true;
+      });
+    }
   }
 
   Future<void> _runMidTransition() async {
@@ -820,6 +849,96 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
     return math.min(96.0, math.max(32.0, size.shortestSide * 0.12));
   }
 
+  Future<void> _startRestorationWhenReady() async {
+    if (_showNewFrame || _completed || _restorationRequested) {
+      return;
+    }
+    _restorationRequested = true;
+
+    try {
+      final frame = await widget.captureFrame();
+      if (!mounted || _completed) {
+        frame?.dispose();
+        return;
+      }
+
+      if (frame == null) {
+        _complete();
+        return;
+      }
+
+      _newFrame = frame;
+      setState(() {
+        _showNewFrame = true;
+      });
+      _restorationRequested = false;
+      await _restoreController.forward(from: 0.0);
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('[PixelTransition] 恢复阶段失败: $e');
+      }
+      _restorationRequested = false;
+      _complete();
+    }
+  }
+
+  Widget _buildFallbackPixelation(Size size) {
+    final image = _showNewFrame ? _newFrame : widget.oldFrame;
+    if (image == null || size.isEmpty) {
+      return const SizedBox.expand();
+    }
+
+    final maxBlockSize = _maxBlockSize(size);
+    final blockSize = _showNewFrame
+        ? ui.lerpDouble(
+            maxBlockSize,
+            1.0,
+            Curves.easeOutCubic.transform(_restoreController.value),
+          )!
+        : ui.lerpDouble(
+            1.0,
+            maxBlockSize,
+            Curves.easeInCubic.transform(_pixelateController.value),
+          )!;
+
+    return CustomPaint(
+      painter: _PixelFramePainter(
+        image: image,
+        blockSize: blockSize,
+      ),
+      size: Size.infinite,
+    );
+  }
+
+  Widget _buildShaderPixelation(Size size) {
+    final image = _showNewFrame ? _newFrame : widget.oldFrame;
+    if (image == null || size.isEmpty || _pixelateProgram == null) {
+      return const SizedBox.expand();
+    }
+
+    final maxBlockSize = _maxBlockSize(size);
+    final blockSize = _showNewFrame
+        ? ui.lerpDouble(
+            maxBlockSize,
+            1.0,
+            Curves.easeOutCubic.transform(_restoreController.value),
+          )!
+        : ui.lerpDouble(
+            1.0,
+            maxBlockSize,
+            Curves.easeInCubic.transform(_pixelateController.value),
+          )!;
+
+    return CustomPaint(
+      painter: _PixelShaderFramePainter(
+        program: _pixelateProgram!,
+        image: image,
+        blockSize: blockSize,
+      ),
+      size: Size.infinite,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
@@ -835,35 +954,26 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
             return LayoutBuilder(
               builder: (context, constraints) {
                 final size = constraints.biggest;
-                final image = _showNewFrame ? _newFrame : widget.oldFrame;
-                if (image == null || size.isEmpty) {
+                if (size.isEmpty) {
                   return const SizedBox.expand();
                 }
 
-                final maxBlockSize = _maxBlockSize(size);
-                final blockSize = _showNewFrame
-                    ? ui.lerpDouble(
-                        maxBlockSize,
-                        1.0,
-                        Curves.easeOutCubic.transform(
-                          _restoreController.value,
-                        ),
-                      )!
-                    : ui.lerpDouble(
-                        1.0,
-                        maxBlockSize,
-                        Curves.easeInCubic.transform(
-                          _pixelateController.value,
-                        ),
-                      )!;
+                if (!_shaderReady || _shaderLoadingFailed) {
+                  if (!_showNewFrame &&
+                      _pixelateController.isCompleted &&
+                      !_restorationRequested) {
+                    unawaited(_startRestorationWhenReady());
+                  }
+                  return _buildFallbackPixelation(size);
+                }
 
-                return CustomPaint(
-                  painter: _PixelFramePainter(
-                    image: image,
-                    blockSize: blockSize,
-                  ),
-                  size: Size.infinite,
-                );
+                if (!_showNewFrame &&
+                    _pixelateController.isCompleted &&
+                    !_restorationRequested) {
+                  unawaited(_startRestorationWhenReady());
+                }
+
+                return _buildShaderPixelation(size);
               },
             );
           },
@@ -949,6 +1059,69 @@ class _PixelFramePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _PixelFramePainter oldDelegate) {
     return oldDelegate.image != image || oldDelegate.blockSize != blockSize;
+  }
+}
+
+class _PixelShaderFramePainter extends CustomPainter {
+  final ui.FragmentProgram program;
+  final ui.Image image;
+  final double blockSize;
+
+  const _PixelShaderFramePainter({
+    required this.program,
+    required this.image,
+    required this.blockSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) {
+      return;
+    }
+
+    final targetRect = _coverDestinationRect(
+      imageSize: Size(image.width.toDouble(), image.height.toDouble()),
+      outputSize: size,
+    );
+
+    final shader = program.fragmentShader();
+    shader
+      ..setFloat(0, blockSize)
+      ..setFloat(1, targetRect.width)
+      ..setFloat(2, targetRect.height)
+      ..setFloat(3, image.width.toDouble())
+      ..setFloat(4, image.height.toDouble())
+      ..setFloat(5, targetRect.left)
+      ..setFloat(6, targetRect.top)
+      ..setFloat(7, 1.0);
+    shader.setImageSampler(0, image);
+
+    canvas.drawRect(targetRect, Paint()..shader = shader);
+  }
+
+  Rect _coverDestinationRect({
+    required Size imageSize,
+    required Size outputSize,
+  }) {
+    final imageAspectRatio = imageSize.width / imageSize.height;
+    final outputAspectRatio = outputSize.width / outputSize.height;
+
+    if (imageAspectRatio > outputAspectRatio) {
+      final height = outputSize.width / imageAspectRatio;
+      final top = (outputSize.height - height) / 2.0;
+      return Rect.fromLTWH(0.0, top, outputSize.width, height);
+    }
+
+    final width = outputSize.height * imageAspectRatio;
+    final left = (outputSize.width - width) / 2.0;
+    return Rect.fromLTWH(left, 0.0, width, outputSize.height);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PixelShaderFramePainter oldDelegate) {
+    return oldDelegate.program != program ||
+        oldDelegate.image != image ||
+        oldDelegate.blockSize != blockSize;
   }
 }
 

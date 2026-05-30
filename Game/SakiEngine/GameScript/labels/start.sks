@@ -75,7 +75,7 @@ yk "/zhs 我也可以在旁白模式中说话。/ /zhc 我也可以在旁白模�
 "/zhs 旁白可以继续。/ /zhc 旁白可以繼續。/ /en Narration can continue./ /jp ナレーションは続きます。/"
 "/zhs 这样可以讲述更长的故事。/ /zhc 這樣可以講述更長的故事。/ /en This works well for longer storytelling./ /jp こうすると長い物語を語れます。/"
 endnvl
-scene sky
+scene sky with pixel
 yk "/zhs 背景被切换咯～/ /zhc 背景被切換囉～/ /en Background switched~/ /jp 背景が切り替わったよ〜/"
 yk "/zhs 嗯。/ /zhc 嗯。/ /en Mm./ /jp うん。/"
 scene bg school

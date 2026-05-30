@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:io';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
@@ -161,6 +162,7 @@ class GameManager {
   final ScriptApiExecutor? onScriptApiExecute;
   BuildContext? _context;
   TickerProvider? _tickerProvider;
+  Future<ui.Image?> Function()? _transitionFrameCapturer;
   final Set<String> _everShownCharacters = {};
   static const String _globalCgCharacterKey = '__global_cg__';
 
@@ -1515,10 +1517,15 @@ class GameManager {
   }
 
   /// 设置BuildContext用于转场效果
-  void setContext(BuildContext context, [TickerProvider? tickerProvider]) {
+  void setContext(
+    BuildContext context, [
+    TickerProvider? tickerProvider,
+    Future<ui.Image?> Function()? transitionFrameCapturer,
+  ]) {
     //////print('[GameManager] 设置上下文用于转场效果');
     _context = context;
     _tickerProvider = tickerProvider;
+    _transitionFrameCapturer = transitionFrameCapturer;
 
     // 如果当前状态有场景动画且之前没有TickerProvider，现在检测并启动动画
     if (tickerProvider != null && _sceneAnimationController == null) {
@@ -3887,6 +3894,7 @@ class GameManager {
         transitionType: effectType,
         oldBackground: oldBackgroundName,
         newBackground: newBackgroundName,
+        captureFrame: _transitionFrameCapturer,
         onMidTransition: () {
           //////print('[GameManager] scene转场中点 - 切换背景到: $newBackground');
           // 对于dissolve转场，不在中点更新背景状态，避免与转场效果冲突

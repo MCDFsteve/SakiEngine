@@ -106,6 +106,7 @@ flutter:
   shaders:
     # 着色器必须在这里单独声明
     - assets/shaders/dissolve.frag
+    - assets/shaders/pixelate.frag
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

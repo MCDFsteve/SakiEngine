@@ -433,7 +433,48 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
     final transitionContext =
         _saveThumbnailCaptureBoundaryKey.currentContext ?? context;
-    _gameManager.setContext(transitionContext, this as TickerProvider);
+    _gameManager.setContext(
+      transitionContext,
+      this as TickerProvider,
+      _captureCurrentGameFrameForTransition,
+    );
+  }
+
+  Future<ui.Image?> _captureCurrentGameFrameForTransition() async {
+    try {
+      final boundaryContext = _saveThumbnailCaptureBoundaryKey.currentContext;
+      if (boundaryContext == null) {
+        return null;
+      }
+
+      final renderObject = boundaryContext.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) {
+        return null;
+      }
+
+      var needsPaint = false;
+      assert(() {
+        needsPaint = renderObject.debugNeedsPaint;
+        return true;
+      }());
+      if (needsPaint) {
+        await WidgetsBinding.instance.endOfFrame;
+      }
+
+      final size = renderObject.size;
+      if (size.width <= 0 || size.height <= 0) {
+        return null;
+      }
+
+      final devicePixelRatio = View.of(context).devicePixelRatio;
+      final pixelRatio = devicePixelRatio.clamp(0.75, 1.25).toDouble();
+      return renderObject.toImage(pixelRatio: pixelRatio);
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('[GamePlayScreen] 捕获转场帧失败: $e');
+      }
+      return null;
+    }
   }
 
   void _setStateIfMounted(VoidCallback update) {

@@ -1,6 +1,4 @@
 PODS:
-  - audio_session (0.0.1):
-    - FlutterMacOS
   - flutter_avif_macos (0.0.1):
     - FlutterMacOS
   - flutter_steamworks (0.0.1):
@@ -10,50 +8,27 @@ PODS:
   - hotkey_manager_macos (0.0.1):
     - FlutterMacOS
     - HotKey
-  - just_audio (0.0.1):
-    - Flutter
-    - FlutterMacOS
   - media_kit_libs_macos_video (1.0.4):
     - FlutterMacOS
   - media_kit_video (0.0.1):
     - FlutterMacOS
-  - package_info_plus (0.0.1):
-    - FlutterMacOS
   - screen_retriever_macos (0.0.1):
-    - FlutterMacOS
-  - sqflite_darwin (0.0.4):
-    - Flutter
-    - FlutterMacOS
-  - volume_controller (0.0.1):
-    - FlutterMacOS
-  - wakelock_plus (0.0.1):
-    - FlutterMacOS
-  - window_manager (0.5.0):
     - FlutterMacOS
 
 DEPENDENCIES:
-  - audio_session (from `Flutter/ephemeral/.symlinks/plugins/audio_session/macos`)
   - flutter_avif_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_avif_macos/macos`)
   - flutter_steamworks (from `Flutter/ephemeral/.symlinks/plugins/flutter_steamworks/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - hotkey_manager_macos (from `Flutter/ephemeral/.symlinks/plugins/hotkey_manager_macos/macos`)
-  - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
   - media_kit_libs_macos_video (from `Flutter/ephemeral/.symlinks/plugins/media_kit_libs_macos_video/macos`)
   - media_kit_video (from `Flutter/ephemeral/.symlinks/plugins/media_kit_video/macos`)
-  - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - screen_retriever_macos (from `Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos`)
-  - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
-  - volume_controller (from `Flutter/ephemeral/.symlinks/plugins/volume_controller/macos`)
-  - wakelock_plus (from `Flutter/ephemeral/.symlinks/plugins/wakelock_plus/macos`)
-  - window_manager (from `Flutter/ephemeral/.symlinks/plugins/window_manager/macos`)
 
 SPEC REPOS:
   trunk:
     - HotKey
 
 EXTERNAL SOURCES:
-  audio_session:
-    :path: Flutter/ephemeral/.symlinks/plugins/audio_session/macos
   flutter_avif_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_avif_macos/macos
   flutter_steamworks:
@@ -62,41 +37,22 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
   hotkey_manager_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/hotkey_manager_macos/macos
-  just_audio:
-    :path: Flutter/ephemeral/.symlinks/plugins/just_audio/darwin
   media_kit_libs_macos_video:
     :path: Flutter/ephemeral/.symlinks/plugins/media_kit_libs_macos_video/macos
   media_kit_video:
     :path: Flutter/ephemeral/.symlinks/plugins/media_kit_video/macos
-  package_info_plus:
-    :path: Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos
   screen_retriever_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos
-  sqflite_darwin:
-    :path: Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin
-  volume_controller:
-    :path: Flutter/ephemeral/.symlinks/plugins/volume_controller/macos
-  wakelock_plus:
-    :path: Flutter/ephemeral/.symlinks/plugins/wakelock_plus/macos
-  window_manager:
-    :path: Flutter/ephemeral/.symlinks/plugins/window_manager/macos
 
 SPEC CHECKSUMS:
-  audio_session: eaca2512cf2b39212d724f35d11f46180ad3a33e
   flutter_avif_macos: 9ed61d67adfbd6964eccb59971020fb55c31fc11
   flutter_steamworks: 24d022b3907352a560fb585b4951e09ce9a031d0
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   HotKey: 400beb7caa29054ea8d864c96f5ba7e5b4852277
   hotkey_manager_macos: a4317849af96d2430fa89944d3c58977ca089fbe
-  just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
   media_kit_libs_macos_video: 85a23e549b5f480e72cae3e5634b5514bc692f65
   media_kit_video: fa6564e3799a0a28bff39442334817088b7ca758
-  package_info_plus: f0052d280d17aa382b932f399edf32507174e870
   screen_retriever_macos: 452e51764a9e1cdb74b3c541238795849f21557f
-  sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
-  volume_controller: 5c068e6d085c80dadd33fc2c918d2114b775b3dd
-  wakelock_plus: 917609be14d812ddd9e9528876538b2263aaa03b
-  window_manager: b729e31d38fb04905235df9ea896128991cad99e
 
 PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
 
