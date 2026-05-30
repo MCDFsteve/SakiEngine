@@ -11,6 +11,10 @@ class MoviePlayer extends StatefulWidget {
   final bool autoPlay;
   final bool looping;
   final int? repeatCount; // null 表示仅播放一次
+  final Duration? loopStart;
+  final bool backgroundMode;
+  final BoxFit fit;
+  final Alignment alignment;
 
   const MoviePlayer({
     super.key,
@@ -19,6 +23,10 @@ class MoviePlayer extends StatefulWidget {
     this.autoPlay = true,
     this.looping = false,
     this.repeatCount,
+    this.loopStart,
+    this.backgroundMode = false,
+    this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -85,7 +93,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
       _listenPlayerEvents();
 
       final playlistMode =
-          widget.looping ? PlaylistMode.loop : PlaylistMode.none;
+          widget.looping && widget.loopStart == null
+              ? PlaylistMode.loop
+              : PlaylistMode.none;
       await _player!.setPlaylistMode(playlistMode);
 
       final mediaSource = _buildMediaSource(videoPath);
@@ -117,7 +127,19 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   void _handlePlaybackCompleted() async {
-    if (_player == null || _hasCalledOnEnd || widget.looping) {
+    if (_player == null) {
+      return;
+    }
+
+    if (widget.looping && widget.loopStart != null) {
+      try {
+        await _player!.seek(widget.loopStart!);
+        await _player!.play();
+      } catch (_) {}
+      return;
+    }
+
+    if (_hasCalledOnEnd || widget.looping) {
       return;
     }
 
@@ -198,6 +220,12 @@ class _MoviePlayerState extends State<MoviePlayer> {
   @override
   Widget build(BuildContext context) {
     if (_hasError) {
+      if (widget.backgroundMode) {
+        return const SizedBox.expand(
+          child: ColoredBox(color: Colors.black),
+        );
+      }
+
       if (_errorMessage?.contains('视频文件名为空') == true) {
         return const SizedBox.shrink();
       }
@@ -217,6 +245,12 @@ class _MoviePlayerState extends State<MoviePlayer> {
     }
 
     if (!_isInitialized || _videoController == null) {
+      if (widget.backgroundMode) {
+        return const SizedBox.expand(
+          child: ColoredBox(color: Colors.black),
+        );
+      }
+
       return Container(
         color: Colors.black,
         child: const Center(
@@ -232,7 +266,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
         color: Colors.black,
         child: Video(
           controller: _videoController!,
-          fit: BoxFit.cover,
+          fit: widget.fit,
+          alignment: widget.alignment,
           controls: null,
           fill: Colors.black,
         ),
