@@ -68,6 +68,12 @@ import 'package:sakiengine/src/utils/music_manager.dart';
 
 part 'game_play_screen_interactions.dart';
 
+typedef InitialLoadingOverlayBuilder = Widget Function(
+  BuildContext context,
+  bool readyToComplete,
+  VoidCallback onCompleted,
+);
+
 enum _CommandDebugMenuMode {
   expression,
   character,
@@ -80,7 +86,7 @@ class GamePlayScreen extends StatefulWidget {
   final VoidCallback? onReturnToMenu;
   final Function(SaveSlot)? onLoadGame;
   final GameModule? gameModule;
-  final WidgetBuilder? initialLoadingOverlayBuilder;
+  final InitialLoadingOverlayBuilder? initialLoadingOverlayBuilder;
 
   const GamePlayScreen({
     super.key,
@@ -176,6 +182,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   late Animation<double> _loadingFadeAnimation;
   bool _isInitialLoading = true;
   bool _initialLoadingReleaseScheduled = false;
+  bool _initialLoadingReadyToComplete = false;
   Uint8List? _frozenSaveThumbnailFrame;
 
   bool get _isAnyCommandMenuOpen =>
@@ -408,15 +415,25 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _showNotificationMessage('读档成功');
         // 设置context用于转场效果
-        _gameManager.setContext(context, this as TickerProvider);
+        _setGameManagerTransitionContext();
       });
     } else {
       _gameManager.startGame(_currentScript);
       // 延迟设置context，确保组件已mounted
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _gameManager.setContext(context, this as TickerProvider);
+        _setGameManagerTransitionContext();
       });
     }
+  }
+
+  void _setGameManagerTransitionContext() {
+    if (!mounted) {
+      return;
+    }
+
+    final transitionContext =
+        _saveThumbnailCaptureBoundaryKey.currentContext ?? context;
+    _gameManager.setContext(transitionContext, this as TickerProvider);
   }
 
   void _setStateIfMounted(VoidCallback update) {
@@ -463,14 +480,28 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       if (!mounted || !_isInitialLoading) {
         return;
       }
-      _isInitialLoading = false;
-      _loadingFadeController.forward();
+
+      final loadingBuilder = widget.initialLoadingOverlayBuilder;
+      if (loadingBuilder == null) {
+        _startInitialLoadingFadeOut();
+        return;
+      }
+
+      setState(() {
+        _initialLoadingReadyToComplete = true;
+      });
     });
   }
 
   Widget _buildInitialLoadingOverlayLayer(BuildContext context) {
-    final overlayContent = widget.initialLoadingOverlayBuilder?.call(context) ??
-        const ColoredBox(color: Colors.black);
+    final loadingBuilder = widget.initialLoadingOverlayBuilder;
+    final overlayContent = loadingBuilder == null
+        ? const ColoredBox(color: Colors.black)
+        : loadingBuilder(
+            context,
+            _initialLoadingReadyToComplete,
+            _handleInitialLoadingAnimationCompleted,
+          );
 
     return Positioned.fill(
       child: AnimatedBuilder(
@@ -482,7 +513,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
             return const SizedBox.shrink();
           }
 
-          return IgnorePointer(
+          return AbsorbPointer(
             child: Opacity(
               opacity: opacity.clamp(0.0, 1.0).toDouble(),
               child: child,
@@ -491,6 +522,28 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         },
       ),
     );
+  }
+
+  void _handleInitialLoadingAnimationCompleted() {
+    if (!mounted || !_isInitialLoading) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isInitialLoading) {
+        return;
+      }
+      _startInitialLoadingFadeOut();
+    });
+  }
+
+  void _startInitialLoadingFadeOut() {
+    if (!_isInitialLoading) {
+      return;
+    }
+
+    _isInitialLoading = false;
+    _loadingFadeController.forward();
   }
 
   @override

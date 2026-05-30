@@ -384,16 +384,11 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
   }
 
   void _enterGame({SaveSlot? saveSlot}) {
-    TransitionOverlayManager.instance.transition(
-      context: context,
-      onMidTransition: () {
-        setState(() {
-          _currentState = AppState.inGame;
-          _saveSlotToLoad = saveSlot;
-          _isReturningFromGame = false;
-        });
-      },
-    );
+    setState(() {
+      _currentState = AppState.inGame;
+      _saveSlotToLoad = saveSlot;
+      _isReturningFromGame = false;
+    });
   }
 
   Future<void> _continueGame() async {

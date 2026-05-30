@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/utils/engine_asset_loader.dart';
@@ -15,6 +16,7 @@ enum TransitionType {
   wipe, // 擦除效果 (未来扩展)
   slide, // 滑动效果 (未来扩展)
   blink, // 睁眼效果 (上下黑屏移开，模拟睁开眼睛)
+  pixel, // 像素化截图转场
 }
 
 /// 转场效果管理器
@@ -58,6 +60,9 @@ class SceneTransitionEffectManager {
     //print('[SceneTransition] 开始${transitionType.name}转场，时长: ${duration.inMilliseconds}ms');
 
     final completer = Completer<void>();
+    final oldFrame = transitionType == TransitionType.pixel
+        ? await _captureTransitionFrame(context)
+        : null;
 
     // 根据转场类型创建不同的覆盖层
     Widget transitionWidget;
@@ -112,6 +117,20 @@ class SceneTransitionEffectManager {
           },
         );
         break;
+      case TransitionType.pixel:
+        transitionWidget = _PixelTransitionOverlay(
+          duration: duration,
+          oldFrame: oldFrame,
+          captureFrame: () => _captureTransitionFrame(context),
+          onMidTransition: onMidTransition,
+          onComplete: () {
+            //print('[SceneTransition] pixel转场完成，移除覆盖层');
+            _removeOverlay();
+            _isTransitioning = false;
+            completer.complete();
+          },
+        );
+        break;
       default:
         // 默认使用fade效果
         transitionWidget = _FadeTransitionOverlay(
@@ -136,6 +155,38 @@ class SceneTransitionEffectManager {
     Overlay.of(context).insert(_overlayEntry!);
 
     return completer.future;
+  }
+
+  Future<ui.Image?> _captureTransitionFrame(BuildContext context) async {
+    try {
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) {
+        return null;
+      }
+
+      var needsPaint = false;
+      assert(() {
+        needsPaint = renderObject.debugNeedsPaint;
+        return true;
+      }());
+      if (needsPaint) {
+        await WidgetsBinding.instance.endOfFrame;
+      }
+
+      final size = renderObject.size;
+      if (size.width <= 0 || size.height <= 0) {
+        return null;
+      }
+
+      final devicePixelRatio = View.of(context).devicePixelRatio;
+      final pixelRatio = devicePixelRatio.clamp(0.75, 1.25).toDouble();
+      return renderObject.toImage(pixelRatio: pixelRatio);
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('[PixelTransition] 捕获转场帧失败: $e');
+      }
+      return null;
+    }
   }
 
   void _removeOverlay() {
@@ -650,6 +701,257 @@ class _WipeMaskPainter extends CustomPainter {
   }
 }
 
+/// 像素化截图转场覆盖层。
+///
+/// 先把旧画面逐渐放大为粗像素块，达到最大颗粒后执行场景切换并等待下一帧，
+/// 再捕获新画面并从粗像素块还原到正常画面。
+class _PixelTransitionOverlay extends StatefulWidget {
+  final Duration duration;
+  final ui.Image? oldFrame;
+  final Future<ui.Image?> Function() captureFrame;
+  final VoidCallback onMidTransition;
+  final VoidCallback onComplete;
+
+  const _PixelTransitionOverlay({
+    required this.duration,
+    required this.oldFrame,
+    required this.captureFrame,
+    required this.onMidTransition,
+    required this.onComplete,
+  });
+
+  @override
+  State<_PixelTransitionOverlay> createState() =>
+      _PixelTransitionOverlayState();
+}
+
+class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
+    with TickerProviderStateMixin {
+  late final AnimationController _pixelateController;
+  late final AnimationController _restoreController;
+  ui.Image? _newFrame;
+  bool _showNewFrame = false;
+  bool _midTransitionExecuted = false;
+  bool _completed = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final halfDuration = Duration(
+      milliseconds: math.max(120, widget.duration.inMilliseconds ~/ 2),
+    );
+    _pixelateController = AnimationController(
+      duration: halfDuration,
+      vsync: this,
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          unawaited(_runMidTransition());
+        }
+      });
+    _restoreController = AnimationController(
+      duration: halfDuration,
+      vsync: this,
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _complete();
+        }
+      });
+
+    _pixelateController.forward();
+  }
+
+  Future<void> _runMidTransition() async {
+    if (_midTransitionExecuted) {
+      return;
+    }
+    _midTransitionExecuted = true;
+
+    try {
+      await Future<void>.sync(widget.onMidTransition);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) {
+        return;
+      }
+
+      _newFrame = await widget.captureFrame();
+      if (!mounted) {
+        return;
+      }
+
+      if (_newFrame == null) {
+        _complete();
+        return;
+      }
+
+      setState(() {
+        _showNewFrame = true;
+      });
+      await _restoreController.forward();
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('[PixelTransition] 转场中点处理失败: $e');
+      }
+      _complete();
+    }
+  }
+
+  void _complete() {
+    if (_completed) {
+      return;
+    }
+    _completed = true;
+    widget.onComplete();
+  }
+
+  @override
+  void dispose() {
+    _pixelateController.dispose();
+    _restoreController.dispose();
+    widget.oldFrame?.dispose();
+    _newFrame?.dispose();
+    super.dispose();
+  }
+
+  double _maxBlockSize(Size size) {
+    if (size.isEmpty) {
+      return 48.0;
+    }
+    return math.min(96.0, math.max(32.0, size.shortestSide * 0.12));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: true,
+      child: Material(
+        color: Colors.transparent,
+        child: AnimatedBuilder(
+          animation: Listenable.merge([
+            _pixelateController,
+            _restoreController,
+          ]),
+          builder: (context, child) {
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final size = constraints.biggest;
+                final image = _showNewFrame ? _newFrame : widget.oldFrame;
+                if (image == null || size.isEmpty) {
+                  return const SizedBox.expand();
+                }
+
+                final maxBlockSize = _maxBlockSize(size);
+                final blockSize = _showNewFrame
+                    ? ui.lerpDouble(
+                        maxBlockSize,
+                        1.0,
+                        Curves.easeOutCubic.transform(
+                          _restoreController.value,
+                        ),
+                      )!
+                    : ui.lerpDouble(
+                        1.0,
+                        maxBlockSize,
+                        Curves.easeInCubic.transform(
+                          _pixelateController.value,
+                        ),
+                      )!;
+
+                return CustomPaint(
+                  painter: _PixelFramePainter(
+                    image: image,
+                    blockSize: blockSize,
+                  ),
+                  size: Size.infinite,
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _PixelFramePainter extends CustomPainter {
+  final ui.Image image;
+  final double blockSize;
+
+  const _PixelFramePainter({
+    required this.image,
+    required this.blockSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) {
+      return;
+    }
+
+    final destination = Offset.zero & size;
+    final source = _coverSourceRect(
+      imageSize: Size(image.width.toDouble(), image.height.toDouble()),
+      outputSize: size,
+    );
+
+    if (blockSize < 10.0) {
+      canvas.drawImageRect(
+        image,
+        source,
+        destination,
+        Paint()..filterQuality = FilterQuality.high,
+      );
+      return;
+    }
+
+    final block = blockSize.clamp(10.0, 128.0).toDouble();
+    final paint = Paint()..filterQuality = FilterQuality.none;
+
+    for (double y = 0; y < size.height; y += block) {
+      final drawHeight = math.min(block, size.height - y);
+      for (double x = 0; x < size.width; x += block) {
+        final drawWidth = math.min(block, size.width - x);
+        final srcLeft = source.left + (x / size.width) * source.width;
+        final srcTop = source.top + (y / size.height) * source.height;
+        final srcRight =
+            source.left + ((x + drawWidth) / size.width) * source.width;
+        final srcBottom =
+            source.top + ((y + drawHeight) / size.height) * source.height;
+
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTRB(srcLeft, srcTop, srcRight, srcBottom),
+          Rect.fromLTWH(x, y, drawWidth, drawHeight),
+          paint,
+        );
+      }
+    }
+  }
+
+  Rect _coverSourceRect({
+    required Size imageSize,
+    required Size outputSize,
+  }) {
+    final imageAspectRatio = imageSize.width / imageSize.height;
+    final outputAspectRatio = outputSize.width / outputSize.height;
+
+    if (imageAspectRatio > outputAspectRatio) {
+      final sourceWidth = imageSize.height * outputAspectRatio;
+      final sourceLeft = (imageSize.width - sourceWidth) / 2.0;
+      return Rect.fromLTWH(sourceLeft, 0.0, sourceWidth, imageSize.height);
+    }
+
+    final sourceHeight = imageSize.width / outputAspectRatio;
+    final sourceTop = (imageSize.height - sourceHeight) / 2.0;
+    return Rect.fromLTWH(0.0, sourceTop, imageSize.width, sourceHeight);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PixelFramePainter oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.blockSize != blockSize;
+  }
+}
+
 /// 睁眼转场覆盖层（淡入黑屏，然后上下睁眼显示新场景）
 class _BlinkTransitionOverlay extends StatefulWidget {
   final Duration duration;
@@ -843,6 +1145,11 @@ class TransitionTypeParser {
         return TransitionType.diss;
       case 'wipe':
         return TransitionType.wipe;
+      case 'pixel':
+      case 'pix':
+      case 'pixelate':
+      case 'pixelated':
+        return TransitionType.pixel;
       case 'slide':
         return TransitionType.slide;
       case 'blink':
