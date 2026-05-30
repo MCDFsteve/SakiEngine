@@ -80,6 +80,7 @@ class GamePlayScreen extends StatefulWidget {
   final VoidCallback? onReturnToMenu;
   final Function(SaveSlot)? onLoadGame;
   final GameModule? gameModule;
+  final WidgetBuilder? initialLoadingOverlayBuilder;
 
   const GamePlayScreen({
     super.key,
@@ -87,6 +88,7 @@ class GamePlayScreen extends StatefulWidget {
     this.onReturnToMenu,
     this.onLoadGame,
     this.gameModule,
+    this.initialLoadingOverlayBuilder,
   });
 
   @override
@@ -173,6 +175,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   late AnimationController _loadingFadeController;
   late Animation<double> _loadingFadeAnimation;
   bool _isInitialLoading = true;
+  bool _initialLoadingReleaseScheduled = false;
   Uint8List? _frozenSaveThumbnailFrame;
 
   bool get _isAnyCommandMenuOpen =>
@@ -423,6 +426,73 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     setState(update);
   }
 
+  bool _hasVisibleStartupText(GameState gameState) {
+    final hasNormalDialogue = !gameState.isNvlMode &&
+        (gameState.dialogue?.trim().isNotEmpty ?? false);
+    final hasNvlDialogue = gameState.isNvlMode &&
+        gameState.nvlDialogues.any(
+          (dialogue) => dialogue.dialogue.trim().isNotEmpty,
+        );
+    final hasMenuLeadingDialogue = gameState.currentNode is MenuNode &&
+        _gameManager.getDialogueHistory().any(
+              (entry) => entry.dialogue.trim().isNotEmpty,
+            );
+    final hasChoiceText = gameState.currentNode is MenuNode &&
+        (gameState.currentNode as MenuNode).choices.any(
+              (choice) => choice.text.trim().isNotEmpty,
+            );
+    final hasScriptOverlayText =
+        gameState.scriptOverlayText?.trim().isNotEmpty ?? false;
+
+    return hasNormalDialogue ||
+        hasNvlDialogue ||
+        hasMenuLeadingDialogue ||
+        hasChoiceText ||
+        hasScriptOverlayText;
+  }
+
+  void _scheduleInitialLoadingReleaseIfReady(GameState gameState) {
+    if (!_isInitialLoading ||
+        _initialLoadingReleaseScheduled ||
+        !_hasVisibleStartupText(gameState)) {
+      return;
+    }
+
+    _initialLoadingReleaseScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isInitialLoading) {
+        return;
+      }
+      _isInitialLoading = false;
+      _loadingFadeController.forward();
+    });
+  }
+
+  Widget _buildInitialLoadingOverlayLayer(BuildContext context) {
+    final overlayContent = widget.initialLoadingOverlayBuilder?.call(context) ??
+        const ColoredBox(color: Colors.black);
+
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _loadingFadeAnimation,
+        child: overlayContent,
+        builder: (context, child) {
+          final opacity = _loadingFadeAnimation.value;
+          if (opacity <= 0.0) {
+            return const SizedBox.shrink();
+          }
+
+          return IgnorePointer(
+            child: Opacity(
+              opacity: opacity.clamp(0.0, 1.0).toDouble(),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _settingsManager.removeListener(_handleSettingsChanged);
@@ -582,20 +652,19 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                     context: context,
                     gameState: GameState.initial(),
                   );
-                  if (fallbackSceneBaseLayer != null) {
-                    return Stack(children: [fallbackSceneBaseLayer]);
-                  }
-                  return const ColoredBox(color: Colors.black);
+                  final fallback = fallbackSceneBaseLayer ??
+                      const ColoredBox(color: Colors.black);
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      fallback,
+                      _buildInitialLoadingOverlayLayer(context),
+                    ],
+                  );
                 }
                 final gameState = snapshot.data!;
 
-                // 首次加载完成，触发淡出动画
-                if (_isInitialLoading) {
-                  _isInitialLoading = false;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _loadingFadeController.forward();
-                  });
-                }
+                _scheduleInitialLoadingReleaseIfReady(gameState);
 
                 // 检测从电影模式退出，播放退出动画
                 if (_previousIsNvlMode &&
@@ -709,7 +778,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                   _toggleSettingsOverlayForCapture();
                                 },
                                 onToggleDeveloperPanel: () => setState(
-                                  () => _showDeveloperPanel = !_showDeveloperPanel,
+                                  () => _showDeveloperPanel =
+                                      !_showDeveloperPanel,
                                 ),
                                 onToggleDebugPanel: () => setState(
                                   () => _showDebugPanel = !_showDebugPanel,
@@ -753,82 +823,85 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                   _expressionWheelSpeakerInfo != null &&
                                   _expressionWheelExpressions.isNotEmpty)
                                 ExpressionRadialWheel(
-                              characterName:
-                                  _expressionWheelSpeakerInfo!.speakerName,
-                              currentExpression: _expressionWheelSpeakerInfo!
-                                  .currentExpression,
-                              expressions: _expressionWheelExpressions,
-                              expressionImagePaths: _expressionWheelImagePaths,
-                              center: _expressionWheelCenter ??
-                                  Offset(
-                                    MediaQuery.of(context).size.width / 2,
-                                    MediaQuery.of(context).size.height / 2,
-                                  ),
-                              onHighlightedExpressionChanged: (expression) {
-                                _expressionWheelHighlightedExpression =
-                                    expression;
-                              },
-                            ),
-                          if (kEngineDebugMode &&
-                              _showCharacterWheel &&
-                              _characterWheelOptions.isNotEmpty)
-                            CommandRadialWheel(
-                              title: '切换角色',
-                              options: _characterWheelOptions,
-                              currentOptionId: _characterWheelCurrentId,
-                              center: _expressionWheelCenter ??
-                                  Offset(
-                                    MediaQuery.of(context).size.width / 2,
-                                    MediaQuery.of(context).size.height / 2,
-                                  ),
-                              onHighlightedOptionChanged: (optionId) {
-                                _characterWheelHighlightedId = optionId;
-                              },
-                            ),
-                          if (kEngineDebugMode &&
-                              _showBackgroundGridMenu &&
-                              _backgroundGridOptions.isNotEmpty)
-                            CommandGridMenu(
-                              title: '切换背景',
-                              applyHint: 'Double Click To Apply',
-                              options: _backgroundGridOptions,
-                              currentOptionId: _backgroundGridCurrentId,
-                              center: _expressionWheelCenter ??
-                                  Offset(
-                                    MediaQuery.of(context).size.width / 2,
-                                    MediaQuery.of(context).size.height / 2,
-                                  ),
-                              onHighlightedOptionChanged: (optionId) {
-                                _backgroundGridHighlightedId = optionId;
-                              },
-                              onOptionDoubleTap: (_) {
-                                unawaited(
-                                    _applyBackgroundGridSelectionAndClose());
-                              },
-                            ),
-                          if (kEngineDebugMode &&
-                              _showMusicGridMenu &&
-                              _musicGridOptions.isNotEmpty)
-                            CommandGridMenu(
-                              title: '切换音乐',
-                              applyHint: 'Double Click To Apply',
-                              options: _musicGridOptions,
-                              currentOptionId: _musicGridCurrentId,
-                              center: _expressionWheelCenter ??
-                                  Offset(
-                                    MediaQuery.of(context).size.width / 2,
-                                    MediaQuery.of(context).size.height / 2,
-                                  ),
-                              onHighlightedOptionChanged: (optionId) {
-                                _musicGridHighlightedId = optionId;
-                                unawaited(
-                                  _previewMusicSelectionIfNeeded(optionId),
-                                );
-                              },
-                              onOptionDoubleTap: (_) {
-                                unawaited(_applyMusicGridSelectionAndClose());
-                              },
-                            ),
+                                  characterName:
+                                      _expressionWheelSpeakerInfo!.speakerName,
+                                  currentExpression:
+                                      _expressionWheelSpeakerInfo!
+                                          .currentExpression,
+                                  expressions: _expressionWheelExpressions,
+                                  expressionImagePaths:
+                                      _expressionWheelImagePaths,
+                                  center: _expressionWheelCenter ??
+                                      Offset(
+                                        MediaQuery.of(context).size.width / 2,
+                                        MediaQuery.of(context).size.height / 2,
+                                      ),
+                                  onHighlightedExpressionChanged: (expression) {
+                                    _expressionWheelHighlightedExpression =
+                                        expression;
+                                  },
+                                ),
+                              if (kEngineDebugMode &&
+                                  _showCharacterWheel &&
+                                  _characterWheelOptions.isNotEmpty)
+                                CommandRadialWheel(
+                                  title: '切换角色',
+                                  options: _characterWheelOptions,
+                                  currentOptionId: _characterWheelCurrentId,
+                                  center: _expressionWheelCenter ??
+                                      Offset(
+                                        MediaQuery.of(context).size.width / 2,
+                                        MediaQuery.of(context).size.height / 2,
+                                      ),
+                                  onHighlightedOptionChanged: (optionId) {
+                                    _characterWheelHighlightedId = optionId;
+                                  },
+                                ),
+                              if (kEngineDebugMode &&
+                                  _showBackgroundGridMenu &&
+                                  _backgroundGridOptions.isNotEmpty)
+                                CommandGridMenu(
+                                  title: '切换背景',
+                                  applyHint: 'Double Click To Apply',
+                                  options: _backgroundGridOptions,
+                                  currentOptionId: _backgroundGridCurrentId,
+                                  center: _expressionWheelCenter ??
+                                      Offset(
+                                        MediaQuery.of(context).size.width / 2,
+                                        MediaQuery.of(context).size.height / 2,
+                                      ),
+                                  onHighlightedOptionChanged: (optionId) {
+                                    _backgroundGridHighlightedId = optionId;
+                                  },
+                                  onOptionDoubleTap: (_) {
+                                    unawaited(
+                                        _applyBackgroundGridSelectionAndClose());
+                                  },
+                                ),
+                              if (kEngineDebugMode &&
+                                  _showMusicGridMenu &&
+                                  _musicGridOptions.isNotEmpty)
+                                CommandGridMenu(
+                                  title: '切换音乐',
+                                  applyHint: 'Double Click To Apply',
+                                  options: _musicGridOptions,
+                                  currentOptionId: _musicGridCurrentId,
+                                  center: _expressionWheelCenter ??
+                                      Offset(
+                                        MediaQuery.of(context).size.width / 2,
+                                        MediaQuery.of(context).size.height / 2,
+                                      ),
+                                  onHighlightedOptionChanged: (optionId) {
+                                    _musicGridHighlightedId = optionId;
+                                    unawaited(
+                                      _previewMusicSelectionIfNeeded(optionId),
+                                    );
+                                  },
+                                  onOptionDoubleTap: (_) {
+                                    unawaited(
+                                        _applyMusicGridSelectionAndClose());
+                                  },
+                                ),
                               if (kEngineDebugMode && _showFloatingScriptEditor)
                                 FloatingScriptEditorOverlay(
                                   gameManager: _gameManager,
@@ -839,20 +912,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                     () => _showFloatingScriptEditor = false,
                                   ),
                                 ),
-                              // 加载淡出覆盖层 - 不会被隐藏
-                              AnimatedBuilder(
-                                animation: _loadingFadeAnimation,
-                                builder: (context, child) {
-                                  if (_loadingFadeAnimation.value <= 0.0) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return ColoredBox(
-                                    color: Colors.black.withOpacity(
-                                      _loadingFadeAnimation.value,
-                                    ),
-                                  );
-                                },
-                              ),
+                              // 加载覆盖层：等第一段文本进入 UI 后再淡出。
+                              _buildInitialLoadingOverlayLayer(context),
                             ],
                           ),
                         ),
@@ -1309,8 +1370,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
       final maskType = (characterState.maskType ?? '').trim().toLowerCase();
       if (maskType == 'silhouette') {
-        final parsedMaskColor =
-            parseColor(characterState.maskColor?.trim()) ?? const Color(0xFFFFFFFF);
+        final parsedMaskColor = parseColor(characterState.maskColor?.trim()) ??
+            const Color(0xFFFFFFFF);
         finalWidget = ColorFiltered(
           colorFilter: ColorFilter.mode(parsedMaskColor, BlendMode.srcIn),
           child: finalWidget,
