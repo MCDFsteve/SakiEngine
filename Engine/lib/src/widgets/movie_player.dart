@@ -16,6 +16,8 @@ class MoviePlayer extends StatefulWidget {
   final bool backgroundMode;
   final bool pingPongLoop;
   final String? pingPongReverseMovieFile;
+  final String? sequentialMovieFile;
+  final bool sequentialLooping;
   final BoxFit fit;
   final Alignment alignment;
 
@@ -32,6 +34,8 @@ class MoviePlayer extends StatefulWidget {
     this.backgroundMode = false,
     this.pingPongLoop = false,
     this.pingPongReverseMovieFile,
+    this.sequentialMovieFile,
+    this.sequentialLooping = false,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
   });
@@ -78,8 +82,12 @@ class _MoviePlayerState extends State<MoviePlayer> {
   bool get _isPingPongLoopEnabled =>
       widget.pingPongLoop && widget.loopStart != null;
 
+  bool get _hasSequentialFollowUp =>
+      widget.sequentialMovieFile != null &&
+      widget.sequentialMovieFile!.trim().isNotEmpty;
+
   bool get _hasPreparedPingPongReverseSource =>
-      _isPingPongLoopEnabled &&
+      (_isPingPongLoopEnabled || _hasSequentialFollowUp) &&
       _primaryMediaSource != null &&
       _pingPongReverseMediaSource != null;
 
@@ -108,7 +116,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
         oldWidget.loopStart != widget.loopStart ||
         oldWidget.backgroundMode != widget.backgroundMode ||
         oldWidget.pingPongLoop != widget.pingPongLoop ||
-        oldWidget.pingPongReverseMovieFile != widget.pingPongReverseMovieFile;
+        oldWidget.pingPongReverseMovieFile != widget.pingPongReverseMovieFile ||
+        oldWidget.sequentialMovieFile != widget.sequentialMovieFile ||
+        oldWidget.sequentialLooping != widget.sequentialLooping;
     if (shouldReinitialize) {
       _initializeVideo();
       return;
@@ -159,16 +169,26 @@ class _MoviePlayerState extends State<MoviePlayer> {
       }
 
       final reverseMovieFile = widget.pingPongReverseMovieFile?.trim();
+      final sequentialMovieFile = widget.sequentialMovieFile?.trim();
       String? reverseVideoPath;
-      if (_isPingPongLoopEnabled &&
-          reverseMovieFile != null &&
-          reverseMovieFile.isNotEmpty) {
+      if (reverseMovieFile != null && reverseMovieFile.isNotEmpty) {
         reverseVideoPath = await _resolveMoviePath(reverseMovieFile);
 
         if (!mounted) return;
 
         if (reverseVideoPath == null) {
           _setError('找不到反向视频文件: $reverseMovieFile');
+          return;
+        }
+      } else if (_hasSequentialFollowUp &&
+          sequentialMovieFile != null &&
+          sequentialMovieFile.isNotEmpty) {
+        reverseVideoPath = await _resolveMoviePath(sequentialMovieFile);
+
+        if (!mounted) return;
+
+        if (reverseVideoPath == null) {
+          _setError('找不到后续视频文件: $sequentialMovieFile');
           return;
         }
       }
@@ -243,7 +263,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   void _handlePingPongPosition(Duration position) {
-    if (!_isPingPongLoopEnabled || _isPingPongTransitioning) {
+    if ((!_isPingPongLoopEnabled && !_hasSequentialFollowUp) ||
+        _isPingPongTransitioning) {
       return;
     }
 
@@ -424,12 +445,27 @@ class _MoviePlayerState extends State<MoviePlayer> {
     final player = _player;
     final reversePlayer = _reversePlayer;
     final loopStart = widget.loopStart;
-    if (!_isPingPongLoopEnabled ||
-        !_showReversePlayer ||
+    if (!_showReversePlayer ||
         player == null ||
         reversePlayer == null ||
-        loopStart == null ||
         _isPingPongTransitioning) {
+      return;
+    }
+
+    if (_hasSequentialFollowUp) {
+      if (widget.sequentialLooping) {
+        try {
+          await reversePlayer.seek(Duration.zero);
+          if (widget.autoPlay) {
+            await reversePlayer.play();
+          }
+          await _applyBackgroundVolume(reversePlayer);
+        } catch (_) {}
+      }
+      return;
+    }
+
+    if (!_isPingPongLoopEnabled || loopStart == null) {
       return;
     }
 
@@ -446,7 +482,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
         await player.play();
       }
       await _applyBackgroundVolume(player);
-      unawaited(_prepareReversePlayerForNextCycle());
+      if (_isPingPongLoopEnabled) {
+        unawaited(_prepareReversePlayerForNextCycle());
+      }
     } catch (_) {
     } finally {
       _isPingPongTransitioning = false;
@@ -556,6 +594,23 @@ class _MoviePlayerState extends State<MoviePlayer> {
         await _switchPingPongToForward();
       } else {
         await _startPingPongReverse();
+      }
+      return;
+    }
+
+    if (_hasSequentialFollowUp) {
+      if (_hasPreparedPingPongReverseSource) {
+        if (_isPingPongTransitioning) {
+          return;
+        }
+        if (!_reversePrewarmStarted) {
+          unawaited(_prewarmPreparedPingPongReversePlayer());
+        }
+        if (_reversePlayerReady) {
+          await _switchPingPongToReversePlayer();
+        } else {
+          _pendingSwitchToReversePlayer = true;
+        }
       }
       return;
     }
