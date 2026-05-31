@@ -61,6 +61,7 @@ import 'package:sakiengine/src/utils/auto_play_manager.dart'; // 新增：自动
 import 'package:sakiengine/src/utils/read_text_tracker.dart';
 import 'package:sakiengine/src/utils/read_text_skip_manager.dart';
 import 'package:sakiengine/src/utils/settings_manager.dart';
+import 'package:sakiengine/src/effects/scene_transition_effects.dart';
 import 'package:sakiengine/src/widgets/movie_player.dart'; // 新增：视频播放器导入
 import 'package:sakiengine/src/utils/dialogue_shake_effect.dart'; // 新增：震动效果导入
 import 'package:sakiengine/src/rendering/image_sampling.dart';
@@ -87,6 +88,8 @@ class GamePlayScreen extends StatefulWidget {
   final Function(SaveSlot)? onLoadGame;
   final GameModule? gameModule;
   final InitialLoadingOverlayBuilder? initialLoadingOverlayBuilder;
+  final String? initialLoadingCompletionTransitionType;
+  final Duration initialLoadingCompletionTransitionDuration;
 
   const GamePlayScreen({
     super.key,
@@ -95,6 +98,9 @@ class GamePlayScreen extends StatefulWidget {
     this.onLoadGame,
     this.gameModule,
     this.initialLoadingOverlayBuilder,
+    this.initialLoadingCompletionTransitionType,
+    this.initialLoadingCompletionTransitionDuration =
+        const Duration(milliseconds: 900),
   });
 
   @override
@@ -183,6 +189,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _isInitialLoading = true;
   bool _initialLoadingReleaseScheduled = false;
   bool _initialLoadingReadyToComplete = false;
+  bool _initialLoadingCompletionTransitionRunning = false;
   Uint8List? _frozenSaveThumbnailFrame;
 
   bool get _isAnyCommandMenuOpen =>
@@ -575,7 +582,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   }
 
   void _handleInitialLoadingAnimationCompleted() {
-    if (!mounted || !_isInitialLoading) {
+    if (!mounted ||
+        !_isInitialLoading ||
+        _initialLoadingCompletionTransitionRunning) {
       return;
     }
 
@@ -583,8 +592,55 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       if (!mounted || !_isInitialLoading) {
         return;
       }
-      _startInitialLoadingFadeOut();
+      _startInitialLoadingCompletion();
     });
+  }
+
+  void _startInitialLoadingCompletion() {
+    final transitionType =
+        widget.initialLoadingCompletionTransitionType?.trim();
+    if (transitionType == null || transitionType.isEmpty) {
+      _startInitialLoadingFadeOut();
+      return;
+    }
+    _startInitialLoadingCompletionTransition(transitionType);
+  }
+
+  void _completeInitialLoadingImmediately() {
+    if (!_isInitialLoading) {
+      return;
+    }
+
+    _isInitialLoading = false;
+    _loadingFadeController.value = 1.0;
+  }
+
+  Future<void> _startInitialLoadingCompletionTransition(
+    String transitionType,
+  ) async {
+    if (_initialLoadingCompletionTransitionRunning) {
+      return;
+    }
+
+    _initialLoadingCompletionTransitionRunning = true;
+    try {
+      if (SceneTransitionEffectManager.instance.isTransitioning) {
+        _startInitialLoadingFadeOut();
+        return;
+      }
+      await SceneTransitionEffectManager.instance.transition(
+        context: context,
+        transitionType:
+            TransitionTypeParser.parseTransitionType(transitionType),
+        duration: widget.initialLoadingCompletionTransitionDuration,
+        captureFrame: _captureCurrentGameFrameForTransition,
+        onMidTransition: () {
+          _completeInitialLoadingImmediately();
+        },
+      );
+    } finally {
+      _initialLoadingCompletionTransitionRunning = false;
+    }
   }
 
   void _startInitialLoadingFadeOut() {
@@ -799,8 +855,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                     final newIsShowingMenu = gameState.currentNode is MenuNode;
                     if (_isShowingMenu != newIsShowingMenu) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted || _isShowingMenu == newIsShowingMenu)
+                        if (!mounted || _isShowingMenu == newIsShowingMenu) {
                           return;
+                        }
                         if (!_isShowingMenu && newIsShowingMenu) {
                           // 选择菜单出现，强制停止自动播放
                           _autoPlayManager?.forceStopOnBlocking();

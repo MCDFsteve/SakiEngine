@@ -43,15 +43,20 @@ class MoviePlayer extends StatefulWidget {
 class _MoviePlayerState extends State<MoviePlayer> {
   static const Duration _pingPongReverseEntryOffset =
       Duration(milliseconds: 120);
+  static const Duration _pingPongReversePrewarmLead = Duration(seconds: 5);
 
   Player? _player;
   VideoController? _videoController;
+  Player? _reversePlayer;
+  VideoController? _reverseVideoController;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
   StreamSubscription<String>? _errorSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<int?>? _widthSubscription;
+  StreamSubscription<bool>? _reverseCompletedSubscription;
+  StreamSubscription<String>? _reverseErrorSubscription;
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
@@ -63,7 +68,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
   bool _hasVideoSize = false;
   bool _isPingPongReversePhase = false;
   bool _isPingPongTransitioning = false;
-  bool _isPreparedPingPongLoopActive = false;
+  bool _reversePrewarmStarted = false;
+  bool _reversePlayerReady = false;
+  bool _showReversePlayer = false;
+  bool _pendingSwitchToReversePlayer = false;
   String? _primaryMediaSource;
   String? _pingPongReverseMediaSource;
 
@@ -113,6 +121,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
   Future<void> _initializeVideo() async {
     await _disposePlayer();
+    await _disposeReversePlayer();
 
     try {
       if (widget.movieFile.isEmpty) {
@@ -132,7 +141,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
         _hasVideoSize = false;
         _isPingPongReversePhase = false;
         _isPingPongTransitioning = false;
-        _isPreparedPingPongLoopActive = false;
+        _reversePrewarmStarted = false;
+        _reversePlayerReady = false;
+        _showReversePlayer = false;
+        _pendingSwitchToReversePlayer = false;
       });
       _primaryMediaSource = null;
       _pingPongReverseMediaSource = null;
@@ -231,14 +243,17 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   void _handlePingPongPosition(Duration position) {
-    if (!_isPingPongLoopEnabled ||
-        _hasPreparedPingPongReverseSource ||
-        _isPingPongTransitioning) {
+    if (!_isPingPongLoopEnabled || _isPingPongTransitioning) {
       return;
     }
 
     final loopStart = widget.loopStart;
     if (loopStart == null) {
+      return;
+    }
+
+    if (_hasPreparedPingPongReverseSource) {
+      _maybePrewarmPreparedPingPongReverse(position);
       return;
     }
 
@@ -248,6 +263,87 @@ class _MoviePlayerState extends State<MoviePlayer> {
         unawaited(_switchPingPongToForward());
       }
     }
+  }
+
+  void _maybePrewarmPreparedPingPongReverse(Duration position) {
+    if (_reversePrewarmStarted || _reversePlayerReady) {
+      return;
+    }
+
+    final duration = _currentDuration();
+    if (duration == null || duration <= Duration.zero) {
+      return;
+    }
+
+    final remaining = duration - position;
+    if (remaining <= _pingPongReversePrewarmLead) {
+      unawaited(_prewarmPreparedPingPongReversePlayer());
+    }
+  }
+
+  Future<void> _prewarmPreparedPingPongReversePlayer() async {
+    final reverseSource = _pingPongReverseMediaSource;
+    if (!_hasPreparedPingPongReverseSource ||
+        reverseSource == null ||
+        _reversePrewarmStarted) {
+      return;
+    }
+
+    _reversePrewarmStarted = true;
+    final player = Player();
+    final controller = VideoController(player);
+
+    _reversePlayer = player;
+    _reverseVideoController = controller;
+    _listenReversePlayerEvents();
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    try {
+      await player.setPlaylistMode(PlaylistMode.none);
+      await _applyBackgroundVolume(player);
+      await player.open(Media(reverseSource), play: false);
+      await _applyBackgroundVolume(player);
+      await controller.waitUntilFirstFrameRendered;
+
+      if (!mounted || _reversePlayer != player) {
+        return;
+      }
+
+      setState(() {
+        _reversePlayerReady = true;
+      });
+
+      if (_pendingSwitchToReversePlayer) {
+        _pendingSwitchToReversePlayer = false;
+        unawaited(_switchPingPongToReversePlayer());
+      }
+    } catch (_) {
+      if (_reversePlayer == player) {
+        await _disposeReversePlayer();
+      } else {
+        await player.dispose();
+      }
+    }
+  }
+
+  void _listenReversePlayerEvents() {
+    final player = _reversePlayer;
+    if (player == null) return;
+
+    _reverseCompletedSubscription = player.stream.completed.listen((completed) {
+      if (completed) {
+        unawaited(_handleReversePlaybackCompleted());
+      }
+    });
+
+    _reverseErrorSubscription = player.stream.error.listen((message) {
+      if (message.isNotEmpty) {
+        unawaited(_disposeReversePlayer());
+      }
+    });
   }
 
   void _maybeReportVideoReady() {
@@ -273,18 +369,100 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   Future<void> _syncPlaybackWithAutoPlay() async {
-    final player = _player;
-    if (player == null || !_isInitialized) {
+    if (_player == null || !_isInitialized) {
       return;
     }
 
     try {
       if (widget.autoPlay) {
-        await player.play();
+        final activePlayer = _showReversePlayer ? _reversePlayer : _player;
+        final inactivePlayer = _showReversePlayer ? _player : _reversePlayer;
+        await inactivePlayer?.pause();
+        await activePlayer?.play();
       } else {
-        await player.pause();
+        await _player?.pause();
+        await _reversePlayer?.pause();
       }
-      await _applyBackgroundVolume();
+      await _applyBackgroundVolume(_player);
+      await _applyBackgroundVolume(_reversePlayer);
+    } catch (_) {}
+  }
+
+  Future<void> _switchPingPongToReversePlayer() async {
+    final reversePlayer = _reversePlayer;
+    if (reversePlayer == null || !_reversePlayerReady) {
+      _pendingSwitchToReversePlayer = true;
+      if (!_reversePrewarmStarted) {
+        unawaited(_prewarmPreparedPingPongReversePlayer());
+      }
+      return;
+    }
+    if (_isPingPongTransitioning) {
+      _pendingSwitchToReversePlayer = true;
+      return;
+    }
+
+    _isPingPongTransitioning = true;
+    try {
+      await _player?.pause();
+      if (!mounted) return;
+      setState(() {
+        _showReversePlayer = true;
+        _isPingPongReversePhase = true;
+      });
+      if (widget.autoPlay) {
+        await reversePlayer.play();
+      }
+      await _applyBackgroundVolume(reversePlayer);
+    } catch (_) {
+    } finally {
+      _isPingPongTransitioning = false;
+    }
+  }
+
+  Future<void> _handleReversePlaybackCompleted() async {
+    final player = _player;
+    final reversePlayer = _reversePlayer;
+    final loopStart = widget.loopStart;
+    if (!_isPingPongLoopEnabled ||
+        !_showReversePlayer ||
+        player == null ||
+        reversePlayer == null ||
+        loopStart == null ||
+        _isPingPongTransitioning) {
+      return;
+    }
+
+    _isPingPongTransitioning = true;
+    try {
+      await player.pause();
+      await player.seek(loopStart);
+      if (!mounted) return;
+      setState(() {
+        _showReversePlayer = false;
+        _isPingPongReversePhase = false;
+      });
+      if (widget.autoPlay) {
+        await player.play();
+      }
+      await _applyBackgroundVolume(player);
+      unawaited(_prepareReversePlayerForNextCycle());
+    } catch (_) {
+    } finally {
+      _isPingPongTransitioning = false;
+    }
+  }
+
+  Future<void> _prepareReversePlayerForNextCycle() async {
+    final reversePlayer = _reversePlayer;
+    if (reversePlayer == null) {
+      return;
+    }
+
+    try {
+      await reversePlayer.pause();
+      await reversePlayer.seek(Duration.zero);
+      await _applyBackgroundVolume(reversePlayer);
     } catch (_) {}
   }
 
@@ -350,49 +528,6 @@ class _MoviePlayerState extends State<MoviePlayer> {
     }
   }
 
-  Future<void> _startPreparedPingPongLoop() async {
-    final player = _player;
-    final loopStart = widget.loopStart;
-    final forwardSource = _primaryMediaSource;
-    final reverseSource = _pingPongReverseMediaSource;
-    if (player == null ||
-        loopStart == null ||
-        forwardSource == null ||
-        reverseSource == null) {
-      return;
-    }
-
-    _isPingPongTransitioning = true;
-    try {
-      await player.setPlaylistMode(PlaylistMode.loop);
-      await _applyBackgroundVolume();
-      await player.open(
-        Playlist(
-          [
-            Media(reverseSource),
-            Media(forwardSource, start: loopStart),
-          ],
-        ),
-        play: true,
-      );
-      await _applyBackgroundVolume();
-      _isPreparedPingPongLoopActive = true;
-    } catch (_) {
-      _isPreparedPingPongLoopActive = false;
-      try {
-        await player.setPlaylistMode(PlaylistMode.none);
-        await _applyBackgroundVolume();
-        await player.open(
-          Media(forwardSource, start: loopStart),
-          play: true,
-        );
-        await _applyBackgroundVolume();
-      } catch (_) {}
-    } finally {
-      _isPingPongTransitioning = false;
-    }
-  }
-
   void _handlePlaybackCompleted() async {
     final player = _player;
     if (player == null) {
@@ -404,8 +539,13 @@ class _MoviePlayerState extends State<MoviePlayer> {
         if (_isPingPongTransitioning) {
           return;
         }
-        if (!_isPreparedPingPongLoopActive) {
-          await _startPreparedPingPongLoop();
+        if (!_reversePrewarmStarted) {
+          unawaited(_prewarmPreparedPingPongReversePlayer());
+        }
+        if (_reversePlayerReady) {
+          await _switchPingPongToReversePlayer();
+        } else {
+          _pendingSwitchToReversePlayer = true;
         }
         return;
       }
@@ -508,11 +648,29 @@ class _MoviePlayerState extends State<MoviePlayer> {
     _hasVideoSize = false;
     _isPingPongReversePhase = false;
     _isPingPongTransitioning = false;
-    _isPreparedPingPongLoopActive = false;
+    _showReversePlayer = false;
+    _pendingSwitchToReversePlayer = false;
     _primaryMediaSource = null;
     _pingPongReverseMediaSource = null;
 
     await player?.dispose();
+  }
+
+  Future<void> _disposeReversePlayer() async {
+    await _reverseCompletedSubscription?.cancel();
+    await _reverseErrorSubscription?.cancel();
+    _reverseCompletedSubscription = null;
+    _reverseErrorSubscription = null;
+
+    final reversePlayer = _reversePlayer;
+    _reversePlayer = null;
+    _reverseVideoController = null;
+    _reversePrewarmStarted = false;
+    _reversePlayerReady = false;
+    _showReversePlayer = false;
+    _pendingSwitchToReversePlayer = false;
+
+    await reversePlayer?.dispose();
   }
 
   Future<String?> _resolveMoviePath(String movieFile) async {
@@ -522,17 +680,28 @@ class _MoviePlayerState extends State<MoviePlayer> {
     return videoPath;
   }
 
-  Future<void> _applyBackgroundVolume() async {
+  Future<void> _applyBackgroundVolume([Player? player]) async {
     if (!widget.backgroundMode) {
       return;
     }
-    await _player?.setVolume(0.0);
+    await (player ?? _player)?.setVolume(0.0);
   }
 
   @override
   void dispose() {
     unawaited(_disposePlayer());
+    unawaited(_disposeReversePlayer());
     super.dispose();
+  }
+
+  Widget _buildVideoLayer(VideoController controller) {
+    return Video(
+      controller: controller,
+      fit: widget.fit,
+      alignment: widget.alignment,
+      controls: null,
+      fill: Colors.black,
+    );
   }
 
   @override
@@ -579,15 +748,21 @@ class _MoviePlayerState extends State<MoviePlayer> {
       );
     }
 
+    final reverseVideoController = _reverseVideoController;
+    final videoLayers = <Widget>[
+      if (reverseVideoController != null && !_showReversePlayer)
+        _buildVideoLayer(reverseVideoController),
+      _buildVideoLayer(_videoController!),
+      if (reverseVideoController != null && _showReversePlayer)
+        _buildVideoLayer(reverseVideoController),
+    ];
+
     return SizedBox.expand(
       child: ColoredBox(
         color: Colors.black,
-        child: Video(
-          controller: _videoController!,
-          fit: widget.fit,
-          alignment: widget.alignment,
-          controls: null,
-          fill: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: videoLayers,
         ),
       ),
     );
