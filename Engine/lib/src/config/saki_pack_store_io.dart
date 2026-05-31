@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/utils/bundle_asset_path_probe.dart';
+import 'package:sakiengine/src/utils/async_initialization_gate.dart';
 import 'package:path/path.dart' as p;
 
 class _PackEntry {
@@ -32,7 +33,8 @@ class SakiPackStore {
 
   SakiPackStore._();
 
-  bool _initialized = false;
+  final AsyncInitializationGate<bool> _initializationGate =
+      AsyncInitializationGate<bool>();
   bool _available = false;
   String? _packPath;
   Uint8List? _packBytes;
@@ -41,12 +43,9 @@ class SakiPackStore {
   final Map<String, String> _materializedFiles = <String, String>{};
   Directory? _materializeRoot;
 
-  Future<bool> ensureInitialized() async {
-    if (_initialized) {
-      return _available;
-    }
-    _initialized = true;
+  Future<bool> ensureInitialized() => _initializationGate.run(_initialize);
 
+  Future<bool> _initialize() async {
     if (GamePathResolver.shouldUseFileSystemAssets) {
       _available = false;
       return false;
@@ -58,8 +57,10 @@ class SakiPackStore {
     if (fromBundle != null && fromBundleExists == true) {
       candidates.add(fromBundle);
     }
-    final fromCacheBundle = probeBundleAssetAbsolutePath('.saki_cache/game.sakipak');
-    final fromCacheBundleExists = probeBundleAssetExists('.saki_cache/game.sakipak');
+    final fromCacheBundle =
+        probeBundleAssetAbsolutePath('.saki_cache/game.sakipak');
+    final fromCacheBundleExists =
+        probeBundleAssetExists('.saki_cache/game.sakipak');
     if (fromCacheBundle != null && fromCacheBundleExists == true) {
       candidates.add(fromCacheBundle);
     }
@@ -179,8 +180,7 @@ class SakiPackStore {
     }
 
     final targetFileName = normalized.split('/').last.toLowerCase();
-    final targetStem =
-        p.basenameWithoutExtension(targetFileName).toLowerCase();
+    final targetStem = p.basenameWithoutExtension(targetFileName).toLowerCase();
     final targetPath = normalized.contains('/')
         ? normalized.substring(0, normalized.lastIndexOf('/')).toLowerCase()
         : '';
@@ -231,7 +231,8 @@ class SakiPackStore {
       return null;
     }
 
-    final resolved = findWithPathPreference(true) ?? findWithPathPreference(false);
+    final resolved =
+        findWithPathPreference(true) ?? findWithPathPreference(false);
     if (resolved != null) {
       _searchCache[normalized] = resolved;
     }
@@ -307,7 +308,8 @@ class SakiPackStore {
       _materializeRoot ??= await Directory.systemTemp.createTemp('saki_pack_');
       final tmpRoot = _materializeRoot!;
       final suffix = p.extension(entry.path);
-      final digest = base64Url.encode(utf8.encode(entry.path)).replaceAll('=', '');
+      final digest =
+          base64Url.encode(utf8.encode(entry.path)).replaceAll('=', '');
       final outputPath = p.join(tmpRoot.path, '$digest$suffix');
       final outputFile = File(outputPath);
       await outputFile.writeAsBytes(bytes, flush: true);
@@ -323,7 +325,8 @@ class SakiPackStore {
       return const <String>[];
     }
     final normalizedDir = _normalizePath(directory).replaceAll('\\', '/');
-    final prefix = normalizedDir.endsWith('/') ? normalizedDir : '$normalizedDir/';
+    final prefix =
+        normalizedDir.endsWith('/') ? normalizedDir : '$normalizedDir/';
     final lowerExt = extension.toLowerCase();
     final result = <String>[];
     final seen = <String>{};
@@ -348,8 +351,9 @@ class SakiPackStore {
       return null;
     }
     final normalized = _normalizeName(pathOrName);
-    final exactPath =
-        contains(normalized) ? _normalizePath(normalized) : resolveVirtualAssetPath(normalized);
+    final exactPath = contains(normalized)
+        ? _normalizePath(normalized)
+        : resolveVirtualAssetPath(normalized);
     if (exactPath == null) {
       return null;
     }
