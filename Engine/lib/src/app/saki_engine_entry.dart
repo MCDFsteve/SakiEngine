@@ -18,7 +18,6 @@ import 'package:sakiengine/src/core/project_module_loader.dart';
 import 'package:sakiengine/src/game/save_load_manager.dart';
 import 'package:sakiengine/src/integrations/steam/steamworks_manager.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
-import 'package:sakiengine/src/screens/save_load_screen.dart';
 import 'package:sakiengine/src/utils/binary_serializer.dart';
 import 'package:sakiengine/src/utils/debug_logger.dart';
 import 'package:sakiengine/src/utils/global_variable_manager.dart';
@@ -264,10 +263,6 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
 
     _menuWarmupModule = gameModule;
     _menuWarmupExtraPages = <Widget>[
-      gameModule.createSaveLoadScreen(
-        mode: SaveLoadMode.load,
-        onClose: () {},
-      ),
       gameModule.createSettingsScreen(
         onClose: () {},
       ),

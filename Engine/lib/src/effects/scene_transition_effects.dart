@@ -61,7 +61,8 @@ class SceneTransitionEffectManager {
     //print('[SceneTransition] 开始${transitionType.name}转场，时长: ${duration.inMilliseconds}ms');
 
     final completer = Completer<void>();
-    final frameCapturer = captureFrame ?? (() => _captureTransitionFrame(context));
+    final frameCapturer =
+        captureFrame ?? (() => _captureTransitionFrame(context));
     final oldFrame =
         transitionType == TransitionType.pixel ? await frameCapturer() : null;
 
@@ -769,8 +770,8 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
 
   Future<void> _loadShader() async {
     try {
-      _pixelateProgram ??=
-          await EngineAssetLoader.loadFragmentProgram('assets/shaders/pixelate.frag');
+      _pixelateProgram ??= await EngineAssetLoader.loadFragmentProgram(
+          'assets/shaders/pixelate.frag');
       if (!mounted || _completed) {
         return;
       }
@@ -1079,10 +1080,7 @@ class _PixelShaderFramePainter extends CustomPainter {
       return;
     }
 
-    final targetRect = _coverDestinationRect(
-      imageSize: Size(image.width.toDouble(), image.height.toDouble()),
-      outputSize: size,
-    );
+    final targetRect = Offset.zero & size;
 
     final shader = program.fragmentShader();
     shader
@@ -1097,24 +1095,6 @@ class _PixelShaderFramePainter extends CustomPainter {
     shader.setImageSampler(0, image);
 
     canvas.drawRect(targetRect, Paint()..shader = shader);
-  }
-
-  Rect _coverDestinationRect({
-    required Size imageSize,
-    required Size outputSize,
-  }) {
-    final imageAspectRatio = imageSize.width / imageSize.height;
-    final outputAspectRatio = outputSize.width / outputSize.height;
-
-    if (imageAspectRatio > outputAspectRatio) {
-      final height = outputSize.width / imageAspectRatio;
-      final top = (outputSize.height - height) / 2.0;
-      return Rect.fromLTWH(0.0, top, outputSize.width, height);
-    }
-
-    final width = outputSize.height * imageAspectRatio;
-    final left = (outputSize.width - width) / 2.0;
-    return Rect.fromLTWH(left, 0.0, width, outputSize.height);
   }
 
   @override

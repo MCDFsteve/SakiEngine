@@ -160,6 +160,7 @@ class GameManager {
   Map<String, PoseConfig> _poseConfigs = {};
   VoidCallback? onReturn;
   final ScriptApiExecutor? onScriptApiExecute;
+  final String defaultSceneTransitionType;
   BuildContext? _context;
   TickerProvider? _tickerProvider;
   Future<ui.Image?> Function()? _transitionFrameCapturer;
@@ -1098,8 +1099,7 @@ class GameManager {
 
   MapEntry<String, CharacterState>? _resolveTailTargetCharacterState(
       String targetAlias) {
-    final identity =
-        _resolveCharacterIdentityByAliasOrResourceId(targetAlias);
+    final identity = _resolveCharacterIdentityByAliasOrResourceId(targetAlias);
     final resolvedAlias = identity?.alias ?? targetAlias;
     final config = identity?.config;
     final targetKey =
@@ -1138,8 +1138,7 @@ class GameManager {
     final targetState = target.value;
     final nextPose = pose ?? targetState.pose ?? 'pose1';
     final nextExpression = expression ?? targetState.expression ?? 'normal';
-    final nextResourceId =
-        targetConfig?.resourceId ?? targetState.resourceId;
+    final nextResourceId = targetConfig?.resourceId ?? targetState.resourceId;
     final newCharacters = Map.of(_currentState.characters);
     newCharacters[targetKey] = targetState.copyWith(
       resourceId: nextResourceId,
@@ -1280,8 +1279,9 @@ class GameManager {
         }
         continue;
       }
-      final key =
-          Uri.decodeQueryComponent(trimmed.substring(0, eqIndex)).trim().toLowerCase();
+      final key = Uri.decodeQueryComponent(trimmed.substring(0, eqIndex))
+          .trim()
+          .toLowerCase();
       final value =
           Uri.decodeQueryComponent(trimmed.substring(eqIndex + 1)).trim();
       if (key.isEmpty) {
@@ -1444,7 +1444,13 @@ class GameManager {
     return false;
   }
 
-  GameManager({this.onReturn, this.onScriptApiExecute}) {
+  GameManager({
+    this.onReturn,
+    this.onScriptApiExecute,
+    String defaultSceneTransitionType = 'fade',
+  }) : defaultSceneTransitionType = defaultSceneTransitionType.trim().isEmpty
+            ? 'fade'
+            : defaultSceneTransitionType.trim() {
     _currentState = GameState.initial(); // 提前初始化，避免late变量访问错误
     _activeLanguage = LocalizationManager().currentLanguage;
     _languageListener = _handleLanguageChange;
@@ -3810,8 +3816,9 @@ class GameManager {
     }
 
     // 解析转场类型
-    final effectType =
-        TransitionTypeParser.parseTransitionType(transitionType ?? 'fade');
+    final effectType = TransitionTypeParser.parseTransitionType(
+      transitionType ?? defaultSceneTransitionType,
+    );
     ////print('[GameManager] 转场类型解析: 输入="$transitionType" -> 解析结果=${effectType.name}');
 
     // 如果是diss转场，需要准备旧背景和新背景名称

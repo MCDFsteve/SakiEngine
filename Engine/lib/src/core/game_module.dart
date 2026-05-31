@@ -121,6 +121,10 @@ abstract class GameModule {
     required GameState gameState,
   });
 
+  /// 默认的 scene 转场类型。
+  /// 当脚本没有显式指定 `with` 时使用。
+  String get defaultSceneTransitionType => 'fade';
+
   /// 是否继续使用引擎默认的 scene 背景绘制。
   /// 返回 `false` 可在模块中完全接管 scene 背景表现。
   bool shouldRenderDefaultSceneBackground(GameState gameState);
@@ -418,6 +422,9 @@ class DefaultGameModule implements GameModule {
   }) {
     return null;
   }
+
+  @override
+  String get defaultSceneTransitionType => 'fade';
 
   @override
   bool shouldRenderDefaultSceneBackground(GameState gameState) {
