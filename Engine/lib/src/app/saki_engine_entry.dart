@@ -397,16 +397,23 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
     }
   }
 
-  void _returnToMainMenu() {
+  void _returnToMainMenu({bool withTransition = true}) {
+    void switchToMainMenu() {
+      setState(() {
+        _currentState = AppState.mainMenu;
+        _saveSlotToLoad = null;
+        _isReturningFromGame = true;
+      });
+    }
+
+    if (!withTransition) {
+      switchToMainMenu();
+      return;
+    }
+
     TransitionOverlayManager.instance.transition(
       context: context,
-      onMidTransition: () {
-        setState(() {
-          _currentState = AppState.mainMenu;
-          _saveSlotToLoad = null;
-          _isReturningFromGame = true;
-        });
-      },
+      onMidTransition: switchToMainMenu,
     );
   }
 
@@ -435,7 +442,9 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
             currentScreen = gameModule.createGamePlayScreen(
               key: ValueKey(_saveSlotToLoad?.id ?? 'new_game'),
               saveSlotToLoad: _saveSlotToLoad,
-              onReturnToMenu: _returnToMainMenu,
+              onReturnToMenu: () => _returnToMainMenu(
+                withTransition: gameModule.enableReturnToMainMenuTransition,
+              ),
               onLoadGame: (saveSlot) => _enterGame(saveSlot: saveSlot),
             );
             break;

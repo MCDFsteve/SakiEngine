@@ -75,6 +75,11 @@ typedef InitialLoadingOverlayBuilder = Widget Function(
   VoidCallback onCompleted,
 );
 
+typedef SaveLoadTransitionOverlayBuilder = Widget Function(
+  BuildContext context,
+  VoidCallback onCompleted,
+);
+
 enum _CommandDebugMenuMode {
   expression,
   character,
@@ -90,6 +95,8 @@ class GamePlayScreen extends StatefulWidget {
   final InitialLoadingOverlayBuilder? initialLoadingOverlayBuilder;
   final String? initialLoadingCompletionTransitionType;
   final Duration initialLoadingCompletionTransitionDuration;
+  final bool fadeOutInitialLoadingOverlayOnCompletion;
+  final SaveLoadTransitionOverlayBuilder? saveLoadTransitionOverlayBuilder;
 
   const GamePlayScreen({
     super.key,
@@ -101,6 +108,8 @@ class GamePlayScreen extends StatefulWidget {
     this.initialLoadingCompletionTransitionType,
     this.initialLoadingCompletionTransitionDuration =
         const Duration(milliseconds: 900),
+    this.fadeOutInitialLoadingOverlayOnCompletion = true,
+    this.saveLoadTransitionOverlayBuilder,
   });
 
   @override
@@ -190,6 +199,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _initialLoadingReleaseScheduled = false;
   bool _initialLoadingReadyToComplete = false;
   bool _initialLoadingCompletionTransitionRunning = false;
+  SaveSlot? _saveLoadTransitionSlot;
   Uint8List? _frozenSaveThumbnailFrame;
 
   bool get _isAnyCommandMenuOpen =>
@@ -600,7 +610,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     final transitionType =
         widget.initialLoadingCompletionTransitionType?.trim();
     if (transitionType == null || transitionType.isEmpty) {
-      _startInitialLoadingFadeOut();
+      if (widget.fadeOutInitialLoadingOverlayOnCompletion) {
+        _startInitialLoadingFadeOut();
+      } else {
+        _completeInitialLoadingImmediately();
+      }
       return;
     }
     _startInitialLoadingCompletionTransition(transitionType);
@@ -650,6 +664,56 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
     _isInitialLoading = false;
     _loadingFadeController.forward();
+  }
+
+  void _restoreFromSaveSlot(SaveSlot saveSlot) {
+    _currentScript = saveSlot.currentScript;
+    _gameManager.restoreFromSnapshot(
+      saveSlot.currentScript,
+      saveSlot.snapshot,
+      shouldReExecute: false,
+    );
+    _showNotificationMessage('读档成功');
+    _setStateIfMounted(() => _showFlowchart = false);
+  }
+
+  void _handleLoadGame(SaveSlot saveSlot) {
+    if (widget.saveLoadTransitionOverlayBuilder == null) {
+      _restoreFromSaveSlot(saveSlot);
+      return;
+    }
+    if (_saveLoadTransitionSlot != null) {
+      return;
+    }
+    setState(() {
+      _saveLoadTransitionSlot = saveSlot;
+    });
+  }
+
+  void _completeSaveLoadTransition() {
+    final saveSlot = _saveLoadTransitionSlot;
+    if (saveSlot == null) {
+      return;
+    }
+    _restoreFromSaveSlot(saveSlot);
+    _setStateIfMounted(() {
+      _saveLoadTransitionSlot = null;
+    });
+  }
+
+  Widget _buildSaveLoadTransitionOverlay(BuildContext context) {
+    final builder = widget.saveLoadTransitionOverlayBuilder;
+    if (_saveLoadTransitionSlot == null || builder == null) {
+      return const SizedBox.shrink();
+    }
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: KeyedSubtree(
+          key: const ValueKey('game_save_load_transition_overlay'),
+          child: builder(context, _completeSaveLoadTransition),
+        ),
+      ),
+    );
   }
 
   @override
@@ -961,18 +1025,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       () => _showFlowchart = !_showFlowchart,
                                     ), // 新增：流程图回调
                                     onJumpToHistoryEntry: _jumpToHistoryEntry,
-                                    onLoadGame: (saveSlot) {
-                                      // 在当前GamePlayScreen中恢复存档，而不是创建新实例
-                                      _currentScript = saveSlot.currentScript;
-                                      _gameManager.restoreFromSnapshot(
-                                        saveSlot.currentScript,
-                                        saveSlot.snapshot,
-                                        shouldReExecute: false,
-                                      );
-                                      _showNotificationMessage('读档成功');
-                                      // 关闭流程图
-                                      setState(() => _showFlowchart = false);
-                                    },
+                                    onLoadGame: _handleLoadGame,
                                     onProgressDialogue: () =>
                                         _dialogueProgressionManager
                                             .progressDialogue(),
@@ -1111,6 +1164,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                 ),
                 // 加载覆盖层固定在 StreamBuilder 外，避免脚本首帧到达时重建进度动画。
                 _buildStableInitialLoadingOverlay(context),
+                _buildSaveLoadTransitionOverlay(context),
               ],
             ),
           ),

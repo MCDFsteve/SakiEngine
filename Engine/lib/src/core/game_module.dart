@@ -257,6 +257,10 @@ abstract class GameModule {
   /// 是否显示快捷菜单
   bool get showQuickMenu => true;
 
+  /// 返回主菜单时是否启用全局黑屏淡出淡入。
+  /// 返回 `false` 时立即切换到主菜单，由项目层自行提供转场表现。
+  bool get enableReturnToMainMenuTransition => true;
+
   /// 是否启用普通对话框切换动画（Fade/Slide）。
   /// 返回 `false` 时，对话框切换将无过渡、立即更新。
   bool get enableDialogueSwitcherAnimation => true;
@@ -564,6 +568,9 @@ class DefaultGameModule implements GameModule {
 
   @override
   bool get showQuickMenu => true;
+
+  @override
+  bool get enableReturnToMainMenuTransition => true;
 
   @override
   bool get enableDialogueSwitcherAnimation => true;
