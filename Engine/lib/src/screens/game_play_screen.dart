@@ -195,7 +195,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   // 加载淡出动画控制
   late AnimationController _loadingFadeController;
   late Animation<double> _loadingFadeAnimation;
-  bool _isInitialLoading = true;
+  bool _isInitialLoading = false;
   bool _initialLoadingReleaseScheduled = false;
   bool _initialLoadingReadyToComplete = false;
   bool _initialLoadingCompletionTransitionRunning = false;
@@ -352,6 +352,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   @override
   void initState() {
     super.initState();
+
+    _isInitialLoading = widget.initialLoadingOverlayBuilder != null;
+    if (_isInitialLoading) {
+      debugPrint('[GamePlayScreen] initial loading overlay enabled');
+    }
 
     _settingsManager.addListener(_handleSettingsChanged);
     _loadMouseRollbackBehavior();
@@ -536,7 +541,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   }
 
   void _scheduleInitialLoadingReleaseIfReady(GameState gameState) {
-    if (!_isInitialLoading ||
+    if (widget.initialLoadingOverlayBuilder == null ||
+        !_isInitialLoading ||
         _initialLoadingReleaseScheduled ||
         !_hasVisibleStartupText(gameState)) {
       return;
@@ -1163,7 +1169,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   },
                 ),
                 // 加载覆盖层固定在 StreamBuilder 外，避免脚本首帧到达时重建进度动画。
-                _buildStableInitialLoadingOverlay(context),
+                if (widget.initialLoadingOverlayBuilder != null)
+                  _buildStableInitialLoadingOverlay(context),
                 _buildSaveLoadTransitionOverlay(context),
               ],
             ),

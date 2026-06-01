@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sakiengine/src/core/game_module.dart';
 import 'package:sakiengine/src/core/module_registry.dart';
 import 'package:sakiengine/src/core/project_module_loader.dart';
+import 'package:sakiengine/src/screens/game_play_screen.dart';
 
 class _FakeModuleA extends DefaultGameModule {}
 
@@ -26,5 +27,15 @@ void main() {
 
     expect(moduleLoader.getRegisteredModules().length, 1);
     expect(moduleLoader.hasCustomModule('mygame'), isTrue);
+  });
+
+  test('default game module does not pass initial loading overlay builder', () {
+    final screen = DefaultGameModule().createGamePlayScreen();
+
+    expect(screen, isA<GamePlayScreen>());
+    expect(
+      (screen as GamePlayScreen).initialLoadingOverlayBuilder,
+      isNull,
+    );
   });
 }
