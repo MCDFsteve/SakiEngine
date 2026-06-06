@@ -530,7 +530,6 @@ Future<void> runSakiEngine({
       if (!kIsWeb) {
         await PlatformWindowManager.ensureInitialized();
         await PlatformWindowManager.setPreventClose(true);
-        await PlatformWindowManager.maximize();
       }
 
       if (!kIsWeb &&
@@ -540,6 +539,11 @@ Future<void> runSakiEngine({
 
       await SakiEngineConfig().loadConfig();
       await SettingsManager().init();
+      if (!kIsWeb) {
+        await PlatformWindowManager.applyStartupWindowSizeForAspectRatio(
+          SettingsManager().currentGameWindowAspectRatio,
+        );
+      }
       frameRateBinding.attachSettingsSync();
       await LocalizationManager().init();
       await UISoundManager().initialize();

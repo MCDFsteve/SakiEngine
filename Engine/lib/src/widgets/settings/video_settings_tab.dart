@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
+import 'package:sakiengine/src/utils/platform_window_manager_io.dart'
+    if (dart.library.html) 'package:sakiengine/src/utils/platform_window_manager_web.dart';
 import 'package:sakiengine/src/utils/scaling_manager.dart';
 import 'package:sakiengine/src/utils/settings_manager.dart';
 import 'package:sakiengine/src/widgets/game_style_switch.dart';
@@ -26,13 +28,16 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   bool _isLoading = true;
 
   // 打字机设置
-  double _typewriterCharsPerSecond = SettingsManager.defaultTypewriterCharsPerSecond;
+  double _typewriterCharsPerSecond =
+      SettingsManager.defaultTypewriterCharsPerSecond;
   bool _skipPunctuationDelay = SettingsManager.defaultSkipPunctuationDelay;
   bool _speakerAnimation = SettingsManager.defaultSpeakerAnimation;
   bool _autoHideQuickMenu = SettingsManager.defaultAutoHideQuickMenu;
   bool _mouseParallaxEnabled = SettingsManager.defaultMouseParallaxEnabled;
   bool _showFpsOverlay = SettingsManager.defaultShowFpsOverlay;
   String _menuDisplayMode = SettingsManager.defaultMenuDisplayMode;
+  String _windowAspectRatioPreset =
+      SettingsManager.defaultGameWindowAspectRatioPreset;
   String _dialogueFontFamily = SettingsManager.defaultDialogueFontFamily;
 
   // 预览文本（在设置界面生命周期内固定）
@@ -77,19 +82,21 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
       final dialogOpacity = await _settingsManager.getDialogOpacity();
       final isFullscreen = await _settingsManager.getIsFullscreen();
       final darkMode = await _settingsManager.getDarkMode();
-      final typewriterSpeed = await _settingsManager.getTypewriterCharsPerSecond();
+      final typewriterSpeed =
+          await _settingsManager.getTypewriterCharsPerSecond();
       final skipPunctuation = await _settingsManager.getSkipPunctuationDelay();
       final speakerAnimation = await _settingsManager.getSpeakerAnimation();
       final autoHideQuickMenu = await _settingsManager.getAutoHideQuickMenu();
       final mouseParallax = await _settingsManager.getMouseParallaxEnabled();
       final showFpsOverlay = await _settingsManager.getShowFpsOverlay();
       final menuDisplayMode = await _settingsManager.getMenuDisplayMode();
+      final windowAspectRatioPreset =
+          await _settingsManager.getGameWindowAspectRatioPreset();
       final dialogueFont = await _settingsManager.getDialogueFontFamily();
 
       final selectedLanguage = LocalizationManager().currentLanguage;
-      final previewText = showLoading
-          ? TypewriterPreview.getRandomPreviewText()
-          : _previewText;
+      final previewText =
+          showLoading ? TypewriterPreview.getRandomPreviewText() : _previewText;
 
       if (!mounted) return;
 
@@ -104,6 +111,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
         _mouseParallaxEnabled = mouseParallax;
         _showFpsOverlay = showFpsOverlay;
         _menuDisplayMode = menuDisplayMode;
+        _windowAspectRatioPreset = windowAspectRatioPreset;
         _dialogueFontFamily = dialogueFont;
         _selectedLanguage = selectedLanguage;
         _previewText = previewText;
@@ -173,6 +181,16 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   Future<void> _updateMenuDisplayMode(String value) async {
     setState(() => _menuDisplayMode = value);
     await _settingsManager.setMenuDisplayMode(value);
+  }
+
+  Future<void> _updateWindowAspectRatioPreset(String value) async {
+    final ratio = SettingsManager.gameWindowAspectRatioPresets[value];
+    if (ratio == null) {
+      return;
+    }
+    setState(() => _windowAspectRatioPreset = value);
+    await _settingsManager.setGameWindowAspectRatioPreset(value);
+    await PlatformWindowManager.applyAspectRatioPresetByKeepingHeight(ratio);
   }
 
   Future<void> _updateDialogueFontFamily(String value) async {
@@ -256,7 +274,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
     );
   }
 
-  Widget _buildVideoSettingsSingleColumn(SakiEngineConfig config, double scale) {
+  Widget _buildVideoSettingsSingleColumn(
+      SakiEngineConfig config, double scale) {
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: SingleChildScrollView(
@@ -274,6 +293,12 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
             SizedBox(height: 40 * scale),
             _buildFullscreenToggle(config, scale),
             SizedBox(height: 40 * scale),
+            if (!_isFullscreen &&
+                PlatformWindowManager.supportsWindowAspectRatioPresetSwitching)
+              _buildWindowAspectRatioDropdown(config, scale),
+            if (!_isFullscreen &&
+                PlatformWindowManager.supportsWindowAspectRatioPresetSwitching)
+              SizedBox(height: 40 * scale),
             _buildDarkModeToggle(config, scale),
             SizedBox(height: 40 * scale),
             _buildSpeakerAnimationToggle(config, scale),
@@ -292,7 +317,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
     );
   }
 
-  Widget _buildVideoSettingsDualColumn(SakiEngineConfig config, double scale, BoxConstraints constraints) {
+  Widget _buildVideoSettingsDualColumn(
+      SakiEngineConfig config, double scale, BoxConstraints constraints) {
     return Stack(
       children: [
         // 主要内容区域
@@ -302,7 +328,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
             // 左列
             Expanded(
               child: ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                behavior:
+                    ScrollConfiguration.of(context).copyWith(scrollbars: false),
                 child: SingleChildScrollView(
                   padding: EdgeInsets.only(
                     left: 32 * scale,
@@ -322,14 +349,15 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 ),
               ),
             ),
-            
+
             // 右列间距
             SizedBox(width: 0), // 移除间距，让分割线居中
-            
+
             // 右列
             Expanded(
               child: ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                behavior:
+                    ScrollConfiguration.of(context).copyWith(scrollbars: false),
                 child: SingleChildScrollView(
                   padding: EdgeInsets.only(
                     left: 32 * scale,
@@ -348,6 +376,14 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                       SizedBox(height: 40 * scale),
                       _buildFullscreenToggle(config, scale),
                       SizedBox(height: 40 * scale),
+                      if (!_isFullscreen &&
+                          PlatformWindowManager
+                              .supportsWindowAspectRatioPresetSwitching)
+                        _buildWindowAspectRatioDropdown(config, scale),
+                      if (!_isFullscreen &&
+                          PlatformWindowManager
+                              .supportsWindowAspectRatioPresetSwitching)
+                        SizedBox(height: 40 * scale),
                       _buildDarkModeToggle(config, scale),
                       SizedBox(height: 40 * scale),
                       _buildSpeakerAnimationToggle(config, scale),
@@ -366,7 +402,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
             ),
           ],
         ),
-        
+
         // 固定的中间分割线 - 简化居中定位
         Positioned.fill(
           child: Align(
@@ -398,7 +434,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   Widget _buildOpacitySlider(SakiEngineConfig config, double scale) {
     final textScale = context.scaleFor(ComponentType.text);
     final localization = LocalizationManager();
-    
+
     return Container(
       padding: EdgeInsets.all(16 * scale),
       decoration: BoxDecoration(
@@ -426,7 +462,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                     Text(
                       localization.t('settings.opacity.title'),
                       style: config.reviewTitleTextStyle.copyWith(
-                        fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                        fontSize: config.reviewTitleTextStyle.fontSize! *
+                            textScale *
+                            0.7,
                         color: config.themeColors.primary,
                         fontWeight: FontWeight.w600,
                       ),
@@ -434,7 +472,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                     Text(
                       localization.t('settings.opacity.description'),
                       style: config.dialogueTextStyle.copyWith(
-                        fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                        fontSize: config.dialogueTextStyle.fontSize! *
+                            textScale *
+                            0.6,
                         color: config.themeColors.primary.withOpacity(0.6),
                       ),
                     ),
@@ -497,7 +537,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.fullscreen.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -506,7 +547,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.fullscreen.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -553,7 +595,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.darkMode.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -562,7 +605,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.darkMode.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -584,7 +628,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   Widget _buildSpeakerAnimationToggle(SakiEngineConfig config, double scale) {
     final textScale = context.scaleFor(ComponentType.text);
     final localization = LocalizationManager();
-    
+
     return Container(
       padding: EdgeInsets.all(16 * scale),
       decoration: BoxDecoration(
@@ -609,7 +653,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.speakerAnimation.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -618,7 +663,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.speakerAnimation.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -640,7 +686,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   Widget _buildAutoHideQuickMenuSetting(SakiEngineConfig config, double scale) {
     final textScale = context.scaleFor(ComponentType.text);
     final localization = LocalizationManager();
-    
+
     return Container(
       padding: EdgeInsets.all(16 * scale),
       decoration: BoxDecoration(
@@ -665,7 +711,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.autoHideQuickMenu.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -674,7 +721,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.autoHideQuickMenu.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -721,7 +769,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.mouseParallax.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -730,7 +779,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.mouseParallax.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -778,7 +828,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   title,
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -787,7 +838,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   description,
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -809,7 +861,7 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
   Widget _buildTypewriterSpeedSlider(SakiEngineConfig config, double scale) {
     final textScale = context.scaleFor(ComponentType.text);
     final localization = LocalizationManager();
-    
+
     return Container(
       padding: EdgeInsets.all(16 * scale),
       decoration: BoxDecoration(
@@ -837,7 +889,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                     Text(
                       localization.t('settings.typewriterSpeed.title'),
                       style: config.reviewTitleTextStyle.copyWith(
-                        fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                        fontSize: config.reviewTitleTextStyle.fontSize! *
+                            textScale *
+                            0.7,
                         color: config.themeColors.primary,
                         fontWeight: FontWeight.w600,
                       ),
@@ -845,7 +899,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                     Text(
                       localization.t('settings.typewriterSpeed.description'),
                       style: config.dialogueTextStyle.copyWith(
-                        fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                        fontSize: config.dialogueTextStyle.fontSize! *
+                            textScale *
+                            0.6,
                         color: config.themeColors.primary.withOpacity(0.6),
                       ),
                     ),
@@ -867,11 +923,11 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
           ),
           SizedBox(height: 8 * scale),
           Text(
-            _typewriterCharsPerSecond >= 200.0 
-              ? localization.t('settings.typewriterSpeed.instant')
-              : localization.t('settings.typewriterSpeed.current', params: {
-                  'value': _typewriterCharsPerSecond.round().toString(),
-                }),
+            _typewriterCharsPerSecond >= 200.0
+                ? localization.t('settings.typewriterSpeed.instant')
+                : localization.t('settings.typewriterSpeed.current', params: {
+                    'value': _typewriterCharsPerSecond.round().toString(),
+                  }),
             style: config.dialogueTextStyle.copyWith(
               fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.5,
               color: config.themeColors.primary.withOpacity(0.8),
@@ -885,7 +941,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 child: Text(
                   localization.t('settings.punctuationPause.title'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary,
                   ),
                 ),
@@ -956,7 +1013,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.language.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -965,7 +1023,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.language.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -1011,10 +1070,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
       ),
     ];
 
-    final currentModeText =
-        _menuDisplayMode == 'fullscreen'
-            ? localization.t('settings.menuDisplay.fill')
-            : localization.t('settings.menuDisplay.window');
+    final currentModeText = _menuDisplayMode == 'fullscreen'
+        ? localization.t('settings.menuDisplay.fill')
+        : localization.t('settings.menuDisplay.window');
 
     return Container(
       padding: EdgeInsets.all(16 * scale),
@@ -1029,7 +1087,9 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            _menuDisplayMode == 'fullscreen' ? Icons.aspect_ratio : Icons.crop_free,
+            _menuDisplayMode == 'fullscreen'
+                ? Icons.aspect_ratio
+                : Icons.crop_free,
             color: config.themeColors.primary,
             size: 24 * scale,
           ),
@@ -1041,7 +1101,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.menuDisplay.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1050,7 +1111,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   '${localization.t('settings.menuDisplay.description')} (${localization.t('settings.menuDisplay.current')}: $currentModeText)',
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),
@@ -1066,6 +1128,80 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
             textScale: textScale,
             config: config,
             width: 200 * scale,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWindowAspectRatioDropdown(
+    SakiEngineConfig config,
+    double scale,
+  ) {
+    final textScale = context.scaleFor(ComponentType.text);
+    final localization = LocalizationManager();
+    final items = SettingsManager.gameWindowAspectRatioPresets.keys
+        .map(
+          (preset) => GameStyleDropdownItem<String>(
+            value: preset,
+            label: preset,
+            icon: Icons.aspect_ratio,
+          ),
+        )
+        .toList();
+
+    return Container(
+      padding: EdgeInsets.all(16 * scale),
+      decoration: BoxDecoration(
+        color: config.themeColors.surface.withOpacity(0.5),
+        border: Border.all(
+          color: config.themeColors.primary.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.aspect_ratio,
+            color: config.themeColors.primary,
+            size: 24 * scale,
+          ),
+          SizedBox(width: 16 * scale),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  localization.t('settings.aspectRatio.title'),
+                  style: config.reviewTitleTextStyle.copyWith(
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    color: config.themeColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 4 * scale),
+                Text(
+                  localization.t('settings.aspectRatio.description'),
+                  style: config.dialogueTextStyle.copyWith(
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    color: config.themeColors.primary.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: 16 * scale),
+          GameStyleDropdown<String>(
+            items: items,
+            value: _windowAspectRatioPreset,
+            onChanged: _updateWindowAspectRatioPreset,
+            scale: scale,
+            textScale: textScale,
+            config: config,
+            width: 160 * scale,
           ),
         ],
       ),
@@ -1100,7 +1236,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.dialogueFont.title'),
                   style: config.reviewTitleTextStyle.copyWith(
-                    fontSize: config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
+                    fontSize:
+                        config.reviewTitleTextStyle.fontSize! * textScale * 0.7,
                     color: config.themeColors.primary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1109,7 +1246,8 @@ class _VideoSettingsTabState extends State<VideoSettingsTab> {
                 Text(
                   localization.t('settings.dialogueFont.description'),
                   style: config.dialogueTextStyle.copyWith(
-                    fontSize: config.dialogueTextStyle.fontSize! * textScale * 0.6,
+                    fontSize:
+                        config.dialogueTextStyle.fontSize! * textScale * 0.6,
                     color: config.themeColors.primary.withOpacity(0.6),
                   ),
                 ),

@@ -167,7 +167,7 @@ class SakiEngineConfig {
 
   // 设置默认值配置
   String defaultMenuDisplayMode = 'windowed';
-  String defaultGameWindowResizeMode = 'free';
+  String defaultGameWindowResizeMode = 'keep_aspect';
 
   // 兼容旧字段名，避免历史项目脚本立即失效
   double get soranoutaSpeakerXPos => dialogueSpeakerXPos;
@@ -507,7 +507,7 @@ class SakiEngineConfig {
                   break;
                 case 'game_window_resize_mode':
                   final mode = keyValue[1].trim();
-                  if (mode == 'free' || mode == 'keep_aspect') {
+                  if (mode == 'keep_aspect') {
                     defaultGameWindowResizeMode = mode;
                   }
                   break;

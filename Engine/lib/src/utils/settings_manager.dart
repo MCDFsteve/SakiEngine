@@ -33,7 +33,7 @@ class SettingsManager extends ChangeNotifier with WindowListener {
   static const String defaultMenuDisplayMode =
       'windowed'; // 'windowed' or 'fullscreen'
   static const String defaultGameWindowResizeMode =
-      'free'; // 'free' or 'keep_aspect'
+      'keep_aspect'; // Kept for compatibility; windowed games always keep aspect.
   static const String defaultGameWindowAspectRatioPreset = '16:9';
   static const Map<String, double> gameWindowAspectRatioPresets = {
     '5:4': 5 / 4,
@@ -288,9 +288,6 @@ class SettingsManager extends ChangeNotifier with WindowListener {
   }
 
   String _normalizeGameWindowResizeMode(String mode) {
-    if (mode == 'keep_aspect' || mode == 'free') {
-      return mode;
-    }
     return defaultGameWindowResizeMode;
   }
 
@@ -329,16 +326,8 @@ class SettingsManager extends ChangeNotifier with WindowListener {
       return;
     }
 
-    final shouldKeepAspectRatio = _normalizeGameWindowResizeMode(
-          _dataManager.getStringVariable(
-            _gameWindowResizeModeKey,
-            defaultValue: _projectDefaultGameWindowResizeMode(),
-          ),
-        ) ==
-        'keep_aspect';
-    final aspectRatio = (shouldKeepAspectRatio && !_dataManager.isFullscreen)
-        ? _resolveGameWindowAspectRatio()
-        : 0.0;
+    final aspectRatio =
+        !_dataManager.isFullscreen ? _resolveGameWindowAspectRatio() : 0.0;
     await PlatformWindowManager.setAspectRatio(aspectRatio);
   }
 
@@ -545,7 +534,7 @@ class SettingsManager extends ChangeNotifier with WindowListener {
     notifyListeners();
   }
 
-  // 游戏窗口缩放方式设置（自由缩放/等比缩放）
+  // 兼容旧设置键；窗口模式现在固定等比缩放。
   Future<String> getGameWindowResizeMode() async {
     await init();
     return _normalizeGameWindowResizeMode(
