@@ -34,6 +34,12 @@ class SettingsManager extends ChangeNotifier with WindowListener {
       'windowed'; // 'windowed' or 'fullscreen'
   static const String defaultGameWindowResizeMode =
       'free'; // 'free' or 'keep_aspect'
+  static const String defaultGameWindowAspectRatioPreset = '16:9';
+  static const Map<String, double> gameWindowAspectRatioPresets = {
+    '5:4': 5 / 4,
+    '16:10': 16 / 10,
+    '16:9': 16 / 9,
+  };
   static const String defaultFastForwardMode =
       'read_only'; // 'read_only' or 'force'
   static const String defaultMouseRollbackBehavior =
@@ -43,6 +49,8 @@ class SettingsManager extends ChangeNotifier with WindowListener {
   static const String _frameRateLimitKey = 'sakiengine.frameRateLimit';
   static const String _gameWindowResizeModeKey =
       'sakiengine.gameWindowResizeMode';
+  static const String _gameWindowAspectRatioPresetKey =
+      'sakiengine.gameWindowAspectRatioPreset';
   static const String _projectDefaultsAppliedKey =
       'sakiengine.projectDefaultsApplied.v1';
 
@@ -116,6 +124,11 @@ class SettingsManager extends ChangeNotifier with WindowListener {
       await _dataManager.setStringVariable(
         _gameWindowResizeModeKey,
         _projectDefaultGameWindowResizeMode(),
+        projectName,
+      );
+      await _dataManager.setStringVariable(
+        _gameWindowAspectRatioPresetKey,
+        defaultGameWindowAspectRatioPreset,
         projectName,
       );
     }
@@ -281,6 +294,13 @@ class SettingsManager extends ChangeNotifier with WindowListener {
     return defaultGameWindowResizeMode;
   }
 
+  String _normalizeGameWindowAspectRatioPreset(String preset) {
+    if (gameWindowAspectRatioPresets.containsKey(preset)) {
+      return preset;
+    }
+    return defaultGameWindowAspectRatioPreset;
+  }
+
   int _normalizeFrameRateLimit(int value) {
     switch (value) {
       case 0:
@@ -295,12 +315,13 @@ class SettingsManager extends ChangeNotifier with WindowListener {
   }
 
   double _resolveGameWindowAspectRatio() {
-    final logicalWidth = SakiEngineConfig().logicalWidth;
-    final logicalHeight = SakiEngineConfig().logicalHeight;
-    if (logicalWidth <= 0 || logicalHeight <= 0) {
-      return 16 / 9;
+    final ratio =
+        gameWindowAspectRatioPresets[currentGameWindowAspectRatioPreset];
+    if (ratio != null && ratio > 0) {
+      return ratio;
     }
-    return logicalWidth / logicalHeight;
+    return gameWindowAspectRatioPresets[defaultGameWindowAspectRatioPreset] ??
+        16 / 9;
   }
 
   Future<void> _applyWindowAspectRatioConstraint() async {
@@ -554,6 +575,34 @@ class SettingsManager extends ChangeNotifier with WindowListener {
     notifyListeners();
   }
 
+  // 游戏窗口/虚拟画布比例预设
+  Future<String> getGameWindowAspectRatioPreset() async {
+    await init();
+    return currentGameWindowAspectRatioPreset;
+  }
+
+  String get currentGameWindowAspectRatioPreset =>
+      _normalizeGameWindowAspectRatioPreset(
+        _dataManager.getStringVariable(
+          _gameWindowAspectRatioPresetKey,
+          defaultValue: defaultGameWindowAspectRatioPreset,
+        ),
+      );
+
+  double get currentGameWindowAspectRatio => _resolveGameWindowAspectRatio();
+
+  Future<void> setGameWindowAspectRatioPreset(String preset) async {
+    await init();
+    final normalized = _normalizeGameWindowAspectRatioPreset(preset);
+    await _dataManager.setStringVariable(
+      _gameWindowAspectRatioPresetKey,
+      normalized,
+      _projectName!,
+    );
+    await _applyWindowAspectRatioConstraint();
+    notifyListeners();
+  }
+
   // 快进模式设置
   Future<String> getFastForwardMode() async {
     await init();
@@ -631,6 +680,11 @@ class SettingsManager extends ChangeNotifier with WindowListener {
       projectDefaultGameWindowResizeMode,
       _projectName!,
     );
+    await _dataManager.setStringVariable(
+      _gameWindowAspectRatioPresetKey,
+      defaultGameWindowAspectRatioPreset,
+      _projectName!,
+    );
     await _dataManager.setFastForwardMode(
         defaultFastForwardMode, _projectName!);
     await _dataManager.setMouseRollbackBehavior(
@@ -661,6 +715,7 @@ class SettingsManager extends ChangeNotifier with WindowListener {
       'showFpsOverlay': await getShowFpsOverlay(),
       'frameRateLimit': await getFrameRateLimit(),
       'gameWindowResizeMode': await getGameWindowResizeMode(),
+      'gameWindowAspectRatioPreset': await getGameWindowAspectRatioPreset(),
     };
   }
 }

@@ -166,6 +166,78 @@ class AssetManager {
     }
   }
 
+  String _normalizeAssetLookupName(String name) {
+    var normalized = name.replaceAll('\\', '/').trim();
+    if (normalized.startsWith('asset:///')) {
+      normalized = normalized.substring('asset:///'.length);
+    }
+    while (normalized.startsWith('/')) {
+      normalized = normalized.substring(1);
+    }
+    return normalized;
+  }
+
+  bool _isPreciseAssetLookup(String name) {
+    final normalized = _normalizeAssetLookupName(name);
+    return normalized.contains('/') && p.extension(normalized).isNotEmpty;
+  }
+
+  List<String> _exactAssetPathCandidates(String name) {
+    final normalized = _normalizeAssetLookupName(name);
+    if (normalized.isEmpty) {
+      return const <String>[];
+    }
+
+    final candidates = <String>[];
+    final seen = <String>{};
+    void add(String value) {
+      final candidate = _normalizeAssetLookupName(value);
+      if (candidate.isNotEmpty && seen.add(candidate.toLowerCase())) {
+        candidates.add(candidate);
+      }
+    }
+
+    add(normalized);
+
+    final lower = normalized.toLowerCase();
+    if (lower.startsWith('assets/')) {
+      final stripped = normalized.substring('assets/'.length);
+      add(stripped);
+      add('Assets/$stripped');
+      add('Assets/images/$stripped');
+    } else if (!lower.startsWith('packages/')) {
+      add('Assets/$normalized');
+      add('Assets/images/$normalized');
+    }
+
+    return candidates;
+  }
+
+  String? _findExactAssetInLoadedBundle(String name) {
+    if (!_isPreciseAssetLookup(name)) {
+      return null;
+    }
+
+    final candidates = _exactAssetPathCandidates(name)
+        .map((candidate) => candidate.toLowerCase())
+        .toSet();
+    for (final key in _bundleAssetKeysByPriority()) {
+      final normalizedKey = key.replaceAll('\\', '/').toLowerCase();
+      if (candidates.contains(normalizedKey)) {
+        _imageCache[name] = key;
+        return key;
+      }
+      if (normalizedKey.startsWith('packages/') &&
+          candidates
+              .any((candidate) => normalizedKey.endsWith('/$candidate'))) {
+        _imageCache[name] = key;
+        return key;
+      }
+    }
+
+    return null;
+  }
+
   Future<String?> findAsset(String name) async {
     if (_imageCache.containsKey(name)) {
       return _imageCache[name];
@@ -180,6 +252,11 @@ class AssetManager {
     if (_assetManifest == null) {
       print("AssetManifest is null - cannot find assets");
       return null;
+    }
+
+    final exactMatch = _findExactAssetInLoadedBundle(name);
+    if (exactMatch != null || _isPreciseAssetLookup(name)) {
+      return exactMatch;
     }
 
     final imageExtensions = [

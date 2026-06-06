@@ -318,6 +318,78 @@ class AssetManager {
     }
   }
 
+  String _normalizeAssetLookupName(String name) {
+    var normalized = name.replaceAll('\\', '/').trim();
+    if (normalized.startsWith('asset:///')) {
+      normalized = normalized.substring('asset:///'.length);
+    }
+    while (normalized.startsWith('/')) {
+      normalized = normalized.substring(1);
+    }
+    return normalized;
+  }
+
+  bool _isPreciseAssetLookup(String name) {
+    final normalized = _normalizeAssetLookupName(name);
+    return normalized.contains('/') && p.extension(normalized).isNotEmpty;
+  }
+
+  List<String> _exactAssetPathCandidates(String name) {
+    final normalized = _normalizeAssetLookupName(name);
+    if (normalized.isEmpty) {
+      return const <String>[];
+    }
+
+    final candidates = <String>[];
+    final seen = <String>{};
+    void add(String value) {
+      final candidate = _normalizeAssetLookupName(value);
+      if (candidate.isNotEmpty && seen.add(candidate.toLowerCase())) {
+        candidates.add(candidate);
+      }
+    }
+
+    add(normalized);
+
+    final lower = normalized.toLowerCase();
+    if (lower.startsWith('assets/')) {
+      final stripped = normalized.substring('assets/'.length);
+      add(stripped);
+      add('Assets/$stripped');
+      add('Assets/images/$stripped');
+    } else if (!lower.startsWith('packages/')) {
+      add('Assets/$normalized');
+      add('Assets/images/$normalized');
+    }
+
+    return candidates;
+  }
+
+  String? _findExactAssetInLoadedBundle(String name) {
+    if (!_isPreciseAssetLookup(name)) {
+      return null;
+    }
+
+    final candidates = _exactAssetPathCandidates(name)
+        .map((candidate) => candidate.toLowerCase())
+        .toSet();
+    for (final key in _bundleAssetKeysByPriority()) {
+      final normalizedKey = key.replaceAll('\\', '/').toLowerCase();
+      if (candidates.contains(normalizedKey)) {
+        _imageCache[name] = key;
+        return key;
+      }
+      if (normalizedKey.startsWith('packages/') &&
+          candidates
+              .any((candidate) => normalizedKey.endsWith('/$candidate'))) {
+        _imageCache[name] = key;
+        return key;
+      }
+    }
+
+    return null;
+  }
+
   Future<String?> findAsset(String name) async {
     if (_imageCache.containsKey(name)) {
       if (_findAssetDiagCount < 200) {
@@ -344,9 +416,20 @@ class AssetManager {
 
     final packStore = SakiPackStore.instance;
     if (await packStore.ensureInitialized()) {
-      final resolvedVirtual = packStore.resolveVirtualAssetPath(name);
+      String? resolvedVirtual;
+      if (_isPreciseAssetLookup(name)) {
+        for (final candidate in _exactAssetPathCandidates(name)) {
+          if (packStore.contains(candidate)) {
+            resolvedVirtual = candidate;
+            break;
+          }
+        }
+      } else {
+        resolvedVirtual = packStore.resolveVirtualAssetPath(name);
+      }
       if (resolvedVirtual != null) {
-        final materialized = await packStore.materializeFilePath(resolvedVirtual);
+        final materialized =
+            await packStore.materializeFilePath(resolvedVirtual);
         if (materialized != null) {
           _imageCache[name] = materialized;
           return materialized;
@@ -371,6 +454,11 @@ class AssetManager {
       print("AssetManifest is null - cannot find assets");
       _assetDiag('AssetManifest 为 null，无法查找 "$name"');
       return null;
+    }
+
+    final exactMatch = _findExactAssetInLoadedBundle(name);
+    if (exactMatch != null || _isPreciseAssetLookup(name)) {
+      return exactMatch;
     }
 
     final imageExtensions = [
@@ -539,15 +627,9 @@ class AssetManager {
       p.join(gamePath, 'Assets', 'movies'), // 新增：视频文件搜索路径
     ]);
 
-    // 1) 路径优先：如果调用方给了路径（如 gui/save/unlock.png），优先精确匹配相对路径
-    // 这样可避免同名文件（例如 gui/save/unlock.png 与 gui/say/unlock.png）误命中。
-    if (normalizedName.contains('/')) {
-      final exactCandidates = <String>[
-        p.join(gamePath, 'Assets', normalizedName),
-        p.join(gamePath, 'Assets', 'images', normalizedName),
-      ];
-
-      for (final candidate in exactCandidates) {
+    if (_isPreciseAssetLookup(name)) {
+      for (final exactPath in _exactAssetPathCandidates(name)) {
+        final candidate = p.join(gamePath, exactPath);
         final file = File(candidate);
         if (await file.exists()) {
           final assetPath = file.path.replaceAll('\\', '/');
@@ -555,6 +637,7 @@ class AssetManager {
           return assetPath;
         }
       }
+      return null;
     }
 
     String? fallbackMatch;
@@ -583,7 +666,8 @@ class AssetManager {
           final lowerAssetPath = assetPath.toLowerCase();
           if (normalizedNameLower.contains('/')) {
             if (lowerAssetPath.contains('/assets/$normalizedNameLower') ||
-                lowerAssetPath.contains('/assets/images/$normalizedNameLower')) {
+                lowerAssetPath
+                    .contains('/assets/images/$normalizedNameLower')) {
               pathMatchedFallback = assetPath;
               break;
             }

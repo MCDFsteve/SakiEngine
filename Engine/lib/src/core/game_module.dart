@@ -17,6 +17,7 @@ import 'package:sakiengine/src/widgets/settings_screen.dart';
 import 'package:sakiengine/src/widgets/about_screen.dart';
 import 'package:sakiengine/src/screens/review_screen.dart';
 import 'package:sakiengine/src/widgets/common/exit_confirmation_dialog.dart';
+import 'package:sakiengine/src/widgets/common/virtual_game_canvas.dart';
 import 'package:sakiengine/src/integrations/steam/steam_achievement_service.dart';
 
 /// 游戏模块接口 - 定义项目可以覆盖的所有组件
@@ -297,12 +298,14 @@ class DefaultGameModule implements GameModule {
     VoidCallback? onContinueGame, // 新增：继续游戏回调
     bool skipMusicDelay = false,
   }) {
-    return MainMenuScreen(
-      onNewGame: onNewGame,
-      onLoadGame: onLoadGame,
-      onLoadGameWithSave: onLoadGameWithSave,
-      onContinueGame: onContinueGame, // 新增：传递继续游戏回调
-      //gameModule: this,
+    return SakiVirtualGameCanvas(
+      child: MainMenuScreen(
+        onNewGame: onNewGame,
+        onLoadGame: onLoadGame,
+        onLoadGameWithSave: onLoadGameWithSave,
+        onContinueGame: onContinueGame, // 新增：传递继续游戏回调
+        //gameModule: this,
+      ),
     );
   }
 
@@ -313,12 +316,14 @@ class DefaultGameModule implements GameModule {
     VoidCallback? onReturnToMenu,
     Function(SaveSlot)? onLoadGame,
   }) {
-    return GamePlayScreen(
-      key: key,
-      saveSlotToLoad: saveSlotToLoad,
-      onReturnToMenu: onReturnToMenu,
-      onLoadGame: onLoadGame,
-      gameModule: this,
+    return SakiVirtualGameCanvas(
+      child: GamePlayScreen(
+        key: key,
+        saveSlotToLoad: saveSlotToLoad,
+        onReturnToMenu: onReturnToMenu,
+        onLoadGame: onLoadGame,
+        gameModule: this,
+      ),
     );
   }
 
