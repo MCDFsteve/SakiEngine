@@ -40,6 +40,34 @@ part 'game_manager_lifecycle.dart';
 
 enum _NvlContextMode { none, standard, movie, noMask }
 
+class _MenuPromptDialogue {
+  final String? speaker;
+  final String dialogue;
+  final String? dialogueTag;
+  final int scriptIndex;
+  final String? sourceScriptFile;
+  final int? sourceLine;
+
+  const _MenuPromptDialogue({
+    required this.speaker,
+    required this.dialogue,
+    required this.dialogueTag,
+    required this.scriptIndex,
+    required this.sourceScriptFile,
+    required this.sourceLine,
+  });
+}
+
+class _MenuJumpTarget {
+  final int menuIndex;
+  final List<_MenuPromptDialogue> promptDialogues;
+
+  const _MenuJumpTarget({
+    required this.menuIndex,
+    required this.promptDialogues,
+  });
+}
+
 /// 音乐区间类
 /// 定义音乐播放的有效范围，从play music到下一个play music/stop music之间
 class MusicRegion {
@@ -170,6 +198,7 @@ class GameManager {
 
   // 快进状态
   bool _isFastForwardMode = false;
+  bool _disableRuntimeSideEffectsForTesting = false;
   _NvlContextMode _activeNvlContext = _NvlContextMode.none;
   bool _showNvlOverlayOnNextDialogue = false;
 
@@ -198,6 +227,9 @@ class GameManager {
   /// 检查是否需要创建自动存档
   Future<void> _checkAndCreateAutoSave(int scriptIndex,
       {String? reason}) async {
+    if (_disableRuntimeSideEffectsForTesting) {
+      return;
+    }
     try {
       final node = _script.children[scriptIndex];
       String? nodeId;
@@ -253,6 +285,9 @@ class GameManager {
   }
 
   Future<void> _createRuntimeAutoSave({required String reason}) async {
+    if (_disableRuntimeSideEffectsForTesting) {
+      return;
+    }
     try {
       await SaveLoadManager().autoSave(
         currentScriptFile,
@@ -1492,7 +1527,33 @@ class GameManager {
     LocalizationManager().addListener(_languageListener);
   }
 
+  @visibleForTesting
+  Future<void> startTestScript(
+    ScriptNode script, {
+    int scriptIndex = 0,
+    GameState? initialState,
+    bool disableRuntimeSideEffects = true,
+  }) async {
+    _currentTimer?.cancel();
+    _currentTimer = null;
+    _currentTimerCompletion = null;
+    _isProcessing = false;
+    _isWaitingForTimer = false;
+    _isFastForwardMode = false;
+    _disableRuntimeSideEffectsForTesting = disableRuntimeSideEffects;
+    _activeNvlContext = _NvlContextMode.none;
+    _showNvlOverlayOnNextDialogue = false;
+    _script = script;
+    _scriptIndex = scriptIndex.clamp(0, _script.children.length).toInt();
+    _currentState = initialState ?? GameState.initial();
+    _dialogueHistory = [];
+    _buildLabelIndexMap();
+    _buildMusicRegions();
+    await _executeScript();
+  }
+
   Future<void> startGame(String scriptName) {
+    _disableRuntimeSideEffectsForTesting = false;
     return _startGameLifecycle(scriptName);
   }
 
@@ -1501,6 +1562,7 @@ class GameManager {
     GameStateSnapshot snapshot, {
     bool shouldReExecute = true,
   }) {
+    _disableRuntimeSideEffectsForTesting = false;
     return _restoreFromSnapshotLifecycle(
       scriptName,
       snapshot,
@@ -1509,6 +1571,7 @@ class GameManager {
   }
 
   Future<void> hotReload(String scriptName) {
+    _disableRuntimeSideEffectsForTesting = false;
     return _hotReloadLifecycle(scriptName);
   }
 
@@ -1763,6 +1826,187 @@ class GameManager {
       return nextNode is MenuNode ? nextIndex : null;
     }
     return null;
+  }
+
+  _MenuJumpTarget? _findReachableMenuJumpTarget(int startIndex) {
+    if (!_isScriptInitialized()) {
+      return null;
+    }
+
+    var nextIndex = startIndex.clamp(0, _script.children.length).toInt();
+    final visitedIndexes = <int>{};
+    final promptDialogues = <_MenuPromptDialogue>[];
+
+    while (nextIndex >= 0 && nextIndex < _script.children.length) {
+      if (!visitedIndexes.add(nextIndex)) {
+        return null;
+      }
+
+      final nextNode = _script.children[nextIndex];
+      if (nextNode is MenuNode) {
+        return _MenuJumpTarget(
+          menuIndex: nextIndex,
+          promptDialogues: promptDialogues,
+        );
+      }
+      if (nextNode is ReturnNode) {
+        return null;
+      }
+      if (nextNode is JumpNode) {
+        final targetIndex = _labelIndexMap[nextNode.targetLabel];
+        if (targetIndex == null) {
+          return null;
+        }
+        nextIndex = targetIndex;
+        continue;
+      }
+      if (nextNode is SayNode) {
+        promptDialogues.add(
+          _buildMenuPromptDialogueFromSayNode(nextNode, nextIndex),
+        );
+      } else if (nextNode is ConditionalSayNode) {
+        final prompt =
+            _buildMenuPromptDialogueFromConditionalSayNode(nextNode, nextIndex);
+        if (prompt != null) {
+          promptDialogues.add(prompt);
+        }
+      }
+
+      nextIndex++;
+    }
+
+    return null;
+  }
+
+  _MenuPromptDialogue _buildMenuPromptDialogueFromSayNode(
+    SayNode node,
+    int scriptIndex,
+  ) {
+    final characterConfig = _characterConfigs[node.character];
+    return _MenuPromptDialogue(
+      speaker: characterConfig?.name,
+      dialogue: _resolveScriptText(node.dialogue),
+      dialogueTag: node.dialogueTag,
+      scriptIndex: scriptIndex,
+      sourceScriptFile: node.sourceFile ?? currentScriptFile,
+      sourceLine: node.sourceLine,
+    );
+  }
+
+  _MenuPromptDialogue? _buildMenuPromptDialogueFromConditionalSayNode(
+    ConditionalSayNode node,
+    int scriptIndex,
+  ) {
+    final currentValue = GlobalVariableManager()
+        .getBoolVariableSync(node.conditionVariable, defaultValue: false);
+    if (currentValue != node.conditionValue) {
+      return null;
+    }
+
+    final characterConfig = _characterConfigs[node.character];
+    return _MenuPromptDialogue(
+      speaker: characterConfig?.name,
+      dialogue: _resolveScriptText(node.dialogue),
+      dialogueTag: node.dialogueTag,
+      scriptIndex: scriptIndex,
+      sourceScriptFile: node.sourceFile ?? currentScriptFile,
+      sourceLine: node.sourceLine,
+    );
+  }
+
+  void _addMenuPromptDialogueToHistoryIfNeeded(
+    _MenuPromptDialogue promptDialogue,
+  ) {
+    if (_dialogueHistory.isNotEmpty) {
+      final lastDialogue = _dialogueHistory.last;
+      if (lastDialogue.scriptIndex == promptDialogue.scriptIndex) {
+        return;
+      }
+    }
+
+    _addToDialogueHistory(
+      speaker: promptDialogue.speaker,
+      dialogue: promptDialogue.dialogue,
+      dialogueTag: promptDialogue.dialogueTag,
+      timestamp: DateTime.now(),
+      currentNodeIndex: promptDialogue.scriptIndex,
+      sourceScriptFile: promptDialogue.sourceScriptFile,
+      sourceLine: promptDialogue.sourceLine,
+    );
+  }
+
+  void _addMenuJumpDialoguesToHistory(
+    List<_MenuPromptDialogue> promptDialogues,
+  ) {
+    for (final promptDialogue in promptDialogues) {
+      _currentState = _currentState.copyWith(
+        dialogue: promptDialogue.dialogue,
+        dialogueTag: promptDialogue.dialogueTag,
+        speaker: promptDialogue.speaker,
+        forceNullSpeaker: promptDialogue.speaker == null,
+        currentNode: null,
+        clearDialogueAndSpeaker: false,
+        everShownCharacters: _everShownCharacters,
+      );
+      _addMenuPromptDialogueToHistoryIfNeeded(promptDialogue);
+    }
+  }
+
+  Future<bool> jumpToNextChoice() async {
+    if (!_isScriptInitialized() || _isProcessing) {
+      return false;
+    }
+    if (_currentState.currentNode is MenuNode) {
+      return true;
+    }
+
+    final jumpTarget = _findReachableMenuJumpTarget(_scriptIndex);
+    if (jumpTarget == null) {
+      return false;
+    }
+    final targetMenuIndex = jumpTarget.menuIndex;
+
+    _currentTimer?.cancel();
+    _currentTimer = null;
+    _currentTimerCompletion = null;
+    _isWaitingForTimer = false;
+    _isProcessing = false;
+
+    final menuNode = _script.children[targetMenuIndex] as MenuNode;
+    final localizedMenuNode = _localizeMenuNode(menuNode);
+    _addMenuJumpDialoguesToHistory(jumpTarget.promptDialogues);
+
+    await _createRuntimeAutoSave(reason: '分支选择');
+    await _checkAndCreateAutoSave(targetMenuIndex, reason: '分支选择');
+
+    final previousDialogueEntry = _dialogueHistory.length >= 2
+        ? _dialogueHistory[_dialogueHistory.length - 2]
+        : null;
+    _scriptIndex = targetMenuIndex;
+    if (previousDialogueEntry != null) {
+      _currentState = _currentState.copyWith(
+        dialogue: previousDialogueEntry.dialogue,
+        dialogueTag: previousDialogueEntry.dialogueTag,
+        speaker: previousDialogueEntry.speaker,
+        forceNullSpeaker: previousDialogueEntry.speaker == null,
+        currentNode: localizedMenuNode,
+        clearDialogueAndSpeaker: false,
+        clearScriptOverlay: true,
+        isFastForwarding: _isFastForwardMode,
+        everShownCharacters: _everShownCharacters,
+      );
+    } else {
+      _currentState = _currentState.copyWith(
+        currentNode: localizedMenuNode,
+        clearDialogueAndSpeaker: true,
+        clearScriptOverlay: true,
+        isFastForwarding: _isFastForwardMode,
+        everShownCharacters: _everShownCharacters,
+      );
+    }
+    _gameStateController.add(_currentState);
+
+    return true;
   }
 
   Future<void> jumpToLabel(String label) async {
@@ -3338,10 +3582,14 @@ class GameManager {
         _scriptIndex++; // 预先递增索引
 
         // 启动计时器
-        Timer(Duration(milliseconds: (node.duration * 1000).round()), () {
-          _isWaitingForTimer = false;
-          _executeScript(); // 恢复脚本执行
-        });
+        _currentTimer?.cancel();
+        _currentTimerCompletion = () {
+          unawaited(_executeScript()); // 恢复脚本执行
+        };
+        _currentTimer = Timer(
+          Duration(milliseconds: (node.duration * 1000).round()),
+          _completeCurrentTimerWait,
+        );
 
         return; // 暂停期间停止脚本执行
       }
