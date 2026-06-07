@@ -132,6 +132,7 @@ class PlatformWindowManager {
 
   static Future<void> applyAspectRatioPresetByKeepingHeight(
     double aspectRatio, {
+    double reservedVerticalHeight = 0.0,
     bool updateAspectRatioConstraint = true,
   }) async {
     if (!_isDesktop || aspectRatio <= 0) {
@@ -159,10 +160,12 @@ class PlatformWindowManager {
       final targetSize = resolveAspectRatioPresetTargetSize(
         currentSize: currentSize,
         aspectRatio: aspectRatio,
+        reservedVerticalHeight: reservedVerticalHeight,
         visibleDisplaySize: visibleDisplayBounds?.size,
       );
       if (updateAspectRatioConstraint) {
-        await windowManager.setAspectRatio(aspectRatio);
+        await windowManager
+            .setAspectRatio(targetSize.width / targetSize.height);
       }
       await windowManager.setSize(
         targetSize,
@@ -171,7 +174,10 @@ class PlatformWindowManager {
     } catch (_) {}
   }
 
-  static Future<bool?> toggleAspectRatioMaximized(double aspectRatio) async {
+  static Future<bool?> toggleAspectRatioMaximized(
+    double aspectRatio, {
+    double reservedVerticalHeight = 0.0,
+  }) async {
     if (!_isDesktop || aspectRatio <= 0) {
       return null;
     }
@@ -186,7 +192,8 @@ class PlatformWindowManager {
           restoreBounds.width > 0 &&
           restoreBounds.height > 0) {
         _aspectRatioMaximizeRestoreBounds = null;
-        await windowManager.setAspectRatio(aspectRatio);
+        await windowManager
+            .setAspectRatio(restoreBounds.width / restoreBounds.height);
         await windowManager.setBounds(restoreBounds, animate: true);
         return false;
       }
@@ -208,18 +215,60 @@ class PlatformWindowManager {
       final targetBounds = resolveAspectRatioMaximizedBounds(
         visibleDisplayBounds: visibleDisplayBounds,
         aspectRatio: aspectRatio,
+        reservedVerticalHeight: reservedVerticalHeight,
       );
       if (targetBounds.width <= 0 || targetBounds.height <= 0) {
         return null;
       }
 
       _aspectRatioMaximizeRestoreBounds = currentBounds;
-      await windowManager.setAspectRatio(aspectRatio);
+      await windowManager
+          .setAspectRatio(targetBounds.width / targetBounds.height);
       await windowManager.setBounds(targetBounds, animate: true);
       return true;
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<void> enforceContentAspectRatio(
+    double aspectRatio, {
+    double reservedVerticalHeight = 0.0,
+  }) async {
+    if (!_isDesktop || aspectRatio <= 0) {
+      return;
+    }
+
+    try {
+      if (await windowManager.isFullScreen()) {
+        return;
+      }
+      final currentBounds = await windowManager.getBounds();
+      final currentSize = currentBounds.size;
+      if (currentSize.width <= 0 || currentSize.height <= 0) {
+        return;
+      }
+
+      final visibleDisplayBounds = await _resolveCurrentVisibleDisplayBounds(
+        currentBounds,
+      );
+      final targetSize = resolveAspectRatioPresetTargetSize(
+        currentSize: currentSize,
+        aspectRatio: aspectRatio,
+        reservedVerticalHeight: reservedVerticalHeight,
+        visibleDisplaySize: visibleDisplayBounds?.size,
+      );
+      if ((targetSize.width - currentSize.width).abs() <= 1.0 &&
+          (targetSize.height - currentSize.height).abs() <= 1.0) {
+        await windowManager.setAspectRatio(
+          currentSize.width / currentSize.height,
+        );
+        return;
+      }
+
+      await windowManager.setAspectRatio(targetSize.width / targetSize.height);
+      await windowManager.setSize(targetSize);
+    } catch (_) {}
   }
 
   static Future<void> applyStartupWindowSizeForAspectRatio(
@@ -264,18 +313,26 @@ class PlatformWindowManager {
   static Size resolveAspectRatioPresetTargetSize({
     required Size currentSize,
     required double aspectRatio,
+    double reservedVerticalHeight = 0.0,
     Size? visibleDisplaySize,
   }) {
     if (currentSize.width <= 0 || currentSize.height <= 0 || aspectRatio <= 0) {
       return currentSize;
     }
 
-    final targetWidth = (currentSize.height * aspectRatio).roundToDouble();
+    final maxReservedHeight =
+        currentSize.height > 1 ? currentSize.height - 1 : 0.0;
+    final safeReservedHeight =
+        reservedVerticalHeight.clamp(0.0, maxReservedHeight).toDouble();
+    final contentHeight = currentSize.height - safeReservedHeight;
+    final targetWidth = (contentHeight * aspectRatio).roundToDouble();
     final visibleWidth = visibleDisplaySize?.width;
     if (visibleWidth != null &&
         visibleWidth > 0 &&
         targetWidth > visibleWidth + _aspectRatioOverflowTolerance) {
-      final targetHeight = (currentSize.width / aspectRatio).roundToDouble();
+      final targetHeight =
+          (currentSize.width / aspectRatio + safeReservedHeight)
+              .roundToDouble();
       if (targetHeight > 0) {
         return Size(currentSize.width, targetHeight);
       }
@@ -289,6 +346,19 @@ class PlatformWindowManager {
     required double aspectRatio,
     double fillFraction = defaultStartupWindowFillFraction,
   }) {
+    return _resolveContentAspectWindowBounds(
+      visibleDisplayBounds: visibleDisplayBounds,
+      aspectRatio: aspectRatio,
+      fillFraction: fillFraction,
+    );
+  }
+
+  static Rect _resolveContentAspectWindowBounds({
+    required Rect visibleDisplayBounds,
+    required double aspectRatio,
+    required double fillFraction,
+    double reservedVerticalHeight = 0.0,
+  }) {
     if (visibleDisplayBounds.width <= 0 ||
         visibleDisplayBounds.height <= 0 ||
         aspectRatio <= 0) {
@@ -298,13 +368,18 @@ class PlatformWindowManager {
     final clampedFillFraction = fillFraction.clamp(0.1, 1.0).toDouble();
     final maxWidth = visibleDisplayBounds.width * clampedFillFraction;
     final maxHeight = visibleDisplayBounds.height * clampedFillFraction;
+    final maxReservedHeight = maxHeight > 1 ? maxHeight - 1 : 0.0;
+    final safeReservedHeight =
+        reservedVerticalHeight.clamp(0.0, maxReservedHeight).toDouble();
+    final maxContentHeight = maxHeight - safeReservedHeight;
 
     var targetWidth = maxWidth;
-    var targetHeight = targetWidth / aspectRatio;
-    if (targetHeight > maxHeight) {
-      targetHeight = maxHeight;
-      targetWidth = targetHeight * aspectRatio;
+    var targetContentHeight = targetWidth / aspectRatio;
+    if (targetContentHeight > maxContentHeight) {
+      targetContentHeight = maxContentHeight;
+      targetWidth = targetContentHeight * aspectRatio;
     }
+    var targetHeight = targetContentHeight + safeReservedHeight;
 
     targetWidth = targetWidth.roundToDouble();
     targetHeight = targetHeight.roundToDouble();
@@ -326,11 +401,13 @@ class PlatformWindowManager {
   static Rect resolveAspectRatioMaximizedBounds({
     required Rect visibleDisplayBounds,
     required double aspectRatio,
+    double reservedVerticalHeight = 0.0,
   }) {
-    return resolveStartupWindowBounds(
+    return _resolveContentAspectWindowBounds(
       visibleDisplayBounds: visibleDisplayBounds,
       aspectRatio: aspectRatio,
       fillFraction: 1.0,
+      reservedVerticalHeight: reservedVerticalHeight,
     );
   }
 
