@@ -148,6 +148,7 @@ class GameManager {
   bool _isProcessing = false;
   bool _isWaitingForTimer = false; // 新增：专门的计时器等待标志
   Timer? _currentTimer; // 新增：当前活跃的计时器引用
+  VoidCallback? _currentTimerCompletion;
   Map<String, int> _labelIndexMap = {};
 
   // 脚本合并器
@@ -1368,8 +1369,7 @@ class GameManager {
     }
 
     if (result.stateAfterWait != null) {
-      _currentState = result.stateAfterWait!;
-      _gameStateController.add(_currentState);
+      _applyScriptApiStateAfterWait(result.stateAfterWait!);
     }
   }
 
@@ -1381,6 +1381,9 @@ class GameManager {
     _currentState = _currentState.copyWith(
         isFastForwarding: enabled, everShownCharacters: _everShownCharacters);
     _gameStateController.add(_currentState);
+    if (enabled) {
+      _completeCurrentTimerWait();
+    }
     //print('[FastForward] 快进模式: ${enabled ? "开启" : "关闭"}');
   }
 
@@ -1394,6 +1397,38 @@ class GameManager {
         isAutoPlaying: enabled, everShownCharacters: _everShownCharacters);
     _gameStateController.add(_currentState);
     //print('[AutoPlay] 自动播放模式: ${enabled ? "开启" : "关闭"}');
+  }
+
+  void _applyScriptApiStateAfterWait(GameState stateAfterWait) {
+    _currentState = stateAfterWait.copyWith(
+      isFastForwarding: _isFastForwardMode,
+      isAutoPlaying: _isAutoPlayMode,
+      everShownCharacters: _everShownCharacters,
+    );
+    _gameStateController.add(_currentState);
+  }
+
+  bool _completeCurrentTimerWait() {
+    if (!_isWaitingForTimer) {
+      return false;
+    }
+
+    final completion = _currentTimerCompletion;
+    if (_currentTimer == null && completion == null) {
+      return false;
+    }
+
+    _currentTimer?.cancel();
+    _currentTimer = null;
+    _currentTimerCompletion = null;
+    _isWaitingForTimer = false;
+
+    if (completion != null) {
+      completion();
+    } else {
+      unawaited(_executeScript());
+    }
+    return true;
   }
 
   /// 检测背景名称是否包含章节信息
@@ -3260,23 +3295,28 @@ class GameManager {
             _scriptIndex++;
 
             if (waitDuration != null && waitDuration > Duration.zero) {
+              if (_isFastForwardMode) {
+                if (result.stateAfterWait != null) {
+                  _applyScriptApiStateAfterWait(result.stateAfterWait!);
+                }
+                continue;
+              }
+
               _isWaitingForTimer = true;
               _isProcessing = false;
               _currentTimer?.cancel();
-              _currentTimer = Timer(waitDuration, () {
+              _currentTimerCompletion = () {
                 if (result.stateAfterWait != null) {
-                  _currentState = result.stateAfterWait!;
-                  _gameStateController.add(_currentState);
+                  _applyScriptApiStateAfterWait(result.stateAfterWait!);
                 }
-                _isWaitingForTimer = false;
-                _executeScript();
-              });
+                unawaited(_executeScript());
+              };
+              _currentTimer = Timer(waitDuration, _completeCurrentTimerWait);
               return;
             }
 
             if (result.stateAfterWait != null) {
-              _currentState = result.stateAfterWait!;
-              _gameStateController.add(_currentState);
+              _applyScriptApiStateAfterWait(result.stateAfterWait!);
             }
 
             continue;
@@ -3666,6 +3706,7 @@ class GameManager {
   void _startSceneTimer(double seconds) {
     // 取消之前的计时器（如果存在）
     _currentTimer?.cancel();
+    _currentTimerCompletion = null;
 
     final durationMs = (seconds * 1000).round();
 
@@ -4480,6 +4521,7 @@ class GameManager {
   void dispose() {
     LocalizationManager().removeListener(_languageListener);
     _currentTimer?.cancel(); // 取消活跃的计时器
+    _currentTimerCompletion = null;
     _sceneAnimationController?.dispose(); // 清理场景动画控制器
 
     // 清理CG预分析器

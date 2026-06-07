@@ -112,6 +112,7 @@ extension _GameManagerLifecycle on GameManager {
     // 取消当前活跃的计时器
     _currentTimer?.cancel();
     _currentTimer = null;
+    _currentTimerCompletion = null;
 
     // 清理旧的场景动画控制器
     _sceneAnimationController?.dispose();
@@ -354,6 +355,7 @@ extension _GameManagerLifecycle on GameManager {
       // 取消当前活跃的计时器
       _currentTimer?.cancel();
       _currentTimer = null;
+      _currentTimerCompletion = null;
 
       // 清理旧的场景动画控制器
       _sceneAnimationController?.dispose();
