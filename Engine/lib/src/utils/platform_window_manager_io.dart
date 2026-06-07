@@ -8,6 +8,7 @@ export 'package:window_manager/window_manager.dart' show WindowListener;
 class PlatformWindowManager {
   static const double _aspectRatioOverflowTolerance = 0.5;
   static const double defaultStartupWindowFillFraction = 0.9;
+  static Rect? _aspectRatioMaximizeRestoreBounds;
 
   static bool get _isDesktop {
     return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -18,6 +19,9 @@ class PlatformWindowManager {
   static bool get supportsWindowStateSync => _isDesktop;
 
   static bool get supportsWindowAspectRatioPresetSwitching => _isDesktop;
+
+  static bool get isAspectRatioMaximized =>
+      _aspectRatioMaximizeRestoreBounds != null;
 
   static Future<void> ensureInitialized() async {
     if (_isDesktop) {
@@ -33,12 +37,14 @@ class PlatformWindowManager {
 
   static Future<void> maximize() async {
     if (_isDesktop) {
+      _aspectRatioMaximizeRestoreBounds = null;
       await windowManager.maximize();
     }
   }
 
   static Future<void> unmaximize() async {
     if (_isDesktop) {
+      _aspectRatioMaximizeRestoreBounds = null;
       await windowManager.unmaximize();
     }
   }
@@ -139,6 +145,7 @@ class PlatformWindowManager {
       if (await windowManager.isMaximized()) {
         await windowManager.unmaximize();
       }
+      _aspectRatioMaximizeRestoreBounds = null;
 
       final currentBounds = await windowManager.getBounds();
       final currentSize = currentBounds.size;
@@ -162,6 +169,57 @@ class PlatformWindowManager {
         animate: true,
       );
     } catch (_) {}
+  }
+
+  static Future<bool?> toggleAspectRatioMaximized(double aspectRatio) async {
+    if (!_isDesktop || aspectRatio <= 0) {
+      return null;
+    }
+
+    try {
+      if (await windowManager.isFullScreen()) {
+        return null;
+      }
+
+      final restoreBounds = _aspectRatioMaximizeRestoreBounds;
+      if (restoreBounds != null &&
+          restoreBounds.width > 0 &&
+          restoreBounds.height > 0) {
+        _aspectRatioMaximizeRestoreBounds = null;
+        await windowManager.setAspectRatio(aspectRatio);
+        await windowManager.setBounds(restoreBounds, animate: true);
+        return false;
+      }
+
+      if (await windowManager.isMaximized()) {
+        await windowManager.unmaximize();
+      }
+
+      final currentBounds = await windowManager.getBounds();
+      final visibleDisplayBounds = await _resolveCurrentVisibleDisplayBounds(
+        currentBounds,
+      );
+      if (visibleDisplayBounds == null ||
+          visibleDisplayBounds.width <= 0 ||
+          visibleDisplayBounds.height <= 0) {
+        return null;
+      }
+
+      final targetBounds = resolveAspectRatioMaximizedBounds(
+        visibleDisplayBounds: visibleDisplayBounds,
+        aspectRatio: aspectRatio,
+      );
+      if (targetBounds.width <= 0 || targetBounds.height <= 0) {
+        return null;
+      }
+
+      _aspectRatioMaximizeRestoreBounds = currentBounds;
+      await windowManager.setAspectRatio(aspectRatio);
+      await windowManager.setBounds(targetBounds, animate: true);
+      return true;
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> applyStartupWindowSizeForAspectRatio(
@@ -262,6 +320,17 @@ class PlatformWindowManager {
       targetTop,
       targetWidth,
       targetHeight,
+    );
+  }
+
+  static Rect resolveAspectRatioMaximizedBounds({
+    required Rect visibleDisplayBounds,
+    required double aspectRatio,
+  }) {
+    return resolveStartupWindowBounds(
+      visibleDisplayBounds: visibleDisplayBounds,
+      aspectRatio: aspectRatio,
+      fillFraction: 1.0,
     );
   }
 

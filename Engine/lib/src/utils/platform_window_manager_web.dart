@@ -11,6 +11,8 @@ class PlatformWindowManager {
 
   static bool get supportsWindowAspectRatioPresetSwitching => false;
 
+  static bool get isAspectRatioMaximized => false;
+
   static final Map<WindowListener, List<StreamSubscription<html.Event>>>
       _listeners = <WindowListener, List<StreamSubscription<html.Event>>>{};
 
@@ -118,6 +120,10 @@ class PlatformWindowManager {
     double fillFraction = defaultStartupWindowFillFraction,
   }) async {}
 
+  static Future<bool?> toggleAspectRatioMaximized(double aspectRatio) async {
+    return null;
+  }
+
   static Size resolveAspectRatioPresetTargetSize({
     required Size currentSize,
     required double aspectRatio,
@@ -177,6 +183,17 @@ class PlatformWindowManager {
       targetTop,
       targetWidth,
       targetHeight,
+    );
+  }
+
+  static Rect resolveAspectRatioMaximizedBounds({
+    required Rect visibleDisplayBounds,
+    required double aspectRatio,
+  }) {
+    return resolveStartupWindowBounds(
+      visibleDisplayBounds: visibleDisplayBounds,
+      aspectRatio: aspectRatio,
+      fillFraction: 1.0,
     );
   }
 }
