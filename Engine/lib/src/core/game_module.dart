@@ -149,6 +149,16 @@ abstract class GameModule {
     return null;
   }
 
+  /// 创建自定义状态指示器层（如快进/自动播放/暂停）。
+  /// 返回 `null` 时使用引擎默认处理。
+  Widget? createStatusIndicatorLayer({
+    required BuildContext context,
+    required GameState gameState,
+    required GameManager gameManager,
+  }) {
+    return null;
+  }
+
   /// 处理脚本 `api` 调用。
   /// 默认返回未处理，由项目模块按需覆写。
   Future<ScriptApiExecutionResult> handleScriptApiCall({
@@ -257,6 +267,10 @@ abstract class GameModule {
 
   /// 是否显示快捷菜单
   bool get showQuickMenu => true;
+
+  /// 是否显示引擎默认的快进/自动播放状态指示器。
+  /// 项目层自行绘制状态提示时可返回 false，避免重复显示。
+  bool get showDefaultStatusIndicators => true;
 
   /// 返回主菜单时是否启用全局黑屏淡出淡入。
   /// 返回 `false` 时立即切换到主菜单，由项目层自行提供转场表现。
@@ -459,6 +473,15 @@ class DefaultGameModule implements GameModule {
   }
 
   @override
+  Widget? createStatusIndicatorLayer({
+    required BuildContext context,
+    required GameState gameState,
+    required GameManager gameManager,
+  }) {
+    return null;
+  }
+
+  @override
   Future<ScriptApiExecutionResult> handleScriptApiCall({
     required String apiName,
     required Map<String, String> params,
@@ -573,6 +596,9 @@ class DefaultGameModule implements GameModule {
 
   @override
   bool get showQuickMenu => true;
+
+  @override
+  bool get showDefaultStatusIndicators => true;
 
   @override
   bool get enableReturnToMainMenuTransition => true;

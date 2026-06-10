@@ -174,10 +174,16 @@ class GameUILayerState extends State<GameUILayer> {
         dialogueForDialogueBox != null && !widget.gameState.isNvlMode;
     final enableDialogueSwitcherAnimation =
         widget.gameModule.enableDialogueSwitcherAnimation &&
-        !widget.gameState.isFastForwarding;
+            !widget.gameState.isFastForwarding;
     final enableDialogueSwitcherSlideAnimation =
         enableDialogueSwitcherAnimation &&
-        widget.gameModule.enableDialogueSwitcherSlideAnimation;
+            widget.gameModule.enableDialogueSwitcherSlideAnimation;
+    final customStatusIndicatorLayer =
+        widget.gameModule.createStatusIndicatorLayer(
+      context: context,
+      gameState: widget.gameState,
+      gameManager: widget.gameManager,
+    );
 
     final stackContent = Stack(
       children: [
@@ -331,7 +337,8 @@ class GameUILayerState extends State<GameUILayer> {
                 ),
 
         // 快进指示器 - 顶部显示
-        if (widget.gameState.isFastForwarding)
+        if (widget.gameModule.showDefaultStatusIndicators &&
+            widget.gameState.isFastForwarding)
           Positioned(
             left: 100 * context.scaleFor(ComponentType.menu),
             top: 20 * context.scaleFor(ComponentType.menu),
@@ -345,7 +352,8 @@ class GameUILayerState extends State<GameUILayer> {
           ),
 
         // 自动播放指示器 - 顶部显示
-        if (widget.gameState.isAutoPlaying)
+        if (widget.gameModule.showDefaultStatusIndicators &&
+            widget.gameState.isAutoPlaying)
           Positioned(
             left: 100 * context.scaleFor(ComponentType.menu),
             top: 20 * context.scaleFor(ComponentType.menu),
@@ -355,6 +363,13 @@ class GameUILayerState extends State<GameUILayer> {
                 icon: Icons.play_arrow_rounded, // 使用圆滑的图标
                 text: LocalizationManager().t('indicator.autoPlaying'),
               ),
+            ),
+          ),
+
+        if (customStatusIndicatorLayer != null)
+          Positioned.fill(
+            child: HideableUI(
+              child: customStatusIndicatorLayer,
             ),
           ),
 

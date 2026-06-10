@@ -1458,6 +1458,14 @@ class GameManager {
     _currentTimerCompletion = null;
     _isWaitingForTimer = false;
 
+    if (_currentState.isPaused) {
+      _currentState = _currentState.copyWith(
+        isPaused: false,
+        everShownCharacters: _everShownCharacters,
+      );
+      _gameStateController.add(_currentState);
+    }
+
     if (completion != null) {
       completion();
     } else {
@@ -1993,6 +2001,7 @@ class GameManager {
         clearDialogueAndSpeaker: false,
         clearScriptOverlay: true,
         isFastForwarding: _isFastForwardMode,
+        isPaused: false,
         everShownCharacters: _everShownCharacters,
       );
     } else {
@@ -2001,6 +2010,7 @@ class GameManager {
         clearDialogueAndSpeaker: true,
         clearScriptOverlay: true,
         isFastForwarding: _isFastForwardMode,
+        isPaused: false,
         everShownCharacters: _everShownCharacters,
       );
     }
@@ -3581,6 +3591,12 @@ class GameManager {
         _isProcessing = false; // 释放处理锁，但保持timer锁
         _scriptIndex++; // 预先递增索引
 
+        _currentState = _currentState.copyWith(
+          isPaused: true,
+          everShownCharacters: _everShownCharacters,
+        );
+        _gameStateController.add(_currentState);
+
         // 启动计时器
         _currentTimer?.cancel();
         _currentTimerCompletion = () {
@@ -4834,6 +4850,7 @@ class GameState {
   final Map<String, CharacterState> cgCharacters; // 新增：CG角色状态，像scene一样铺满显示
   final bool isFastForwarding; // 新增：当前是否处于快进模式
   final bool isAutoPlaying; // 新增：当前是否处于自动播放模式
+  final bool isPaused; // 新增：当前是否处于脚本 pause(...) 等待状态
   final bool isShaking; // 新增：当前是否正在震动
   final String? shakeTarget; // 新增：震动目标 (dialogue/background)
   final double? shakeDuration; // 新增：震动持续时间
@@ -4879,6 +4896,7 @@ class GameState {
     this.cgCharacters = const {}, // 新增：CG角色状态，默认为空
     this.isFastForwarding = false, // 新增：快进状态，默认false
     this.isAutoPlaying = false, // 新增：自动播放状态，默认false
+    this.isPaused = false, // 新增：脚本暂停状态，默认false
     this.isShaking = false, // 新增：震动状态，默认false
     this.shakeTarget, // 新增：震动目标
     this.shakeDuration, // 新增：震动持续时间
@@ -4941,6 +4959,7 @@ class GameState {
     bool clearCgCharacters = false, // 新增：是否清空CG角色
     bool? isFastForwarding, // 新增：快进状态
     bool? isAutoPlaying, // 新增：自动播放状态
+    bool? isPaused, // 新增：脚本暂停状态
     bool? isShaking, // 新增：震动状态
     String? shakeTarget, // 新增：震动目标
     double? shakeDuration, // 新增：震动持续时间
@@ -5012,6 +5031,7 @@ class GameState {
           : (cgCharacters ?? this.cgCharacters), // 新增
       isFastForwarding: isFastForwarding ?? this.isFastForwarding, // 新增：快进状态
       isAutoPlaying: isAutoPlaying ?? this.isAutoPlaying, // 新增：自动播放状态
+      isPaused: isPaused ?? this.isPaused, // 新增：脚本暂停状态
       isShaking: isShaking ?? this.isShaking, // 新增：震动状态
       shakeTarget: shakeTarget ?? this.shakeTarget, // 新增：震动目标
       shakeDuration: shakeDuration ?? this.shakeDuration, // 新增：震动持续时间
