@@ -84,6 +84,8 @@ class MusicManager extends ChangeNotifier {
   String? _projectName;
   String? _currentBackgroundMusic;
   String? _currentSound;
+  double? _previewMusicVolume;
+  double? _previewSoundVolume;
   _MusicPlayRequest? _queuedMusicRequest;
   Future<void>? _musicTransitionDrain;
   bool _isMusicTransitioning = false;
@@ -96,8 +98,8 @@ class MusicManager extends ChangeNotifier {
 
   bool get isMusicEnabled => _dataManager.isMusicEnabled;
   bool get isSoundEnabled => _dataManager.isSoundEnabled;
-  double get musicVolume => _dataManager.musicVolume;
-  double get soundVolume => _dataManager.soundVolume;
+  double get musicVolume => _previewMusicVolume ?? _dataManager.musicVolume;
+  double get soundVolume => _previewSoundVolume ?? _dataManager.soundVolume;
   String? get currentBackgroundMusic => _currentBackgroundMusic;
   String? get currentSound => _currentSound;
 
@@ -194,13 +196,29 @@ class MusicManager extends ChangeNotifier {
   }
 
   Future<void> setMusicVolume(double volume) async {
-    await _dataManager.setMusicVolume(volume, _projectName!);
+    final normalizedVolume = volume.clamp(0.0, 1.0).toDouble();
+    _previewMusicVolume = null;
+    await _dataManager.setMusicVolume(normalizedVolume, _projectName!);
     await _updateTrackVolume(AudioTrackType.music);
     notifyListeners();
   }
 
   Future<void> setSoundVolume(double volume) async {
-    await _dataManager.setSoundVolume(volume, _projectName!);
+    final normalizedVolume = volume.clamp(0.0, 1.0).toDouble();
+    _previewSoundVolume = null;
+    await _dataManager.setSoundVolume(normalizedVolume, _projectName!);
+    await _updateTrackVolume(AudioTrackType.sound);
+    notifyListeners();
+  }
+
+  Future<void> previewMusicVolume(double volume) async {
+    _previewMusicVolume = volume.clamp(0.0, 1.0).toDouble();
+    await _updateTrackVolume(AudioTrackType.music);
+    notifyListeners();
+  }
+
+  Future<void> previewSoundVolume(double volume) async {
+    _previewSoundVolume = volume.clamp(0.0, 1.0).toDouble();
     await _updateTrackVolume(AudioTrackType.sound);
     notifyListeners();
   }
@@ -213,11 +231,11 @@ class MusicManager extends ChangeNotifier {
     switch (trackType) {
       case AudioTrackType.music:
         isEnabled = _dataManager.isMusicEnabled;
-        baseVolume = _dataManager.musicVolume;
+        baseVolume = musicVolume;
         break;
       case AudioTrackType.sound:
         isEnabled = _dataManager.isSoundEnabled;
-        baseVolume = _dataManager.soundVolume;
+        baseVolume = soundVolume;
         break;
     }
 
@@ -250,12 +268,12 @@ class MusicManager extends ChangeNotifier {
     switch (trackType) {
       case AudioTrackType.music:
         isEnabled = _dataManager.isMusicEnabled;
-        baseVolume = _dataManager.musicVolume;
+        baseVolume = musicVolume;
         currentTrack = _currentBackgroundMusic;
         break;
       case AudioTrackType.sound:
         isEnabled = _dataManager.isSoundEnabled;
-        baseVolume = _dataManager.soundVolume;
+        baseVolume = soundVolume;
         currentTrack = _currentSound;
         break;
     }
@@ -317,12 +335,12 @@ class MusicManager extends ChangeNotifier {
     switch (trackType) {
       case AudioTrackType.music:
         isEnabled = _dataManager.isMusicEnabled;
-        baseVolume = _dataManager.musicVolume;
+        baseVolume = musicVolume;
         currentTrack = _currentBackgroundMusic;
         break;
       case AudioTrackType.sound:
         isEnabled = _dataManager.isSoundEnabled;
-        baseVolume = _dataManager.soundVolume;
+        baseVolume = soundVolume;
         currentTrack = _currentSound;
         break;
     }
