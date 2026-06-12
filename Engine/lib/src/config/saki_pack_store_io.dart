@@ -41,7 +41,10 @@ class SakiPackStore {
   final Map<String, _PackEntry> _entryMap = <String, _PackEntry>{};
   final Map<String, String> _searchCache = <String, String>{};
   final Map<String, String> _materializedFiles = <String, String>{};
+  final Map<String, Future<String?>> _materializingFiles =
+      <String, Future<String?>>{};
   Directory? _materializeRoot;
+  Future<Directory>? _materializeRootFuture;
 
   Future<bool> ensureInitialized() => _initializationGate.run(_initialize);
 
@@ -294,6 +297,22 @@ class SakiPackStore {
       return cached;
     }
 
+    final activeMaterialization = _materializingFiles[normalized];
+    if (activeMaterialization != null) {
+      return activeMaterialization;
+    }
+
+    late final Future<String?> materialization;
+    materialization = _materializeFilePathUncached(normalized).whenComplete(() {
+      if (identical(_materializingFiles[normalized], materialization)) {
+        _materializingFiles.remove(normalized);
+      }
+    });
+    _materializingFiles[normalized] = materialization;
+    return materialization;
+  }
+
+  Future<String?> _materializeFilePathUncached(String normalized) async {
     final bytes = await loadBytes(normalized);
     if (bytes == null) {
       return null;
@@ -305,19 +324,45 @@ class SakiPackStore {
     }
 
     try {
-      _materializeRoot ??= await Directory.systemTemp.createTemp('saki_pack_');
-      final tmpRoot = _materializeRoot!;
+      final tmpRoot = await _ensureMaterializeRoot();
       final suffix = p.extension(entry.path);
       final digest =
           base64Url.encode(utf8.encode(entry.path)).replaceAll('=', '');
       final outputPath = p.join(tmpRoot.path, '$digest$suffix');
-      final outputFile = File(outputPath);
-      await outputFile.writeAsBytes(bytes, flush: true);
+      final tempFile = File(
+        '$outputPath.${DateTime.now().microsecondsSinceEpoch}.tmp',
+      );
+      await tempFile.writeAsBytes(bytes, flush: true);
+      await tempFile.rename(outputPath);
       _materializedFiles[normalized] = outputPath;
       return outputPath;
     } catch (_) {
       return null;
     }
+  }
+
+  Future<Directory> _ensureMaterializeRoot() {
+    final root = _materializeRoot;
+    if (root != null) {
+      return Future<Directory>.value(root);
+    }
+
+    final activeRootCreation = _materializeRootFuture;
+    if (activeRootCreation != null) {
+      return activeRootCreation;
+    }
+
+    late final Future<Directory> rootCreation;
+    rootCreation = Directory.systemTemp.createTemp('saki_pack_').then((root) {
+      _materializeRoot = root;
+      return root;
+    }).whenComplete(() {
+      if (identical(_materializeRootFuture, rootCreation)) {
+        _materializeRootFuture = null;
+      }
+    });
+    _materializeRootFuture = rootCreation;
+    return rootCreation;
   }
 
   List<String> listFileNames(String directory, String extension) {
