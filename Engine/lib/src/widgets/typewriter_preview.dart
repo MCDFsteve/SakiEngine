@@ -5,6 +5,10 @@ import 'package:sakiengine/src/utils/scaling_manager.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'dart:math';
 
+typedef TypewriterPreviewTextProvider = List<String> Function(
+  SupportedLanguage language,
+);
+
 class TypewriterPreview extends StatefulWidget {
   final double charsPerSecond;
   final bool skipPunctuationDelay;
@@ -25,19 +29,53 @@ class TypewriterPreview extends StatefulWidget {
 
   @override
   State<TypewriterPreview> createState() => _TypewriterPreviewState();
-  
-  // 静态方法：获取随机文本，供外部使用
-  static final Random _randomGenerator = Random();
 
-  static String getRandomPreviewText() {
+  // 静态方法：获取随机文本，供外部使用。项目可注册自定义预览文本；未注册时使用引擎默认文案。
+  static final Random _randomGenerator = Random();
+  static TypewriterPreviewTextProvider? _previewTextProvider;
+
+  static void setPreviewTextProvider(
+    TypewriterPreviewTextProvider? provider,
+  ) {
+    _previewTextProvider = provider;
+  }
+
+  static void setPreviewTexts(
+    Map<SupportedLanguage, List<String>> previewTexts,
+  ) {
+    final normalized = <SupportedLanguage, List<String>>{};
+    for (final entry in previewTexts.entries) {
+      final texts = entry.value
+          .where((text) => text.trim().isNotEmpty)
+          .toList(growable: false);
+      if (texts.isNotEmpty) {
+        normalized[entry.key] = List.unmodifiable(texts);
+      }
+    }
+
+    _previewTextProvider =
+        (language) => normalized[language] ?? const <String>[];
+  }
+
+  static void clearPreviewTextProvider() {
+    _previewTextProvider = null;
+  }
+
+  static String getRandomPreviewText([SupportedLanguage? language]) {
+    final localization = LocalizationManager();
+    final resolvedLanguage = language ?? localization.currentLanguage;
+    final customTexts = _previewTextProvider?.call(resolvedLanguage);
+    if (customTexts != null && customTexts.isNotEmpty) {
+      return customTexts[_randomGenerator.nextInt(customTexts.length)];
+    }
     if (_previewTextKeys.isEmpty) {
       return '';
     }
-    final localization = LocalizationManager();
-    final key = _previewTextKeys[_randomGenerator.nextInt(_previewTextKeys.length)];
+    final key =
+        _previewTextKeys[_randomGenerator.nextInt(_previewTextKeys.length)];
     return localization.t(key);
   }
-  
+
   // 预设的示例文本列表
   static const List<String> _previewTextKeys = [
     'quotes.preview.1',
@@ -55,14 +93,15 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
     with TickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<int> _charAnimation;
-  
+
   late String _currentPreviewText;
-  
+
   @override
   void initState() {
     super.initState();
     // 使用传入的文本，如果没有则随机选择
-    _currentPreviewText = widget.previewText ?? TypewriterPreview.getRandomPreviewText();
+    _currentPreviewText =
+        widget.previewText ?? TypewriterPreview.getRandomPreviewText();
     _initAnimation();
     _startAnimation();
   }
@@ -70,9 +109,10 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
   void _initAnimation() {
     _animationController = AnimationController(
       duration: Duration(
-        milliseconds: widget.charsPerSecond >= 200.0 
-          ? 100 // 瞬间显示时的最小持续时间
-          : (_currentPreviewText.length * 1000 / widget.charsPerSecond).round(),
+        milliseconds: widget.charsPerSecond >= 200.0
+            ? 100 // 瞬间显示时的最小持续时间
+            : (_currentPreviewText.length * 1000 / widget.charsPerSecond)
+                .round(),
       ),
       vsync: this,
     );
@@ -98,7 +138,7 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
         });
       }
     });
-    
+
     _animationController.forward();
   }
 
@@ -110,7 +150,8 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
     String? updatedText;
 
     if (oldWidget.previewText != widget.previewText) {
-      updatedText = widget.previewText ?? TypewriterPreview.getRandomPreviewText();
+      updatedText =
+          widget.previewText ?? TypewriterPreview.getRandomPreviewText();
       shouldRestart = true;
     }
 
@@ -139,18 +180,19 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
   String _getVisibleText(int charCount) {
     if (charCount <= 0) return '';
     if (charCount >= _currentPreviewText.length) return _currentPreviewText;
-    
+
     String visibleText = _currentPreviewText.substring(0, charCount);
-    
+
     // 如果启用标点符号延迟效果，在标点符号处添加适当的停顿感
-    if (!widget.skipPunctuationDelay && charCount < _currentPreviewText.length) {
+    if (!widget.skipPunctuationDelay &&
+        charCount < _currentPreviewText.length) {
       final currentChar = _currentPreviewText[charCount - 1];
       if (RegExp(r'[。！？；，、]').hasMatch(currentChar)) {
         // 在标点符号后添加一个光标闪烁效果来模拟停顿
         return visibleText;
       }
     }
-    
+
     return visibleText;
   }
 
@@ -158,7 +200,7 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
   Widget build(BuildContext context) {
     final textScale = context.scaleFor(ComponentType.text);
     final localization = LocalizationManager();
-    
+
     return Container(
       padding: EdgeInsets.all(12 * widget.scale),
       margin: EdgeInsets.only(top: 12 * widget.scale),
@@ -184,7 +226,9 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
               Text(
                 localization.t('settings.typewriterPreview.title'),
                 style: widget.config.dialogueTextStyle.copyWith(
-                  fontSize: widget.config.dialogueTextStyle.fontSize! * textScale * 0.55,
+                  fontSize: widget.config.dialogueTextStyle.fontSize! *
+                      textScale *
+                      0.55,
                   color: widget.config.themeColors.primary.withOpacity(0.7),
                   fontWeight: FontWeight.w500,
                 ),
@@ -204,27 +248,35 @@ class _TypewriterPreviewState extends State<TypewriterPreview>
               animation: _charAnimation,
               builder: (context, child) {
                 final visibleText = _getVisibleText(_charAnimation.value);
-                final showCursor = _charAnimation.value < _currentPreviewText.length;
-                
+                final showCursor =
+                    _charAnimation.value < _currentPreviewText.length;
+
                 return RichText(
                   text: TextSpan(
                     children: [
                       TextSpan(
                         text: visibleText,
                         style: widget.config.dialogueTextStyle.copyWith(
-                          fontSize: widget.config.dialogueTextStyle.fontSize! * textScale * 0.5,
+                          fontSize: widget.config.dialogueTextStyle.fontSize! *
+                              textScale *
+                              0.5,
                           color: widget.config.themeColors.onSurface,
                           height: 1.4,
-                          fontFamily: widget.fontFamily ?? widget.config.dialogueFontFamily,
+                          fontFamily: widget.fontFamily ??
+                              widget.config.dialogueFontFamily,
                         ),
                       ),
                       if (showCursor && widget.charsPerSecond < 200.0)
                         TextSpan(
                           text: '|',
                           style: widget.config.dialogueTextStyle.copyWith(
-                            fontSize: widget.config.dialogueTextStyle.fontSize! * textScale * 0.5,
+                            fontSize:
+                                widget.config.dialogueTextStyle.fontSize! *
+                                    textScale *
+                                    0.5,
                             color: widget.config.themeColors.primary,
-                            fontFamily: widget.fontFamily ?? widget.config.dialogueFontFamily,
+                            fontFamily: widget.fontFamily ??
+                                widget.config.dialogueFontFamily,
                           ),
                         ),
                     ],
