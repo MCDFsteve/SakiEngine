@@ -163,7 +163,13 @@ extension _GameManagerLifecycle on GameManager {
       }
     }
 
+    final restoredBackground = await _resolveRestoredBackground(
+      snapshot,
+      displayedDialogueScriptIndex,
+    );
+
     _currentState = snapshot.currentState.copyWith(
+      background: restoredBackground,
       isNvlMode: snapshot.isNvlMode,
       isNvlMovieMode: snapshot.isNvlMovieMode,
       isNvlnMode: snapshot.isNvlnMode, // 新增：恢复无遮罩NVL模式状态
@@ -247,6 +253,59 @@ extension _GameManagerLifecycle on GameManager {
       }
       _gameStateController.add(_currentState);
     }
+  }
+
+  Future<String?> _resolveRestoredBackground(
+    GameStateSnapshot snapshot,
+    int displayedDialogueScriptIndex,
+  ) async {
+    final restoredBackground = snapshot.currentState.background?.trim();
+    if (restoredBackground == null || restoredBackground.isEmpty) {
+      return snapshot.currentState.background;
+    }
+
+    if (await _isRestoredBackgroundUsable(restoredBackground)) {
+      return snapshot.currentState.background;
+    }
+
+    final scriptBackground = GameManager._findNearestScriptBackground(
+      _script,
+      displayedDialogueScriptIndex,
+    );
+    if (scriptBackground == null ||
+        scriptBackground.trim().isEmpty ||
+        scriptBackground == restoredBackground) {
+      return snapshot.currentState.background;
+    }
+
+    if (await _isRestoredBackgroundUsable(scriptBackground)) {
+      debugPrint(
+        '[GameManager] Restored missing background "$restoredBackground" '
+        'from script as "$scriptBackground"',
+      );
+      return scriptBackground;
+    }
+
+    return snapshot.currentState.background;
+  }
+
+  Future<bool> _isRestoredBackgroundUsable(String background) async {
+    final normalized = background.trim();
+    if (normalized.isEmpty ||
+        ColorBackgroundRenderer.isValidHexColor(normalized) ||
+        CgImageCompositor().isCachePath(normalized)) {
+      return true;
+    }
+
+    if (normalized.startsWith('/') ||
+        (normalized.length > 2 && normalized[1] == ':')) {
+      return File(normalized).exists();
+    }
+
+    final hyphenated = normalized.replaceAll(' ', '-');
+    return await AssetManager().findAsset('backgrounds/$hyphenated') != null ||
+        await AssetManager().findAsset(normalized) != null ||
+        await AssetManager().findAsset(hyphenated) != null;
   }
 
   Future<void> _hotReloadLifecycle(String scriptName) async {

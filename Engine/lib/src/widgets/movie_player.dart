@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
+import 'package:sakiengine/src/utils/smart_asset_image.dart';
 
 class MoviePlayer extends StatefulWidget {
   final String movieFile;
@@ -20,6 +21,7 @@ class MoviePlayer extends StatefulWidget {
   final bool sequentialLooping;
   final BoxFit fit;
   final Alignment alignment;
+  final String? placeholderImageAssetName;
 
   const MoviePlayer({
     super.key,
@@ -38,6 +40,7 @@ class MoviePlayer extends StatefulWidget {
     this.sequentialLooping = false,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
+    this.placeholderImageAssetName,
   });
 
   @override
@@ -70,6 +73,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
   Duration _mediaDuration = Duration.zero;
   bool _isBuffering = true;
   bool _hasVideoSize = false;
+  bool _hasRenderedFirstFrame = false;
   bool _isPingPongReversePhase = false;
   bool _isPingPongTransitioning = false;
   bool _reversePrewarmStarted = false;
@@ -101,6 +105,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
     }
     return null;
   }
+
+  bool get _hasPlaceholderImage =>
+      widget.placeholderImageAssetName != null &&
+      widget.placeholderImageAssetName!.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -149,6 +157,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
         _mediaDuration = Duration.zero;
         _isBuffering = true;
         _hasVideoSize = false;
+        _hasRenderedFirstFrame = false;
         _isPingPongReversePhase = false;
         _isPingPongTransitioning = false;
         _reversePrewarmStarted = false;
@@ -218,10 +227,27 @@ class _MoviePlayerState extends State<MoviePlayer> {
       });
       _isBuffering = _player?.state.buffering ?? _isBuffering;
       _hasVideoSize = _hasVideoSize || (_player?.state.width != null);
+      unawaited(_waitUntilPrimaryFirstFrameRendered(_videoController!));
       _maybeReportVideoReady();
     } catch (e) {
       _setError('视频初始化失败: $e');
     }
+  }
+
+  Future<void> _waitUntilPrimaryFirstFrameRendered(
+      VideoController controller) async {
+    try {
+      await controller.waitUntilFirstFrameRendered;
+    } catch (_) {}
+
+    if (!mounted || _videoController != controller) {
+      return;
+    }
+
+    setState(() {
+      _hasRenderedFirstFrame = true;
+    });
+    _maybeReportVideoReady();
   }
 
   void _listenPlayerEvents() {
@@ -376,7 +402,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
         (_player?.state.duration ?? Duration.zero) > Duration.zero;
     final hasVideoSize = _hasVideoSize || (_player?.state.width != null);
     final isBuffering = _isBuffering || (_player?.state.buffering ?? false);
-    if (isBuffering || (!hasDuration && !hasVideoSize)) {
+    if (!_hasRenderedFirstFrame ||
+        isBuffering ||
+        (!hasDuration && !hasVideoSize)) {
       return;
     }
 
@@ -701,6 +729,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
     _mediaDuration = Duration.zero;
     _isBuffering = true;
     _hasVideoSize = false;
+    _hasRenderedFirstFrame = false;
     _isPingPongReversePhase = false;
     _isPingPongTransitioning = false;
     _showReversePlayer = false;
@@ -755,7 +784,20 @@ class _MoviePlayerState extends State<MoviePlayer> {
       fit: widget.fit,
       alignment: widget.alignment,
       controls: null,
-      fill: Colors.black,
+      fill: _hasPlaceholderImage ? Colors.transparent : Colors.black,
+    );
+  }
+
+  Widget _buildPlaceholderLayer() {
+    final assetName = widget.placeholderImageAssetName?.trim();
+    if (assetName == null || assetName.isEmpty) {
+      return const ColoredBox(color: Colors.black);
+    }
+
+    return SmartAssetImage(
+      assetName: assetName,
+      fit: widget.fit,
+      errorWidget: const ColoredBox(color: Colors.black),
     );
   }
 
@@ -763,8 +805,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
   Widget build(BuildContext context) {
     if (_hasError) {
       if (widget.backgroundMode) {
-        return const SizedBox.expand(
-          child: ColoredBox(color: Colors.black),
+        return SizedBox.expand(
+          child: _buildPlaceholderLayer(),
         );
       }
 
@@ -788,8 +830,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
     if (!_isInitialized || _videoController == null) {
       if (widget.backgroundMode) {
-        return const SizedBox.expand(
-          child: ColoredBox(color: Colors.black),
+        return SizedBox.expand(
+          child: _buildPlaceholderLayer(),
         );
       }
 
@@ -804,20 +846,27 @@ class _MoviePlayerState extends State<MoviePlayer> {
     }
 
     final reverseVideoController = _reverseVideoController;
+    final shouldShowPrimaryVideo =
+        !_hasPlaceholderImage || _hasRenderedFirstFrame;
     final videoLayers = <Widget>[
-      if (reverseVideoController != null && !_showReversePlayer)
-        _buildVideoLayer(reverseVideoController),
-      _buildVideoLayer(_videoController!),
-      if (reverseVideoController != null && _showReversePlayer)
-        _buildVideoLayer(reverseVideoController),
+      if (shouldShowPrimaryVideo) ...[
+        if (reverseVideoController != null && !_showReversePlayer)
+          _buildVideoLayer(reverseVideoController),
+        _buildVideoLayer(_videoController!),
+        if (reverseVideoController != null && _showReversePlayer)
+          _buildVideoLayer(reverseVideoController),
+      ],
     ];
 
     return SizedBox.expand(
       child: ColoredBox(
-        color: Colors.black,
+        color: _hasPlaceholderImage ? Colors.transparent : Colors.black,
         child: Stack(
           fit: StackFit.expand,
-          children: videoLayers,
+          children: [
+            if (_hasPlaceholderImage) _buildPlaceholderLayer(),
+            ...videoLayers,
+          ],
         ),
       ),
     );

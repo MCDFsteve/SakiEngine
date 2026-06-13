@@ -375,13 +375,24 @@ class AssetManager {
         .toSet();
     for (final key in _bundleAssetKeysByPriority()) {
       final normalizedKey = key.replaceAll('\\', '/').toLowerCase();
-      if (candidates.contains(normalizedKey)) {
+      final keyWithoutBundleAssetsPrefix = normalizedKey.startsWith('assets/')
+          ? normalizedKey.substring('assets/'.length)
+          : normalizedKey;
+      if (candidates.contains(normalizedKey) ||
+          candidates.contains(keyWithoutBundleAssetsPrefix)) {
         _imageCache[name] = key;
         return key;
       }
       if (normalizedKey.startsWith('packages/') &&
           candidates
               .any((candidate) => normalizedKey.endsWith('/$candidate'))) {
+        _imageCache[name] = key;
+        return key;
+      }
+      if (normalizedKey.startsWith('assets/packages/') &&
+          candidates.any(
+            (candidate) => keyWithoutBundleAssetsPrefix.endsWith('/$candidate'),
+          )) {
         _imageCache[name] = key;
         return key;
       }

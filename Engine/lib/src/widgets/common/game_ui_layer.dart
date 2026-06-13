@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:flutter/material.dart';
@@ -125,6 +126,7 @@ class GameUILayer extends StatefulWidget {
 
 class GameUILayerState extends State<GameUILayer> {
   final _notificationOverlayKey = GlobalKey<NotificationOverlayState>();
+  bool _isChoiceSelectionPending = false;
 
   /// 检查是否有弹窗显示或正在播放视频
   bool get _hasOverlayOpen {
@@ -141,6 +143,35 @@ class GameUILayerState extends State<GameUILayer> {
   }
 
   @override
+  void didUpdateWidget(covariant GameUILayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final currentNode = widget.gameState.currentNode;
+    if (currentNode is! MenuNode ||
+        currentNode != oldWidget.gameState.currentNode) {
+      _isChoiceSelectionPending = false;
+    }
+  }
+
+  void _handleChoiceSelected(String targetLabel) {
+    if (_isChoiceSelectionPending) {
+      return;
+    }
+
+    setState(() {
+      _isChoiceSelectionPending = true;
+    });
+
+    unawaited(widget.gameManager.jumpToLabel(targetLabel).whenComplete(() {
+      if (!mounted || widget.gameState.currentNode is! MenuNode) {
+        return;
+      }
+      setState(() {
+        _isChoiceSelectionPending = false;
+      });
+    }));
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isMobile = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
     final uiScale = context.scaleFor(ComponentType.menu);
@@ -152,7 +183,8 @@ class GameUILayerState extends State<GameUILayer> {
         ? 100.0 * uiScale + (isMobile ? mediaPadding.left : 0.0)
         : 0.0;
     final dialogueHistory = widget.gameManager.getDialogueHistory();
-    final isMenuNode = widget.gameState.currentNode is MenuNode;
+    final isMenuNode =
+        widget.gameState.currentNode is MenuNode && !_isChoiceSelectionPending;
     final latestDialogueEntry =
         dialogueHistory.isNotEmpty ? dialogueHistory.last : null;
     final menuPreviousDialogueEntry = isMenuNode && dialogueHistory.length >= 2
@@ -251,9 +283,7 @@ class GameUILayerState extends State<GameUILayer> {
             child: widget.gameModule.createChoiceMenu(
               key: const ValueKey('choice_menu'),
               menuNode: widget.gameState.currentNode as MenuNode,
-              onChoiceSelected: (targetLabel) {
-                widget.gameManager.jumpToLabel(targetLabel);
-              },
+              onChoiceSelected: _handleChoiceSelected,
               isFastForwarding: widget.gameState.isFastForwarding, // 传递快进状态
               leadingDialogue: leadingDialogueBeforeMenu,
             ),

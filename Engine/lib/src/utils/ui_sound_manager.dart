@@ -25,8 +25,19 @@ class UISoundManager {
   bool _uiSoundsResolved = false;
   final List<String> _hoverSounds = <String>[];
   String? _clickSound;
+  String? _backSound;
+  String? _adjustSound;
 
-  static const String _uiSoundDirectory = 'Assets/gui';
+  static const List<String> _uiSoundDirectories = <String>[
+    'Assets/sound',
+    'Assets/gui',
+  ];
+  static const Map<String, String> _preferredUiSounds = <String, String>{
+    'hover': 'Assets/sound/ui_hover.mp3',
+    'click': 'Assets/sound/ui_click.mp3',
+    'back': 'Assets/sound/ui_back.mp3',
+    'adjust': 'Assets/sound/ui_adjust.mp3',
+  };
   static const List<String> _supportedSoundExtensions = <String>[
     '.mp3',
     '.ogg',
@@ -74,36 +85,57 @@ class UISoundManager {
   }
 
   Future<void> playButtonHover() async {
+    await _playRandomSound(_hoverSounds, 'playButtonHover');
+  }
+
+  Future<void> playButtonClick() async {
+    await _playResolvedSound(() => _clickSound, 'playButtonClick');
+  }
+
+  Future<void> playButtonBack() async {
+    await _playResolvedSound(() => _backSound ?? _clickSound, 'playButtonBack');
+  }
+
+  Future<void> playSettingAdjust() async {
+    await _playResolvedSound(
+      () => _adjustSound ?? _clickSound,
+      'playSettingAdjust',
+    );
+  }
+
+  Future<void> _playRandomSound(List<String> sounds, String debugLabel) async {
     if (!isSoundEnabled) return;
 
     try {
       await _ensureReady();
-      if (_hoverSounds.isEmpty) {
+      if (sounds.isEmpty) {
         return;
       }
-
-      final String assetPath = _hoverSounds[_random.nextInt(_hoverSounds.length)];
+      final String assetPath = sounds[_random.nextInt(sounds.length)];
       await _playSound(assetPath);
     } catch (e) {
       if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
-        print('[UISoundManager] playButtonHover failed: $e');
+        print('[UISoundManager] $debugLabel failed: $e');
       }
     }
   }
 
-  Future<void> playButtonClick() async {
+  Future<void> _playResolvedSound(
+    String? Function() resolveSound,
+    String debugLabel,
+  ) async {
     if (!isSoundEnabled) return;
 
     try {
       await _ensureReady();
-      final clickSound = _clickSound;
-      if (clickSound == null || clickSound.isEmpty) {
+      final sound = resolveSound();
+      if (sound == null || sound.isEmpty) {
         return;
       }
-      await _playSound(clickSound);
+      await _playSound(sound);
     } catch (e) {
       if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
-        print('[UISoundManager] playButtonClick failed: $e');
+        print('[UISoundManager] $debugLabel failed: $e');
       }
     }
   }
@@ -143,6 +175,8 @@ class UISoundManager {
     _players.clear();
     _hoverSounds.clear();
     _clickSound = null;
+    _backSound = null;
+    _adjustSound = null;
     _uiSoundsResolved = false;
     _initialized = false;
   }
@@ -162,43 +196,89 @@ class UISoundManager {
     _uiSoundsResolved = true;
 
     final Set<String> files = <String>{};
+    await _addPreferredUiSounds(files);
     for (final extension in _supportedSoundExtensions) {
-      try {
-        final entries = await AssetManager().listAssets(_uiSoundDirectory, extension);
-        files.addAll(entries);
-      } catch (e) {
-        if (kEngineDebugMode) {
-          print(
-              '[UISoundManager] listAssets failed: dir=$_uiSoundDirectory ext=$extension error=$e');
+      for (final directory in _uiSoundDirectories) {
+        try {
+          final entries = await AssetManager().listAssets(directory, extension);
+          files.addAll(
+            entries.map((fileName) => _buildUiSoundPath(directory, fileName)),
+          );
+        } catch (e) {
+          if (kEngineDebugMode) {
+            print(
+                '[UISoundManager] listAssets failed: dir=$directory ext=$extension error=$e');
+          }
         }
       }
     }
 
-    final List<String> audioAssets = files.map(_buildUiSoundPath).toList()..sort();
+    final List<String> audioAssets = files.toList()..sort();
     if (audioAssets.isEmpty) {
       return;
     }
 
     final hoverCandidates = _pickHoverCandidates(audioAssets);
-    final clickCandidate = _pickClickCandidate(audioAssets, hoverCandidates);
+    final clickCandidate = _pickPreferredSound(audioAssets, const <String>[
+          'ui_click',
+          'click',
+          'confirm',
+          'select',
+          'press',
+          'enter',
+          'ok',
+          'main',
+        ]) ??
+        _pickFallbackCandidate(audioAssets, hoverCandidates);
+    final backCandidate = _pickPreferredSound(audioAssets, const <String>[
+      'ui_back',
+      'back',
+      'return',
+      'cancel',
+      'close',
+      'exit',
+      'quit',
+    ]);
+    final adjustCandidate = _pickPreferredSound(audioAssets, const <String>[
+      'ui_adjust',
+      'adjust',
+      'setting',
+      'settings',
+      'toggle',
+      'switch',
+    ]);
 
     _hoverSounds
       ..clear()
       ..addAll(hoverCandidates);
     _clickSound = clickCandidate;
+    _backSound = backCandidate;
+    _adjustSound = adjustCandidate;
   }
 
-  String _buildUiSoundPath(String fileName) {
+  Future<void> _addPreferredUiSounds(Set<String> files) async {
+    for (final assetPath in _preferredUiSounds.values) {
+      try {
+        final resolvedPath = await AssetManager().findAsset(assetPath);
+        if (resolvedPath != null && resolvedPath.isNotEmpty) {
+          files.add(assetPath);
+        }
+      } catch (_) {}
+    }
+  }
+
+  String _buildUiSoundPath(String directory, String fileName) {
     if (fileName.startsWith('Assets/') || fileName.startsWith('assets/')) {
       return fileName;
     }
-    return '$_uiSoundDirectory/$fileName';
+    return '$directory/$fileName';
   }
 
   List<String> _pickHoverCandidates(List<String> audioAssets) {
     final List<String> hoverSounds = audioAssets.where((assetPath) {
       final stem = _soundStemLower(assetPath);
-      return stem.contains('hover') ||
+      return stem == 'ui_hover' ||
+          stem.contains('hover') ||
           stem.startsWith('button') ||
           stem.contains('rollover') ||
           stem.contains('cursor') ||
@@ -208,33 +288,39 @@ class UISoundManager {
     if (hoverSounds.isNotEmpty) {
       return hoverSounds;
     }
-    return List<String>.from(audioAssets);
+    return const <String>[];
   }
 
-  String? _pickClickCandidate(
+  String? _pickPreferredSound(List<String> audioAssets, List<String> stems) {
+    for (final assetPath in audioAssets) {
+      final stem = _soundStemLower(assetPath);
+      if (stems.contains(stem)) {
+        return assetPath;
+      }
+    }
+
+    for (final assetPath in audioAssets) {
+      final stem = _soundStemLower(assetPath);
+      if (stems.any((candidate) => stem.contains(candidate))) {
+        return assetPath;
+      }
+    }
+
+    return null;
+  }
+
+  String? _pickFallbackCandidate(
     List<String> audioAssets,
     List<String> hoverCandidates,
   ) {
     for (final assetPath in audioAssets) {
-      final stem = _soundStemLower(assetPath);
-      if (stem.contains('click') ||
-          stem.contains('confirm') ||
-          stem.contains('select') ||
-          stem.contains('press') ||
-          stem.contains('enter') ||
-          stem.contains('ok') ||
-          stem.contains('main')) {
+      if (assetPath.startsWith('Assets/gui/') &&
+          !hoverCandidates.contains(assetPath)) {
         return assetPath;
       }
     }
 
-    for (final assetPath in audioAssets) {
-      if (!hoverCandidates.contains(assetPath)) {
-        return assetPath;
-      }
-    }
-
-    return audioAssets.first;
+    return null;
   }
 
   String _soundStemLower(String assetPath) {
@@ -287,7 +373,8 @@ class UISoundManager {
         return;
       } catch (e) {
         if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
-          print('[UISoundManager] setFilePath(bundle) failed: $bundlePath, error=$e');
+          print(
+              '[UISoundManager] setFilePath(bundle) failed: $bundlePath, error=$e');
         }
       }
     }
@@ -299,7 +386,8 @@ class UISoundManager {
         return;
       } catch (e) {
         if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
-          print('[UISoundManager] setFilePath(game) failed: $gamePath, error=$e');
+          print(
+              '[UISoundManager] setFilePath(game) failed: $gamePath, error=$e');
         }
       }
     }
@@ -308,8 +396,9 @@ class UISoundManager {
   }
 
   String _normalizeBundleAssetPath(String path) {
-    final String normalized =
-        path.startsWith('asset:///') ? path.replaceFirst('asset:///', '') : path;
+    final String normalized = path.startsWith('asset:///')
+        ? path.replaceFirst('asset:///', '')
+        : path;
     final String lower = normalized.toLowerCase();
     if (lower.startsWith('assets/') || lower.startsWith('packages/')) {
       return normalized;

@@ -1578,6 +1578,33 @@ class GameManager {
     );
   }
 
+  @visibleForTesting
+  static String? findNearestRestorableBackgroundForTest(
+    ScriptNode script,
+    int scriptIndex,
+  ) {
+    return _findNearestScriptBackground(script, scriptIndex);
+  }
+
+  static String? _findNearestScriptBackground(
+    ScriptNode script,
+    int scriptIndex,
+  ) {
+    if (script.children.isEmpty) {
+      return null;
+    }
+
+    final startIndex = scriptIndex.clamp(0, script.children.length - 1).toInt();
+    for (var i = startIndex; i >= 0; i--) {
+      final node = script.children[i];
+      if (node is BackgroundNode) {
+        return node.background;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> hotReload(String scriptName) {
     _disableRuntimeSideEffectsForTesting = false;
     return _hotReloadLifecycle(scriptName);
@@ -1788,11 +1815,14 @@ class GameManager {
           return;
         }
 
-        // 检查是否需要开始播放或切换音乐
-        if (stateRegion == null ||
-            stateRegion.musicFile != currentRegion.musicFile ||
-            !MusicManager().isPlayingMusic(fullMusicPath) ||
-            forceCheck) {
+        final isExpectedMusicPlaying =
+            MusicManager().isPlayingMusic(fullMusicPath);
+        final shouldPlayMusic = !isExpectedMusicPlaying ||
+            (stateRegion != null &&
+                stateRegion.musicFile != currentRegion.musicFile);
+
+        // 检查是否需要开始播放或切换音乐。强制检查只验证状态，不重复重播同一首正在播放的音乐。
+        if (shouldPlayMusic) {
           if (kEngineDebugMode && _musicRegionVerboseLogs) {
             print(
                 '[MusicRegion] 当前位置($_scriptIndex)需要播放音乐: regionMusic="${currentRegion.musicFile}", resolvedPath="$fullMusicPath", forceCheck=$forceCheck');
@@ -1803,6 +1833,9 @@ class GameManager {
             fadeTransition: true,
             fadeDuration: const Duration(milliseconds: 1200),
           );
+          _currentState =
+              _currentState.copyWith(currentMusicRegion: currentRegion);
+        } else if (currentRegion != stateRegion) {
           _currentState =
               _currentState.copyWith(currentMusicRegion: currentRegion);
         }
@@ -2026,6 +2059,7 @@ class GameManager {
       _currentState = _currentState.copyWith(
           forceNullCurrentNode: true,
           everShownCharacters: _everShownCharacters);
+      _gameStateController.add(_currentState);
       if (kEngineDebugMode) {
         //////print('[GameManager] 跳转到标签: $label, 索引: $_scriptIndex');
       }
