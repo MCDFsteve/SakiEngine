@@ -294,13 +294,13 @@ class _MoviePlayerState extends State<MoviePlayer> {
       return;
     }
 
-    final loopStart = widget.loopStart;
-    if (loopStart == null) {
+    if (_hasPreparedPingPongReverseSource) {
+      _maybePrewarmPreparedPingPongReverse(position);
       return;
     }
 
-    if (_hasPreparedPingPongReverseSource) {
-      _maybePrewarmPreparedPingPongReverse(position);
+    final loopStart = widget.loopStart;
+    if (loopStart == null) {
       return;
     }
 
@@ -314,6 +314,11 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
   void _maybePrewarmPreparedPingPongReverse(Duration position) {
     if (_reversePrewarmStarted || _reversePlayerReady) {
+      return;
+    }
+
+    if (_hasSequentialFollowUp && !_isPingPongLoopEnabled) {
+      unawaited(_prewarmPreparedPingPongReversePlayer());
       return;
     }
 
