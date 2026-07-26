@@ -439,9 +439,15 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
             break;
           case AppState.inGame:
             _notifyMenuWarmupFinished();
+            final initialScript = gameModule.initialScript.trim();
+            final saveSlot = _saveSlotToLoad;
+            final sessionKey = saveSlot == null
+                ? 'new_game:${initialScript.isEmpty ? 'start' : initialScript}'
+                : 'save:${saveSlot.id}:${saveSlot.currentScript}:'
+                    '${saveSlot.saveTime.microsecondsSinceEpoch}';
             currentScreen = gameModule.createGamePlayScreen(
-              key: ValueKey(_saveSlotToLoad?.id ?? 'new_game'),
-              saveSlotToLoad: _saveSlotToLoad,
+              key: ValueKey(sessionKey),
+              saveSlotToLoad: saveSlot,
               onReturnToMenu: () => _returnToMainMenu(
                 withTransition: gameModule.enableReturnToMainMenuTransition,
               ),

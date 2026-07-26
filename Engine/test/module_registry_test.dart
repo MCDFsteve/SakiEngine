@@ -3,6 +3,7 @@ import 'package:sakiengine/src/core/game_module.dart';
 import 'package:sakiengine/src/core/module_registry.dart';
 import 'package:sakiengine/src/core/project_module_loader.dart';
 import 'package:sakiengine/src/screens/game_play_screen.dart';
+import 'package:sakiengine/src/widgets/common/virtual_game_canvas.dart';
 
 class _FakeModuleA extends DefaultGameModule {}
 
@@ -31,10 +32,22 @@ void main() {
 
   test('default game module does not pass initial loading overlay builder', () {
     final screen = DefaultGameModule().createGamePlayScreen();
+    final gameScreen = (screen as SakiVirtualGameCanvas).child;
 
-    expect(screen, isA<GamePlayScreen>());
+    expect(gameScreen, isA<GamePlayScreen>());
     expect(
-      (screen as GamePlayScreen).initialLoadingOverlayBuilder,
+      (gameScreen as GamePlayScreen).initialLoadingOverlayBuilder,
+      isNull,
+    );
+  });
+
+  test('default game module starts new games from start', () {
+    expect(DefaultGameModule().initialScript, 'start');
+  });
+
+  test('default game module keeps the global quick save namespace', () {
+    expect(
+      DefaultGameModule().quickSaveNamespaceForScript('start'),
       isNull,
     );
   });

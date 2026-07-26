@@ -99,7 +99,8 @@ class RenderingSystemManager {
       // 强制统一使用 composite（shader 融合路径）
       const effectiveSystem = RenderingSystemType.composite;
       if (cgCharacters.isNotEmpty) {
-        final diag = '${effectiveSystem.name}(forced)|count=${cgCharacters.length}|'
+        final diag =
+            '${effectiveSystem.name}(forced)|count=${cgCharacters.length}|'
             'ff=${gameManager.isFastForwardMode}|current=${_currentSystem.name}';
         if (diag != _lastCgRendererDiag) {
           _lastCgRendererDiag = diag;
@@ -112,6 +113,8 @@ class RenderingSystemManager {
         cgCharacters,
         gameManager,
         skipAnimations: gameManager.isFastForwardMode,
+        transitionDuration: gameManager.cgRendererTransitionDuration,
+        onTransitionCompleted: gameManager.notifyCgRendererTransitionCompleted,
       );
 
       stopwatch.stop();
@@ -131,6 +134,9 @@ class RenderingSystemManager {
           cgCharacters,
           gameManager,
           skipAnimations: gameManager.isFastForwardMode,
+          transitionDuration: gameManager.cgRendererTransitionDuration,
+          onTransitionCompleted:
+              gameManager.notifyCgRendererTransitionCompleted,
         );
       }
 
@@ -165,6 +171,9 @@ class RenderingSystemManager {
           cgCharacters,
           gameManager,
           skipAnimations: gameManager.isFastForwardMode,
+          transitionDuration: gameManager.cgRendererTransitionDuration,
+          onTransitionCompleted:
+              gameManager.notifyCgRendererTransitionCompleted,
         );
       }
     } else {
@@ -173,6 +182,8 @@ class RenderingSystemManager {
         cgCharacters,
         gameManager,
         skipAnimations: gameManager.isFastForwardMode,
+        transitionDuration: gameManager.cgRendererTransitionDuration,
+        onTransitionCompleted: gameManager.notifyCgRendererTransitionCompleted,
       );
     }
   }

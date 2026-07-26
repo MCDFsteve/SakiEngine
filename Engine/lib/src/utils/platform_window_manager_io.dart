@@ -7,6 +7,7 @@ export 'package:window_manager/window_manager.dart' show WindowListener;
 
 class PlatformWindowManager {
   static const double _aspectRatioOverflowTolerance = 0.5;
+  static const double _maximumExpectedFrameVerticalInset = 160.0;
   static const double defaultStartupWindowFillFraction = 0.9;
   static Rect? _aspectRatioMaximizeRestoreBounds;
 
@@ -153,6 +154,10 @@ class PlatformWindowManager {
       if (currentSize.height <= 0) {
         return;
       }
+      final effectiveReservedVerticalHeight = _effectiveReservedVerticalHeight(
+        currentBounds,
+        reservedVerticalHeight,
+      );
 
       final visibleDisplayBounds = await _resolveCurrentVisibleDisplayBounds(
         currentBounds,
@@ -160,7 +165,7 @@ class PlatformWindowManager {
       final targetSize = resolveAspectRatioPresetTargetSize(
         currentSize: currentSize,
         aspectRatio: aspectRatio,
-        reservedVerticalHeight: reservedVerticalHeight,
+        reservedVerticalHeight: effectiveReservedVerticalHeight,
         visibleDisplaySize: visibleDisplayBounds?.size,
       );
       if (updateAspectRatioConstraint) {
@@ -203,6 +208,10 @@ class PlatformWindowManager {
       }
 
       final currentBounds = await windowManager.getBounds();
+      final effectiveReservedVerticalHeight = _effectiveReservedVerticalHeight(
+        currentBounds,
+        reservedVerticalHeight,
+      );
       final visibleDisplayBounds = await _resolveCurrentVisibleDisplayBounds(
         currentBounds,
       );
@@ -215,7 +224,7 @@ class PlatformWindowManager {
       final targetBounds = resolveAspectRatioMaximizedBounds(
         visibleDisplayBounds: visibleDisplayBounds,
         aspectRatio: aspectRatio,
-        reservedVerticalHeight: reservedVerticalHeight,
+        reservedVerticalHeight: effectiveReservedVerticalHeight,
       );
       if (targetBounds.width <= 0 || targetBounds.height <= 0) {
         return null;
@@ -248,6 +257,10 @@ class PlatformWindowManager {
       if (currentSize.width <= 0 || currentSize.height <= 0) {
         return;
       }
+      final effectiveReservedVerticalHeight = _effectiveReservedVerticalHeight(
+        currentBounds,
+        reservedVerticalHeight,
+      );
 
       final visibleDisplayBounds = await _resolveCurrentVisibleDisplayBounds(
         currentBounds,
@@ -255,7 +268,7 @@ class PlatformWindowManager {
       final targetSize = resolveAspectRatioPresetTargetSize(
         currentSize: currentSize,
         aspectRatio: aspectRatio,
-        reservedVerticalHeight: reservedVerticalHeight,
+        reservedVerticalHeight: effectiveReservedVerticalHeight,
         visibleDisplaySize: visibleDisplayBounds?.size,
       );
       if ((targetSize.width - currentSize.width).abs() <= 1.0 &&
@@ -288,6 +301,8 @@ class PlatformWindowManager {
       }
 
       final currentBounds = await windowManager.getBounds();
+      final reservedVerticalHeight =
+          _effectiveReservedVerticalHeight(currentBounds, 0.0);
       final visibleDisplayBounds =
           await _resolveCurrentVisibleDisplayBounds(currentBounds);
       if (visibleDisplayBounds == null ||
@@ -300,6 +315,7 @@ class PlatformWindowManager {
         visibleDisplayBounds: visibleDisplayBounds,
         aspectRatio: aspectRatio,
         fillFraction: fillFraction,
+        reservedVerticalHeight: reservedVerticalHeight,
       );
       if (targetBounds.width <= 0 || targetBounds.height <= 0) {
         return;
@@ -345,11 +361,56 @@ class PlatformWindowManager {
     required Rect visibleDisplayBounds,
     required double aspectRatio,
     double fillFraction = defaultStartupWindowFillFraction,
+    double reservedVerticalHeight = 0.0,
   }) {
     return _resolveContentAspectWindowBounds(
       visibleDisplayBounds: visibleDisplayBounds,
       aspectRatio: aspectRatio,
       fillFraction: fillFraction,
+      reservedVerticalHeight: reservedVerticalHeight,
+    );
+  }
+
+  /// Resolves the non-client vertical area around Flutter's content view.
+  ///
+  /// On macOS, window_manager sizes the complete NSWindow frame while its
+  /// aspect-ratio constraint applies to the content area. Keeping those two
+  /// measurements separate prevents the title bar from becoming a black strip
+  /// beside the game canvas on the first frame.
+  static double resolveWindowFrameVerticalInset({
+    required Size windowFrameSize,
+    required Size contentSize,
+  }) {
+    if (windowFrameSize.height <= 0 || contentSize.height <= 0) {
+      return 0.0;
+    }
+
+    final inset = windowFrameSize.height - contentSize.height;
+    final maximumInset = (windowFrameSize.height * 0.25)
+        .clamp(0.0, _maximumExpectedFrameVerticalInset)
+        .toDouble();
+    if (inset <= _aspectRatioOverflowTolerance || inset > maximumInset) {
+      return 0.0;
+    }
+    return inset;
+  }
+
+  static double _effectiveReservedVerticalHeight(
+    Rect currentWindowBounds,
+    double requestedReservedVerticalHeight,
+  ) {
+    if (requestedReservedVerticalHeight > 0 || !Platform.isMacOS) {
+      return requestedReservedVerticalHeight;
+    }
+
+    final view = PlatformDispatcher.instance.implicitView;
+    if (view == null || view.devicePixelRatio <= 0) {
+      return 0.0;
+    }
+    final contentSize = view.physicalSize / view.devicePixelRatio;
+    return resolveWindowFrameVerticalInset(
+      windowFrameSize: currentWindowBounds.size,
+      contentSize: contentSize,
     );
   }
 

@@ -126,6 +126,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   late final DialogueProgressionManager _dialogueProgressionManager;
   final _gameUILayerKey = GlobalKey<GameUILayerState>();
   final GlobalKey _saveThumbnailCaptureBoundaryKey = GlobalKey();
+  final GlobalKey _sceneTransitionCaptureBoundaryKey = GlobalKey();
   String _currentScript = 'start';
   bool _showReviewOverlay = false;
   bool _showSaveOverlay = false;
@@ -158,6 +159,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _reviewOpenedByMouseRollback = false;
   final GlobalKey _nvlScreenKey = GlobalKey();
   bool _isParallaxEnabled = SettingsManager.defaultMouseParallaxEnabled;
+  bool _isHiddenUiSceneTransformActive = false;
   Timer? _expressionWheelOpenTimer;
   SpeakerInfo? _expressionWheelSpeakerInfo;
   List<String> _expressionWheelExpressions = const [];
@@ -353,6 +355,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   void initState() {
     super.initState();
 
+    final configuredInitialScript =
+        (widget.gameModule ?? DefaultGameModule()).initialScript.trim();
+    _currentScript =
+        configuredInitialScript.isEmpty ? 'start' : configuredInitialScript;
+
     _isInitialLoading = widget.initialLoadingOverlayBuilder != null;
     if (_isInitialLoading) {
       debugPrint('[GamePlayScreen] initial loading overlay enabled');
@@ -466,7 +473,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
   Future<ui.Image?> _captureCurrentGameFrameForTransition() async {
     try {
-      final boundaryContext = _saveThumbnailCaptureBoundaryKey.currentContext;
+      final boundaryContext = _sceneTransitionCaptureBoundaryKey.currentContext;
       if (boundaryContext == null) {
         return null;
       }
@@ -889,6 +896,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                           const ColoredBox(color: Colors.black);
                     }
                     final gameState = snapshot.data!;
+                    final gameModule = widget.gameModule ?? DefaultGameModule();
 
                     _scheduleInitialLoadingReleaseIfReady(gameState);
 
@@ -940,14 +948,32 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
                     return MouseParallax(
                       maxOffset: const Offset(26, 16),
-                      enabled: _isParallaxEnabled,
+                      enabled: _isParallaxEnabled &&
+                          !_isHiddenUiSceneTransformActive,
                       child: RepaintBoundary(
                         key: _saveThumbnailCaptureBoundaryKey,
                         child: Stack(
                           children: [
                             RightClickUIManager(
                               // 背景层 - 不会被隐藏的内容（场景、角色等）
-                              backgroundChild: _buildSceneWithFilter(gameState),
+                              backgroundChild: RepaintBoundary(
+                                key: _sceneTransitionCaptureBoundaryKey,
+                                child: _buildSceneWithFilter(gameState),
+                              ),
+                              enableHiddenUiSceneZoom:
+                                  gameModule.enableHiddenUiSceneZoom,
+                              hiddenUiSceneMaxZoom:
+                                  gameModule.hiddenUiSceneMaxZoom,
+                              onHiddenUiSceneTransformChanged: (isActive) {
+                                if (!mounted ||
+                                    _isHiddenUiSceneTransformActive ==
+                                        isActive) {
+                                  return;
+                                }
+                                setState(() {
+                                  _isHiddenUiSceneTransformActive = isActive;
+                                });
+                              },
                               // 左键点击回调 - 推进剧情
                               onLeftClick: () {
                                 // 检查是否有弹窗或菜单显示
@@ -980,8 +1006,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                     key: _gameUILayerKey,
                                     gameState: gameState,
                                     gameManager: _gameManager,
-                                    gameModule: widget.gameModule ??
-                                        DefaultGameModule(),
+                                    gameModule: gameModule,
                                     dialogueProgressionManager:
                                         _dialogueProgressionManager,
                                     currentScript: _currentScript,
@@ -1151,9 +1176,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                             // 全局 scene filter 覆盖层：当模块禁用默认背景时启用，
                             // 覆盖 UI + 背景，作为全屏后处理。
                             if (gameState.sceneFilter != null &&
-                                !(widget.gameModule ?? DefaultGameModule())
-                                    .shouldRenderDefaultSceneBackground(
-                                        gameState))
+                                !gameModule.shouldRenderDefaultSceneBackground(
+                                    gameState))
                               Positioned.fill(
                                 child: IgnorePointer(
                                   child: _FilteredBackground(
@@ -1203,6 +1227,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     );
     final shouldRenderDefaultSceneBackground =
         module.shouldRenderDefaultSceneBackground(gameState);
+    final characterLighting = module.resolveCharacterLighting(gameState);
     if (_fxDiagLogs) {
       final filter = gameState.sceneFilter;
       final signature =
@@ -1269,6 +1294,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
               gameState.characters,
               _gameManager.poseConfigs,
               gameState.everShownCharacters,
+              characterLighting,
             ),
             // CG角色渲染，使用新的层叠渲染系统
             // 支持在预合成和层叠渲染间智能切换，优化快进性能
@@ -1548,6 +1574,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     Map<String, CharacterState> characters,
     Map<String, PoseConfig> poseConfigs,
     Set<String> everShownCharacters,
+    CharacterLighting? characterLighting,
   ) {
     // 应用自动分布逻辑
     final characterOrder = characters.keys.toList();
@@ -1612,6 +1639,13 @@ class _GamePlayScreenState extends State<GamePlayScreen>
             const Color(0xFFFFFFFF);
         finalWidget = ColorFiltered(
           colorFilter: ColorFilter.mode(parsedMaskColor, BlendMode.srcIn),
+          child: finalWidget,
+        );
+      }
+
+      if (characterLighting != null) {
+        finalWidget = ColorFiltered(
+          colorFilter: characterLighting.colorFilter,
           child: finalWidget,
         );
       }

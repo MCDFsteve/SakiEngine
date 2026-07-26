@@ -165,40 +165,21 @@ class PlatformWindowManager {
     required Rect visibleDisplayBounds,
     required double aspectRatio,
     double fillFraction = defaultStartupWindowFillFraction,
+    double reservedVerticalHeight = 0.0,
   }) {
-    if (visibleDisplayBounds.width <= 0 ||
-        visibleDisplayBounds.height <= 0 ||
-        aspectRatio <= 0) {
-      return Rect.zero;
-    }
-
-    final clampedFillFraction = fillFraction.clamp(0.1, 1.0).toDouble();
-    final maxWidth = visibleDisplayBounds.width * clampedFillFraction;
-    final maxHeight = visibleDisplayBounds.height * clampedFillFraction;
-
-    var targetWidth = maxWidth;
-    var targetHeight = targetWidth / aspectRatio;
-    if (targetHeight > maxHeight) {
-      targetHeight = maxHeight;
-      targetWidth = targetHeight * aspectRatio;
-    }
-
-    targetWidth = targetWidth.roundToDouble();
-    targetHeight = targetHeight.roundToDouble();
-    final targetLeft = (visibleDisplayBounds.left +
-            (visibleDisplayBounds.width - targetWidth) / 2)
-        .roundToDouble();
-    final targetTop = (visibleDisplayBounds.top +
-            (visibleDisplayBounds.height - targetHeight) / 2)
-        .roundToDouble();
-
-    return Rect.fromLTWH(
-      targetLeft,
-      targetTop,
-      targetWidth,
-      targetHeight,
+    return _resolveContentAspectWindowBounds(
+      visibleDisplayBounds: visibleDisplayBounds,
+      aspectRatio: aspectRatio,
+      fillFraction: fillFraction,
+      reservedVerticalHeight: reservedVerticalHeight,
     );
   }
+
+  static double resolveWindowFrameVerticalInset({
+    required Size windowFrameSize,
+    required Size contentSize,
+  }) =>
+      0.0;
 
   static Rect resolveAspectRatioMaximizedBounds({
     required Rect visibleDisplayBounds,

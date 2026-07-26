@@ -61,9 +61,13 @@ class AnimationManager {
       final trimmed = line.trim();
       if (trimmed.isEmpty || trimmed.startsWith('//')) continue;
 
-      if (!trimmed.startsWith('ease') && !trimmed.startsWith('linear') && !_isPropertyLine(trimmed)) {
+      if (!trimmed.startsWith('ease') &&
+          !trimmed.startsWith('linear') &&
+          !_isPropertyLine(trimmed)) {
         // 这是动画名称
-        if (currentAnimationName != null && (currentKeyframes.isNotEmpty || currentPresetProperties.isNotEmpty)) {
+        if (currentAnimationName != null &&
+            (currentKeyframes.isNotEmpty ||
+                currentPresetProperties.isNotEmpty)) {
           _animations[currentAnimationName] = AnimationDefinition(
             name: currentAnimationName,
             keyframes: List.from(currentKeyframes),
@@ -90,7 +94,8 @@ class AnimationManager {
     }
 
     // 处理最后一个动画
-    if (currentAnimationName != null && (currentKeyframes.isNotEmpty || currentPresetProperties.isNotEmpty)) {
+    if (currentAnimationName != null &&
+        (currentKeyframes.isNotEmpty || currentPresetProperties.isNotEmpty)) {
       _animations[currentAnimationName] = AnimationDefinition(
         name: currentAnimationName,
         keyframes: List.from(currentKeyframes),
@@ -157,6 +162,37 @@ class AnimationManager {
     return _animations.keys.toList();
   }
 
+  /// 计算有限动画完成后的确定状态。
+  ///
+  /// 关键帧偏移始终相对于传入的舞台基础属性；没有被后续关键帧覆盖的
+  /// 预设或属性会继续保留。这与 [CharacterAnimationController] 的播放
+  /// 语义一致，也让快进可以直接落到动画末帧。
+  static Map<String, double>? resolveFinalProperties(
+    String name,
+    Map<String, double> baseProperties,
+  ) {
+    final animation = _animations[name];
+    if (animation == null) return null;
+
+    final result = Map<String, double>.from(baseProperties);
+    for (final entry in animation.presetProperties.entries) {
+      result[entry.key] = (baseProperties[entry.key] ?? 0.0) + entry.value;
+    }
+    for (final keyframe in animation.keyframes) {
+      for (final entry in keyframe.properties.entries) {
+        result[entry.key] = (baseProperties[entry.key] ?? 0.0) + entry.value;
+      }
+    }
+    return result;
+  }
+
+  @visibleForTesting
+  static void loadAnimationsFromStringForTesting(String content) {
+    _animations.clear();
+    _parseAnimations(content);
+    _isLoaded = true;
+  }
+
   /// 获取动画的预设属性
   static Map<String, double> getAnimationPresetProperties(String name) {
     return _animations[name]?.presetProperties ?? {};
@@ -167,7 +203,7 @@ class CharacterAnimationController {
   final String characterId;
   final VoidCallback? onComplete;
   final void Function(Map<String, double>)? onAnimationUpdate;
-  
+
   String? animationName; // 添加当前播放的动画名称
 
   AnimationController? _controller;
@@ -192,13 +228,13 @@ class CharacterAnimationController {
   }) async {
     // 设置当前播放的动画名称
     this.animationName = animationName;
-    
+
     final animDef = AnimationManager.getAnimation(animationName);
     if (animDef == null) {
       onComplete?.call();
       return;
     }
-    
+
     // 应用预设属性到基础属性上
     _baseProperties = Map.from(baseProperties);
     final presetProperties = animDef.presetProperties;
@@ -210,10 +246,13 @@ class CharacterAnimationController {
       //print('[AnimationManager] 应用预设 ${entry.key}: $currentValue + ${entry.value} = ${_baseProperties[entry.key]}');
     }
     //print('[AnimationManager] 最终基础属性: $_baseProperties');
-    
+
     _currentProperties = Map.from(_baseProperties);
     _originalBaseProperties = Map.from(baseProperties); // 保存真正的初始位置（不包含预设属性）
     _shouldStop = false; // 重置停止标志
+    // Ren'Py ATL 会先应用 transform 的初始属性，再开始关键帧。
+    // 立即发布预设状态，避免上一段动画的最终状态残留一帧。
+    onAnimationUpdate?.call(Map.from(_currentProperties));
 
     // 根据repeatCount决定播放次数
     if (repeatCount == 0) {

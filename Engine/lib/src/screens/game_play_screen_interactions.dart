@@ -1674,9 +1674,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
         // 检查是否正在播放视频
         final isPlayingMovie = _gameManager.currentState.movieFile != null;
+        final isUIHidden = GlobalRightClickUIManager().isUIHidden;
 
-        // 只有在没有弹窗且没有播放视频时才处理滚轮事件
-        return !hasOverlayOpen && !isPlayingMovie;
+        // 隐藏 UI 后滚轮与触控板手势专用于查看画面，不得推进或回滚剧情。
+        return !hasOverlayOpen && !isPlayingMovie && !isUIHidden;
       },
     );
   }
@@ -1758,8 +1759,18 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       final saveLoadManager = SaveLoadManager();
       final snapshot = _gameManager.saveStateSnapshot();
       final poseConfigs = _gameManager.poseConfigs;
+      final currentScriptFile = _gameManager.currentScriptFile;
+      final gameModule = widget.gameModule ?? DefaultGameModule();
+      final quickSaveNamespace = gameModule.quickSaveNamespaceForScript(
+        currentScriptFile,
+      );
 
-      await saveLoadManager.quickSave(_currentScript, snapshot, poseConfigs);
+      await saveLoadManager.quickSave(
+        currentScriptFile,
+        snapshot,
+        poseConfigs,
+        namespace: quickSaveNamespace,
+      );
       _showNotificationMessage('快速存档成功');
     } catch (e) {
       _showNotificationMessage('快速存档失败: $e');

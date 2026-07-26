@@ -194,6 +194,19 @@ class SaveLoadManager {
     return '$_autoSaveStorageKeyPrefix$slotIndex';
   }
 
+  String _quickSaveStorageKey(String? namespace) {
+    final normalized = namespace?.trim() ?? '';
+    if (normalized.isEmpty) {
+      return 'quicksave.sakisav';
+    }
+    final sanitized = normalized
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    final bounded =
+        sanitized.length > 64 ? sanitized.substring(0, 64) : sanitized;
+    return bounded.isEmpty ? 'quicksave.sakisav' : 'quicksave_$bounded.sakisav';
+  }
+
   Future<void> saveGame(int slotId, String currentScript,
       GameStateSnapshot snapshot, Map<String, PoseConfig> poseConfigs) async {
     // 检查目标位置是否有被锁定的存档
@@ -266,8 +279,12 @@ class SaveLoadManager {
   }
 
   /// 快速存档功能
-  Future<void> quickSave(String currentScript, GameStateSnapshot snapshot,
-      Map<String, PoseConfig> poseConfigs) async {
+  Future<void> quickSave(
+    String currentScript,
+    GameStateSnapshot snapshot,
+    Map<String, PoseConfig> poseConfigs, {
+    String? namespace,
+  }) async {
     // final directory = await getSavesDirectory();
     // final file = File('$directory/quicksave.sakisav');
     //
@@ -322,7 +339,7 @@ class SaveLoadManager {
     final base64Data = base64Encode(binaryData);
 
     try {
-      html.window.localStorage['quicksave.sakisav'] = base64Data;
+      html.window.localStorage[_quickSaveStorageKey(namespace)] = base64Data;
       print("快速存档成功（Web）");
     } catch (e, st) {
       print("快速存储失败: $e\n$st");
@@ -330,7 +347,7 @@ class SaveLoadManager {
   }
 
   /// 读取快速存档
-  Future<SaveSlot?> loadQuickSave() async {
+  Future<SaveSlot?> loadQuickSave({String? namespace}) async {
     // try {
     //   final directory = await getSavesDirectory();
     //   final file = File('$directory/quicksave.sakisav');
@@ -341,7 +358,8 @@ class SaveLoadManager {
     // } catch (e) {
     //   print('Error loading quick save: $e');
     // }
-    final base64Data = html.window.localStorage['quicksave.sakisav'];
+    final base64Data =
+        html.window.localStorage[_quickSaveStorageKey(namespace)];
     if (base64Data == null) return null;
 
     try {
@@ -355,7 +373,7 @@ class SaveLoadManager {
   }
 
   /// 检查快速存档是否存在
-  Future<bool> hasQuickSave() async {
+  Future<bool> hasQuickSave({String? namespace}) async {
     // try {
     //   final directory = await getSavesDirectory();
     //   final file = File('$directory/quicksave.sakisav');
@@ -364,7 +382,9 @@ class SaveLoadManager {
     //   print('Error checking quick save: $e');
     //   return false;
     // }
-    return html.window.localStorage.containsKey('quicksave.sakisav');
+    return html.window.localStorage.containsKey(
+      _quickSaveStorageKey(namespace),
+    );
     // return false;
   }
 

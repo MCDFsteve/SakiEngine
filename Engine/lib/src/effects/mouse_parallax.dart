@@ -113,10 +113,6 @@ class _MouseParallaxState extends State<MouseParallax>
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.enabled) {
-      return widget.child;
-    }
-
     return MouseParallaxScope(
       offsetListenable: _offsetNotifier,
       maxOffset: widget.maxOffset,
@@ -159,7 +155,8 @@ class MouseParallaxScope extends InheritedWidget {
   static MouseParallaxScope of(BuildContext context) {
     final scope = maybeOf(context);
     if (scope == null) {
-      throw FlutterError('MouseParallaxScope.of() called with no MouseParallax ancestor.');
+      throw FlutterError(
+          'MouseParallaxScope.of() called with no MouseParallax ancestor.');
     }
     return scope;
   }
@@ -201,7 +198,7 @@ class ParallaxAware extends StatelessWidget {
     }
 
     final scope = MouseParallaxScope.maybeOf(context);
-    if (scope == null || !scope.enabled) {
+    if (scope == null) {
       return child;
     }
 
@@ -210,9 +207,10 @@ class ParallaxAware extends StatelessWidget {
     return ValueListenableBuilder<Offset>(
       valueListenable: scope.offsetListenable,
       builder: (context, normalized, widgetChild) {
+        final effectiveOffset = scope.enabled ? normalized : Offset.zero;
         final direction = invert ? -1.0 : 1.0;
-        final dx = normalized.dx * maxOffset.dx * depth * direction;
-        final dy = normalized.dy * maxOffset.dy * depth * direction;
+        final dx = effectiveOffset.dx * maxOffset.dx * depth * direction;
+        final dy = effectiveOffset.dy * maxOffset.dy * depth * direction;
         return Transform.translate(
           offset: Offset(dx, dy),
           child: widgetChild,

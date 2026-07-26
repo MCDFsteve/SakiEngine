@@ -32,6 +32,7 @@ class ScriptMerger {
       // 获取所有 .sks 文件
       final scriptFiles =
           await AssetManager().listAssets('assets/GameScript/labels/', '.sks');
+      scriptFiles.sort();
 
       for (final fileName in scriptFiles) {
         final fileNameWithoutExt = fileName.replaceAll('.sks', '');
@@ -95,6 +96,7 @@ class ScriptMerger {
         }
       }
     }
+    fileNames.sort();
     return fileNames;
   }
 
@@ -135,9 +137,16 @@ class ScriptMerger {
     final mergedChildren = <SksNode>[];
     _fileStartIndices.clear();
 
-    // 从 start 文件开始，按照 jump 顺序拼接
+    // 先从 start 文件按 jump 顺序拼接，保持现有存档索引稳定。
     final processedFiles = <String>{};
     await _mergeFileRecursively('start', mergedChildren, processedFiles);
+
+    // 再稳定地追加 start 不可达的独立入口。这样章节选择、DLC 或其他
+    // 声明式入口无需伪造 jump，也能通过 getFileStartIndex 正确启动。
+    final remainingEntryFiles = _loadedScripts.keys.toList()..sort();
+    for (final fileName in remainingEntryFiles) {
+      await _mergeFileRecursively(fileName, mergedChildren, processedFiles);
+    }
 
     _mergedScript = ScriptNode(mergedChildren);
     return _mergedScript!;

@@ -290,6 +290,9 @@ class _SksCompiler {
       return 'AnimeNode(${_str(node.animeName)}, loop: ${node.loop}, keep: ${node.keep}, '
           'transitionType: ${_nullableString(node.transitionType)}, timer: ${_nullableDouble(node.timer)})';
     }
+    if (node is StopAnimeNode) {
+      return 'StopAnimeNode()';
+    }
     if (node is ShowNode) {
       return 'ShowNode(${_str(node.character)}, pose: ${_nullableString(node.pose)}, '
           'expression: ${_nullableString(node.expression)}, position: ${_nullableString(node.position)}, '
@@ -298,6 +301,7 @@ class _SksCompiler {
     if (node is CgNode) {
       return 'CgNode(${_str(node.character)}, pose: ${_nullableString(node.pose)}, '
           'expression: ${_nullableString(node.expression)}, position: ${_nullableString(node.position)}, '
+          'transitionType: ${_nullableString(node.transitionType)}, '
           'animation: ${_nullableString(node.animation)}, repeatCount: ${_nullableInt(node.repeatCount)})';
     }
     if (node is HideNode) {
@@ -338,6 +342,11 @@ class _SksCompiler {
       return 'ReturnNode()';
     }
     if (node is JumpNode) {
+      if (node.isConditional) {
+        return 'JumpNode(${_str(node.targetLabel)}, '
+            'conditionVariable: ${_str(node.conditionVariable!)}, '
+            'conditionValue: ${node.conditionValue})';
+      }
       return 'JumpNode(${_str(node.targetLabel)})';
     }
     if (node is CommentNode) {

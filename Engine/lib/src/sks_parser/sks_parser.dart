@@ -375,7 +375,29 @@ class SksParser {
           nodes.add(LabelNode(parts[1]));
           break;
         case 'jump':
-          nodes.add(JumpNode(parts[1]));
+          if (parts.length == 5 && parts[2] == 'if') {
+            final conditionValue = switch (parts[4].toLowerCase()) {
+              'true' => true,
+              'false' => false,
+              _ => throw FormatException(
+                  'jump 条件值必须是 true 或 false：$trimmedLine',
+                ),
+            };
+            nodes.add(
+              JumpNode(
+                parts[1],
+                conditionVariable: parts[3],
+                conditionValue: conditionValue,
+              ),
+            );
+          } else if (parts.length == 2) {
+            nodes.add(JumpNode(parts[1]));
+          } else {
+            throw FormatException(
+              'jump 语法应为 jump <label> 或 '
+              'jump <label> if <variable> <true|false>：$trimmedLine',
+            );
+          }
           break;
         case 'return':
           nodes.add(ReturnNode());
@@ -817,6 +839,7 @@ class SksParser {
           String? pose;
           String? expression;
           String? position;
+          String? transitionType;
           String? animation;
           int? repeatCount;
 
@@ -824,91 +847,62 @@ class SksParser {
           // cg xiayo1 pose1 happy at pose an jump repeat 3
           // cg x happy an jump repeat 3
 
-          int atIndex = -1;
-          int anIndex = -1;
-          int repeatIndex = -1;
-
+          var firstModifierIndex = parts.length;
+          var hasPositionModifier = false;
+          var hasAnimationModifier = false;
           for (int i = 2; i < parts.length; i++) {
-            if (parts[i] == 'at') {
-              atIndex = i;
-            } else if (parts[i] == 'an') {
-              anIndex = i;
-            } else if (parts[i] == 'repeat') {
-              repeatIndex = i;
-              break;
+            final modifier = parts[i];
+            if (!{'at', 'with', 'an', 'repeat'}.contains(modifier)) {
+              continue;
+            }
+            if (i < firstModifierIndex) {
+              firstModifierIndex = i;
+            }
+            if (i + 1 >= parts.length) {
+              continue;
+            }
+            final value = parts[i + 1];
+            if ({'at', 'with', 'an', 'repeat'}.contains(value)) {
+              continue;
+            }
+            switch (modifier) {
+              case 'at':
+                position = value;
+                hasPositionModifier = true;
+                break;
+              case 'with':
+                transitionType = value;
+                break;
+              case 'an':
+                animation = value;
+                hasAnimationModifier = true;
+                break;
+              case 'repeat':
+                repeatCount = int.tryParse(value);
+                break;
+            }
+            i++;
+          }
+
+          final attributeParts = parts.sublist(2, firstModifierIndex);
+          var hasPosePrefix = false;
+          for (final attribute in attributeParts) {
+            if (attribute.startsWith('pose:')) {
+              pose = attribute.substring(5);
+              hasPosePrefix = true;
+            } else if (attribute.startsWith('expression:')) {
+              expression = attribute.substring(11);
             }
           }
 
-          // 解析repeat参数
-          if (repeatIndex >= 0 && repeatIndex + 1 < parts.length) {
-            repeatCount = int.tryParse(parts[repeatIndex + 1]);
-          }
-
-          int endIndex = repeatIndex >= 0 ? repeatIndex : parts.length;
-
-          if (anIndex >= 0 && anIndex < endIndex) {
-            // 有an动画语法
-            if (anIndex + 1 < endIndex) {
-              animation = parts[anIndex + 1];
-            }
-
-            if (atIndex >= 0 && atIndex < anIndex) {
-              // cg character pose1 happy at pose an jump repeat 3
-              final attributeParts = parts.sublist(2, atIndex);
-              if (attributeParts.isNotEmpty) {
-                if (attributeParts.length == 1) {
-                  // 只有一个参数时，视为expression，pose使用默认值pose1
-                  expression = attributeParts[0];
-                } else {
-                  // 有两个或更多参数时，第一个是pose，第二个是expression
-                  pose = attributeParts[0];
-                  expression = attributeParts[1];
-                }
-              }
-              if (atIndex + 1 < anIndex) {
-                position = parts[atIndex + 1];
-              }
+          if (!hasPosePrefix && attributeParts.isNotEmpty) {
+            if (hasPositionModifier && attributeParts.length >= 2) {
+              pose = attributeParts[0];
+              expression = attributeParts[1];
+            } else if (hasAnimationModifier) {
+              expression = attributeParts[0];
             } else {
-              // cg x happy an jump repeat 3
-              final attributeParts = parts.sublist(2, anIndex);
-              if (attributeParts.isNotEmpty) {
-                expression = attributeParts[0];
-              }
-            }
-          } else if (atIndex >= 0 && atIndex < endIndex) {
-            // 原有at语法，无动画
-            final attributeParts = parts.sublist(2, atIndex);
-            if (attributeParts.isNotEmpty) {
-              if (attributeParts.length == 1) {
-                // 只有一个参数时，视为expression，pose使用默认值pose1
-                expression = attributeParts[0];
-              } else {
-                // 有两个或更多参数时，第一个是pose，第二个是expression
-                pose = attributeParts[0];
-                expression = attributeParts[1];
-              }
-            }
-            if (atIndex + 1 < endIndex) {
-              position = parts[atIndex + 1];
-            }
-          } else {
-            // 简单的参数解析（没有特殊关键词）
-            // 检查是否有pose:前缀的参数
-            final attributeParts = parts.sublist(2, endIndex);
-
-            bool hasPosePrefix = false;
-            for (int i = 0; i < attributeParts.length; i++) {
-              if (attributeParts[i].startsWith('pose:')) {
-                pose = attributeParts[i].substring(5);
-                hasPosePrefix = true;
-              } else if (attributeParts[i].startsWith('expression:')) {
-                expression = attributeParts[i].substring(11);
-              }
-            }
-
-            // 如果没有pose:前缀，所有参数都是expression（差分图）
-            if (!hasPosePrefix && attributeParts.isNotEmpty) {
-              // 将所有参数作为expression
+              // 保持既有差分语义，但不再把 `with diss` 拼进差分名。
               expression = attributeParts.join(' ');
             }
           }
@@ -918,6 +912,7 @@ class SksParser {
               pose: pose,
               expression: expression,
               position: position,
+              transitionType: transitionType,
               animation: animation,
               repeatCount: repeatCount));
           break;
@@ -974,6 +969,8 @@ class SksParser {
             nodes.add(StopMusicNode());
           } else if (parts.length >= 2 && parts[1] == 'sound') {
             nodes.add(StopSoundNode());
+          } else if (parts.length >= 2 && parts[1] == 'anime') {
+            nodes.add(StopAnimeNode());
           }
           break;
         case 'bool':

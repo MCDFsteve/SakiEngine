@@ -26,6 +26,9 @@ class AnimeNode implements SksNode {
   }
 }
 
+/// Clears the currently active full-screen anime overlay.
+class StopAnimeNode implements SksNode {}
+
 class ShowNode implements SksNode {
   final String character;
   final String? pose;
@@ -46,12 +49,14 @@ class CgNode implements SksNode {
   final String? pose;
   final String? expression;
   final String? position;
+  final String? transitionType;
   final String? animation;
   final int? repeatCount;
   CgNode(this.character,
       {this.pose,
       this.expression,
       this.position,
+      this.transitionType,
       this.animation,
       this.repeatCount});
 }
@@ -159,7 +164,19 @@ class ReturnNode implements SksNode {}
 
 class JumpNode implements SksNode {
   final String targetLabel;
-  JumpNode(this.targetLabel);
+  final String? conditionVariable;
+  final bool? conditionValue;
+
+  JumpNode(
+    this.targetLabel, {
+    this.conditionVariable,
+    this.conditionValue,
+  }) : assert(
+          (conditionVariable == null) == (conditionValue == null),
+          '条件变量与条件值必须同时提供',
+        );
+
+  bool get isConditional => conditionVariable != null;
 }
 
 class CommentNode implements SksNode {

@@ -9,6 +9,7 @@ class DialogueShakeEffect extends StatefulWidget {
   final String dialogue;
   final String displayedText; // 新增：当前显示的文本
   final bool enabled;
+  final int? triggerCharacterIndex;
   final double intensity;
   final Duration duration;
 
@@ -18,6 +19,7 @@ class DialogueShakeEffect extends StatefulWidget {
     required this.dialogue,
     required this.displayedText, // 新增：必需的显示文本参数
     this.enabled = true,
+    this.triggerCharacterIndex,
     this.intensity = 8.0, // 增大默认强度
     this.duration = const Duration(milliseconds: 1000), // 进一步延长到1秒让过渡极其舒缓
   });
@@ -30,13 +32,13 @@ class _DialogueShakeEffectState extends State<DialogueShakeEffect>
     with SingleTickerProviderStateMixin {
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
-  int _lastExclamationIndex = -1; // 记录上次触发震动的感叹号位置
+  bool _hasTriggered = false;
 
   @override
   void initState() {
     super.initState();
     _initializeShakeAnimation();
-    _checkForExclamationInDisplayedText();
+    _checkForShakeTrigger();
   }
 
   @override
@@ -45,8 +47,13 @@ class _DialogueShakeEffectState extends State<DialogueShakeEffect>
     
     // 如果显示的文本发生变化，检查是否需要震动
     if (widget.displayedText != oldWidget.displayedText ||
-        widget.dialogue != oldWidget.dialogue) {
-      _checkForExclamationInDisplayedText();
+        widget.dialogue != oldWidget.dialogue ||
+        widget.triggerCharacterIndex != oldWidget.triggerCharacterIndex) {
+      if (widget.dialogue != oldWidget.dialogue ||
+          widget.triggerCharacterIndex != oldWidget.triggerCharacterIndex) {
+        _hasTriggered = false;
+      }
+      _checkForShakeTrigger();
     }
   }
 
@@ -66,37 +73,19 @@ class _DialogueShakeEffectState extends State<DialogueShakeEffect>
     ));
   }
 
-  void _checkForExclamationInDisplayedText() {
-    if (!widget.enabled) {
+  void _checkForShakeTrigger() {
+    if (!widget.enabled || _hasTriggered) {
       return;
     }
 
-    // 检查当前显示的文本中是否包含新的感叹号
-    final displayedText = widget.displayedText;
-    if (displayedText.isEmpty) {
+    final triggerIndex = widget.triggerCharacterIndex;
+    if (triggerIndex == null) {
       return;
     }
 
-    // 查找当前显示文本中最后一个感叹号的位置
-    int lastExclamationInDisplayed = -1;
-    for (int i = displayedText.length - 1; i >= 0; i--) {
-      final char = displayedText[i];
-      if (char == '!' || char == '！') {
-        lastExclamationInDisplayed = i;
-        break;
-      }
-    }
-
-    // 如果找到感叹号且位置比上次记录的位置新，触发震动
-    if (lastExclamationInDisplayed != -1 && 
-        lastExclamationInDisplayed > _lastExclamationIndex) {
-      _lastExclamationIndex = lastExclamationInDisplayed;
+    if (widget.displayedText.length >= triggerIndex) {
+      _hasTriggered = true;
       _triggerShake();
-    }
-
-    // 如果对话重新开始（例如新的对话），重置记录
-    if (widget.displayedText.length < _lastExclamationIndex) {
-      _lastExclamationIndex = -1;
     }
   }
 

@@ -234,6 +234,8 @@ class CompositeCgRenderer {
     Map<String, CharacterState> cgCharacters,
     GameManager gameManager, {
     bool skipAnimations = false,
+    Duration transitionDuration = const Duration(milliseconds: 300),
+    VoidCallback? onTransitionCompleted,
   }) {
     _preferSpeedRendering = skipAnimations;
     _ensureDissolveProgram();
@@ -273,6 +275,8 @@ class CompositeCgRenderer {
         isFadingOut: characterState.isFadingOut,
         skipAnimation: skipAnimations,
         useGpuAcceleration: _useGpuAcceleration,
+        transitionDuration: transitionDuration,
+        onTransitionCompleted: onTransitionCompleted,
         animationProperties: characterState.animationProperties, // 传递动画属性
       ),
     ];
@@ -2285,6 +2289,8 @@ class CgSlotWidget extends StatefulWidget {
   final bool isFadingOut;
   final bool skipAnimation;
   final bool useGpuAcceleration;
+  final Duration transitionDuration;
+  final VoidCallback? onTransitionCompleted;
   final Map<String, double>? animationProperties; // 新增：动画属性
 
   const CgSlotWidget({
@@ -2295,6 +2301,8 @@ class CgSlotWidget extends StatefulWidget {
     required this.isFadingOut,
     required this.skipAnimation,
     required this.useGpuAcceleration,
+    this.transitionDuration = const Duration(milliseconds: 300),
+    this.onTransitionCompleted,
     this.animationProperties, // 新增
   });
 
@@ -2329,13 +2337,14 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
     super.initState();
 
     _transitionController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: widget.transitionDuration,
       vsync: this,
     );
     _transitionAnimation = CurvedAnimation(
       parent: _transitionController,
       curve: Curves.easeInOut,
     );
+    _transitionController.addStatusListener(_handleTransitionStatus);
 
     // 加载shader
     CompositeCgRenderer._ensureDissolveProgram().then((_) {
@@ -2357,6 +2366,10 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
   @override
   void didUpdateWidget(CgSlotWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.transitionDuration != widget.transitionDuration) {
+      _transitionController.duration = widget.transitionDuration;
+    }
 
     final newContentId = _targetContentId();
     final oldRequestedContentId =
@@ -2392,8 +2405,15 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
 
   @override
   void dispose() {
+    _transitionController.removeStatusListener(_handleTransitionStatus);
     _transitionController.dispose();
     super.dispose();
+  }
+
+  void _handleTransitionStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      widget.onTransitionCompleted?.call();
+    }
   }
 
   Future<void> _loadCgImage({

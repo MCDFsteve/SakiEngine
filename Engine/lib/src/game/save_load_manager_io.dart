@@ -179,6 +179,19 @@ class SaveLoadManager {
     return savesDir.path;
   }
 
+  String _quickSaveFileName(String? namespace) {
+    final normalized = namespace?.trim() ?? '';
+    if (normalized.isEmpty) {
+      return 'quicksave.sakisav';
+    }
+    final sanitized = normalized
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    final bounded =
+        sanitized.length > 64 ? sanitized.substring(0, 64) : sanitized;
+    return bounded.isEmpty ? 'quicksave.sakisav' : 'quicksave_$bounded.sakisav';
+  }
+
   Future<void> saveGame(int slotId, String currentScript,
       GameStateSnapshot snapshot, Map<String, PoseConfig> poseConfigs) async {
     // 检查目标位置是否有被锁定的存档
@@ -220,10 +233,14 @@ class SaveLoadManager {
   }
 
   /// 快速存档功能
-  Future<void> quickSave(String currentScript, GameStateSnapshot snapshot,
-      Map<String, PoseConfig> poseConfigs) async {
+  Future<void> quickSave(
+    String currentScript,
+    GameStateSnapshot snapshot,
+    Map<String, PoseConfig> poseConfigs, {
+    String? namespace,
+  }) async {
     final directory = await getSavesDirectory();
-    final file = File('$directory/quicksave.sakisav');
+    final file = File('$directory/${_quickSaveFileName(namespace)}');
 
     // 生成截图数据
     Uint8List? screenshotData;
@@ -251,10 +268,10 @@ class SaveLoadManager {
   }
 
   /// 读取快速存档
-  Future<SaveSlot?> loadQuickSave() async {
+  Future<SaveSlot?> loadQuickSave({String? namespace}) async {
     try {
       final directory = await getSavesDirectory();
-      final file = File('$directory/quicksave.sakisav');
+      final file = File('$directory/${_quickSaveFileName(namespace)}');
       if (await file.exists()) {
         final binaryData = await file.readAsBytes();
         return _decodeSaveSlot(binaryData, file.path);
@@ -266,10 +283,10 @@ class SaveLoadManager {
   }
 
   /// 检查快速存档是否存在
-  Future<bool> hasQuickSave() async {
+  Future<bool> hasQuickSave({String? namespace}) async {
     try {
       final directory = await getSavesDirectory();
-      final file = File('$directory/quicksave.sakisav');
+      final file = File('$directory/${_quickSaveFileName(namespace)}');
       return await file.exists();
     } catch (e) {
       print('Error checking quick save: $e');

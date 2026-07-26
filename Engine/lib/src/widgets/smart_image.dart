@@ -56,6 +56,16 @@ class SmartImage extends StatelessWidget {
     if (lowercasePath.endsWith('.avif')) {
       return _buildAvifImageWithFallback();
     } else if (lowercasePath.endsWith('.webp')) {
+      // Infinite ambient overlays can contain hundreds of full-screen frames.
+      // Let Flutter's native multi-frame codec stream those frames instead of
+      // materializing the whole animation in AnimatedWebPImage.
+      if (loop == true && onAnimationComplete == null) {
+        return _buildStreamingLoopingWebP(
+          isFilePath: isFilePath,
+          filterQuality: filterQuality,
+        );
+      }
+
       // WebP支持动画，使用专门的动图组件，默认不循环
       return AnimatedWebPImage.asset(
         assetPath,
@@ -104,6 +114,33 @@ class SmartImage extends StatelessWidget {
         );
       }
     }
+  }
+
+  Widget _buildStreamingLoopingWebP({
+    required bool isFilePath,
+    required FilterQuality filterQuality,
+  }) {
+    if (kIsWeb || !isFilePath) {
+      return Image.asset(
+        assetPath,
+        fit: fit ?? BoxFit.contain,
+        width: width,
+        height: height,
+        filterQuality: filterQuality,
+        gaplessPlayback: true,
+        errorBuilder: errorWidget != null
+            ? (context, error, stackTrace) => errorWidget!
+            : null,
+      );
+    }
+
+    return buildImageFile(
+      assetPath,
+      fit: fit,
+      width: width,
+      height: height,
+      errorWidget: errorWidget,
+    );
   }
 
   /// 构建AVIF图像，支持WebP和PNG回退

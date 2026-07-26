@@ -33,7 +33,8 @@ class SceneTransitionEffectManager {
   /// 执行场景转场
   /// [context] 用于创建覆盖层的上下文
   /// [transitionType] 转场类型
-  /// [onMidTransition] 在转场中点执行的回调（切换场景时机）
+  /// [onMidTransition] 在旧画面已被覆盖后提交目标场景。
+  /// dissolve 会先冻结旧帧，再调用它并捕获目标帧；其他效果仍在中点调用。
   /// [duration] 转场时长
   /// [oldBackground] 旧背景名称（用于diss效果）
   /// [newBackground] 新背景名称（用于diss效果）
@@ -63,8 +64,13 @@ class SceneTransitionEffectManager {
     final completer = Completer<void>();
     final frameCapturer =
         captureFrame ?? (() => _captureTransitionFrame(context));
-    final oldFrame =
-        transitionType == TransitionType.pixel ? await frameCapturer() : null;
+    // Pixel and dissolve transitions both need the complete rendered scene.
+    // Loading only the old background drops characters, items, filters and
+    // project layers before the visual transition has even started.
+    final oldFrame = transitionType == TransitionType.pixel ||
+            transitionType == TransitionType.diss
+        ? await frameCapturer()
+        : null;
 
     // 根据转场类型创建不同的覆盖层
     Widget transitionWidget;
@@ -93,6 +99,8 @@ class SceneTransitionEffectManager {
           },
           oldBackgroundName: oldBackground,
           newBackgroundName: newBackground,
+          oldFrame: oldFrame,
+          captureFrame: oldFrame != null ? frameCapturer : null,
         );
         break;
       case TransitionType.wipe:
@@ -313,6 +321,8 @@ class _DissTransitionOverlay extends StatefulWidget {
   final VoidCallback onComplete;
   final String? oldBackgroundName;
   final String? newBackgroundName;
+  final ui.Image? oldFrame;
+  final Future<ui.Image?> Function()? captureFrame;
 
   const _DissTransitionOverlay({
     required this.duration,
@@ -320,6 +330,8 @@ class _DissTransitionOverlay extends StatefulWidget {
     required this.onComplete,
     this.oldBackgroundName,
     this.newBackgroundName,
+    this.oldFrame,
+    this.captureFrame,
   });
 
   @override
@@ -340,6 +352,7 @@ class _DissTransitionOverlayState extends State<_DissTransitionOverlay>
   void initState() {
     super.initState();
 
+    _oldImage = widget.oldFrame;
     _controller = AnimationController(
       duration: widget.duration,
       vsync: this,
@@ -357,10 +370,23 @@ class _DissTransitionOverlayState extends State<_DissTransitionOverlay>
     _controller.addListener(_onAnimationUpdate);
     _controller.addStatusListener(_onAnimationStatus);
 
-    // 加载图片和着色器
-    _loadImages();
+    // A captured frame represents the complete scene, including characters,
+    // items and project layers. Keep it visible for one frame before changing
+    // the underlying GameState, then capture the fully painted target scene.
+    if (_usesCapturedSceneFrames) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_prepareCapturedSceneTransition());
+        }
+      });
+    } else {
+      _loadBackgroundImages();
+    }
     _loadShader();
   }
+
+  bool get _usesCapturedSceneFrames =>
+      widget.oldFrame != null && widget.captureFrame != null;
 
   Future<void> _loadShader() async {
     if (_dissolveProgram == null) {
@@ -375,20 +401,27 @@ class _DissTransitionOverlayState extends State<_DissTransitionOverlay>
     }
   }
 
-  Future<void> _loadImages() async {
+  Future<ui.Image?> _loadBackgroundImage(String? backgroundName) async {
+    if (backgroundName == null) {
+      return null;
+    }
+    final assetPath = await AssetManager().findAsset(backgroundName);
+    if (assetPath == null || !mounted) {
+      return null;
+    }
+    return ImageLoader.loadImage(assetPath);
+  }
+
+  Future<void> _loadBackgroundImages() async {
     // 等待所有需要的图片加载完成后再开始动画
     List<Future<void>> loadTasks = [];
 
     // 加载旧背景图片
-    if (widget.oldBackgroundName != null) {
+    if (_oldImage == null && widget.oldBackgroundName != null) {
       loadTasks.add(() async {
-        final oldAssetPath =
-            await AssetManager().findAsset(widget.oldBackgroundName!);
-        if (oldAssetPath != null && mounted) {
-          final oldImage = await ImageLoader.loadImage(oldAssetPath);
-          if (mounted && oldImage != null) {
-            _oldImage = oldImage;
-          }
+        final oldImage = await _loadBackgroundImage(widget.oldBackgroundName);
+        if (mounted && oldImage != null) {
+          _oldImage = oldImage;
         }
       }());
     }
@@ -396,18 +429,11 @@ class _DissTransitionOverlayState extends State<_DissTransitionOverlay>
     // 加载新背景图片
     if (widget.newBackgroundName != null) {
       loadTasks.add(() async {
-        final newAssetPath =
-            await AssetManager().findAsset(widget.newBackgroundName!);
-        if (newAssetPath != null && mounted) {
-          final newImage = await ImageLoader.loadImage(newAssetPath);
-          if (mounted && newImage != null) {
-            _newImage = newImage;
-          } else {
-            print(
-                '[DissTransition] 警告: 新背景图片加载失败: ${widget.newBackgroundName}');
-          }
+        final newImage = await _loadBackgroundImage(widget.newBackgroundName);
+        if (mounted && newImage != null) {
+          _newImage = newImage;
         } else {
-          print('[DissTransition] 警告: 找不到新背景资源: ${widget.newBackgroundName}');
+          print('[DissTransition] 警告: 新背景图片加载失败: ${widget.newBackgroundName}');
         }
       }());
     }
@@ -440,7 +466,53 @@ class _DissTransitionOverlayState extends State<_DissTransitionOverlay>
     }
   }
 
+  Future<void> _prepareCapturedSceneTransition() async {
+    if (_midTransitionExecuted || !mounted) {
+      return;
+    }
+    _midTransitionExecuted = true;
+
+    // The first overlay frame already contains the frozen old scene, so the
+    // state change below cannot leak a premature target-scene frame.
+    widget.onMidTransition();
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+
+    var newFrame = await widget.captureFrame!();
+    if (!mounted) {
+      newFrame?.dispose();
+      return;
+    }
+
+    // Retain the previous background-image path as a defensive fallback for
+    // embedders whose scene capture boundary is temporarily unavailable.
+    newFrame ??= await _loadBackgroundImage(widget.newBackgroundName);
+    if (!mounted) {
+      newFrame?.dispose();
+      return;
+    }
+    if (newFrame == null) {
+      widget.onComplete();
+      return;
+    }
+
+    setState(() {
+      _newImage = newFrame;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _controller.forward();
+      }
+    });
+  }
+
   void _onAnimationUpdate() {
+    if (_usesCapturedSceneFrames) {
+      return;
+    }
+
     // 对于CG转场，延迟状态更新到90%，避免中途更新导致的闪烁
     // 对于普通背景转场，保持在50%更新
     final isLikelyCG =

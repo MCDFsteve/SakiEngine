@@ -20,8 +20,65 @@ import 'package:sakiengine/src/widgets/common/exit_confirmation_dialog.dart';
 import 'package:sakiengine/src/widgets/common/virtual_game_canvas.dart';
 import 'package:sakiengine/src/integrations/steam/steam_achievement_service.dart';
 
+/// Applied to ordinary character sprites after their pose/expression layers
+/// have been composited.
+///
+/// A color matrix is used instead of [BlendMode.multiply] directly so fully
+/// transparent pixels remain transparent. [strength] blends between the
+/// original sprite (0) and a full solid-color multiply (1).
+@immutable
+class CharacterLighting {
+  final Color multiplyColor;
+  final double strength;
+
+  const CharacterLighting({
+    required this.multiplyColor,
+    this.strength = 1.0,
+  }) : assert(strength >= 0.0 && strength <= 1.0);
+
+  ColorFilter get colorFilter {
+    final argb = multiplyColor.toARGB32();
+    final red = (argb >> 16 & 0xFF) / 255.0;
+    final green = (argb >> 8 & 0xFF) / 255.0;
+    final blue = (argb & 0xFF) / 255.0;
+    final retained = 1.0 - strength;
+
+    return ColorFilter.matrix(<double>[
+      retained + red * strength,
+      0,
+      0,
+      0,
+      0,
+      0,
+      retained + green * strength,
+      0,
+      0,
+      0,
+      0,
+      0,
+      retained + blue * strength,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+    ]);
+  }
+}
+
 /// 游戏模块接口 - 定义项目可以覆盖的所有组件
 abstract class GameModule {
+  /// 新游戏使用的入口脚本。读取存档时仍以存档中的脚本为准。
+  String get initialScript;
+
+  /// 返回当前脚本使用的快速存档命名空间。
+  ///
+  /// 默认返回 null，继续使用全局快速存档。多章节项目可按入口脚本返回
+  /// 不同命名空间，使各章节的“继续游戏”进度互不覆盖。
+  String? quickSaveNamespaceForScript(String currentScript);
+
   /// 主菜单屏幕工厂
   Widget createMainMenuScreen({
     required VoidCallback onNewGame,
@@ -129,6 +186,11 @@ abstract class GameModule {
   /// 是否继续使用引擎默认的 scene 背景绘制。
   /// 返回 `false` 可在模块中完全接管 scene 背景表现。
   bool shouldRenderDefaultSceneBackground(GameState gameState);
+
+  /// 返回当前场景应用于普通角色立绘的环境光色。
+  ///
+  /// 返回 `null` 时保持角色原色。CG、背景、scene 挂件与 anime 不受影响。
+  CharacterLighting? resolveCharacterLighting(GameState gameState);
 
   /// 创建 scene 挂件层。
   /// 渲染位置：背景层之上、角色层之下。
@@ -268,6 +330,12 @@ abstract class GameModule {
   /// 是否显示快捷菜单
   bool get showQuickMenu => true;
 
+  /// 隐藏游戏 UI 后是否允许玩家缩放、拖动画面。
+  bool get enableHiddenUiSceneZoom => true;
+
+  /// 隐藏游戏 UI 时允许的最大画面倍率。
+  double get hiddenUiSceneMaxZoom => 3.0;
+
   /// 是否显示引擎默认的快进/自动播放状态指示器。
   /// 项目层自行绘制状态提示时可返回 false，避免重复显示。
   bool get showDefaultStatusIndicators => true;
@@ -304,6 +372,12 @@ String? resolveSteamAchievementId(Map<String, String> params) {
 
 /// 默认游戏模块实现 - 使用src/下的默认组件
 class DefaultGameModule implements GameModule {
+  @override
+  String get initialScript => 'start';
+
+  @override
+  String? quickSaveNamespaceForScript(String currentScript) => null;
+
   @override
   Widget createMainMenuScreen({
     required VoidCallback onNewGame,
@@ -455,6 +529,9 @@ class DefaultGameModule implements GameModule {
   }
 
   @override
+  CharacterLighting? resolveCharacterLighting(GameState gameState) => null;
+
+  @override
   Widget? createDialogueAttachment({
     required BuildContext context,
     required GameState gameState,
@@ -596,6 +673,12 @@ class DefaultGameModule implements GameModule {
 
   @override
   bool get showQuickMenu => true;
+
+  @override
+  bool get enableHiddenUiSceneZoom => true;
+
+  @override
+  double get hiddenUiSceneMaxZoom => 3.0;
 
   @override
   bool get showDefaultStatusIndicators => true;

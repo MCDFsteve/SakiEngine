@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
-import 'package:flutter/services.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/game/game_manager.dart';
 import 'package:sakiengine/src/utils/scaling_manager.dart';
@@ -8,7 +7,6 @@ import 'package:sakiengine/src/widgets/typewriter_animation_manager.dart';
 import 'package:sakiengine/src/utils/dialogue_progression_manager.dart';
 import 'package:sakiengine/src/widgets/dialogue_next_arrow.dart';
 import 'package:sakiengine/src/utils/rich_text_parser.dart';
-import 'package:sakiengine/src/widgets/common/right_click_ui_manager.dart';
 
 // 用于外部访问NvlScreen状态的接口
 abstract class NvlScreenController {
@@ -304,28 +302,7 @@ class _NvlScreenState extends State<NvlScreen> with TickerProviderStateMixin imp
           
           // 内容区域
           _buildContent(config, textScale, uiScale),
-          
-          // 右键检测层 - 覆盖整个区域，只处理右键事件
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (event) {
-                if (event.buttons == 2) {
-                  // 右键：切换UI显示状态
-                  // 通过GlobalRightClickUIManager触发
-                  final globalManager = GlobalRightClickUIManager();
-                  globalManager.setUIHidden(!globalManager.isUIHidden);
-                  if (globalManager.isUIHidden) {
-                    HapticFeedback.lightImpact();
-                  }
-                }
-                // 左键事件不处理，让它穿透到下层组件
-              },
-              child: Container(
-                color: Colors.transparent,
-              ),
-            ),
-          ),
+
         ],
       ),
     );
