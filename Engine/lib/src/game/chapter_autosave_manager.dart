@@ -130,6 +130,7 @@ class ChapterAutoSaveManager {
         isNvlnMode: snapshot.isNvlnMode,
         isNvlOverlayVisible: snapshot.isNvlOverlayVisible,
         nvlDialogues: snapshot.nvlDialogues,
+        activeLoopingSounds: snapshot.activeLoopingSounds,
       );
 
       if (kEngineDebugMode) {

@@ -35,6 +35,7 @@ import 'package:sakiengine/src/game/story_flowchart_manager.dart';
 import 'package:sakiengine/src/utils/binary_serializer.dart';
 import 'package:sakiengine/src/game/nvl_state_manager.dart';
 import 'package:sakiengine/src/game/chapter_autosave_manager.dart';
+import 'package:sakiengine/src/game/script_sound_state_resolver.dart';
 
 part 'game_manager_lifecycle.dart';
 
@@ -206,6 +207,7 @@ class GameManager {
   bool _disableRuntimeSideEffectsForTesting = false;
   _NvlContextMode _activeNvlContext = _NvlContextMode.none;
   bool _showNvlOverlayOnNextDialogue = false;
+  final Set<String> _activeLoopingSounds = <String>{};
 
   // 待处理的章节自动存档信息（章节背景显示后，等待第一句话再存档）
   String? _pendingChapterAutoSaveLabel; // 待存档的章节label
@@ -1581,6 +1583,7 @@ class GameManager {
     _scriptIndex = scriptIndex.clamp(0, _script.children.length).toInt();
     _currentState = initialState ?? GameState.initial();
     _dialogueHistory = [];
+    _activeLoopingSounds.clear();
     _buildLabelIndexMap();
     _buildMusicRegions();
     await _executeScript();
@@ -1723,6 +1726,98 @@ class GameManager {
       musicFile = '$musicFile.mp3';
     }
     return 'Assets/music/$musicFile';
+  }
+
+  String _buildSoundAssetPath(String rawSoundFile) {
+    var soundFile = rawSoundFile.trim();
+    if (soundFile.isEmpty) {
+      return '';
+    }
+    if (!soundFile.contains('.')) {
+      soundFile = '$soundFile.mp3';
+    }
+    return 'Assets/sound/$soundFile';
+  }
+
+  List<String> _resolveLoopingSoundsForSnapshot(
+    GameStateSnapshot snapshot,
+    int scriptIndex,
+  ) {
+    final capturedSounds = snapshot.activeLoopingSounds;
+    if (capturedSounds != null) {
+      return capturedSounds;
+    }
+
+    // 旧存档中的历史记录没有运行时音效状态，按脚本重建循环环境音。
+    return ScriptSoundStateResolver.resolveLoopingSoundFiles(
+      _script,
+      scriptIndex,
+    ).map(_buildSoundAssetPath).where((path) => path.isNotEmpty).toList();
+  }
+
+  Future<void> _stopSoundsForHistoryJump() async {
+    if (kEngineDebugMode) {
+      print(
+          '[SoundHistory] stop current=${MusicManager().currentSound ?? "none"} loops=${_activeLoopingSounds.toList()}');
+    }
+    _activeLoopingSounds.clear();
+    if (_disableRuntimeSideEffectsForTesting) {
+      return;
+    }
+    await MusicManager().stopAudio(
+      AudioTrackConfig.sound,
+      fadeOut: false,
+    );
+  }
+
+  Future<void> _restoreLoopingSoundsAfterHistoryJump(
+    Iterable<String> soundPaths,
+  ) async {
+    final uniqueSoundPaths = <String>{...soundPaths};
+    if (kEngineDebugMode) {
+      print('[SoundHistory] restore loops=${uniqueSoundPaths.toList()}');
+    }
+    _activeLoopingSounds
+      ..clear()
+      ..addAll(uniqueSoundPaths);
+
+    if (_disableRuntimeSideEffectsForTesting) {
+      return;
+    }
+
+    for (final soundPath in uniqueSoundPaths) {
+      await MusicManager().playAudio(
+        soundPath,
+        AudioTrackConfig.sound,
+        fadeTransition: false,
+        loop: true,
+      );
+    }
+  }
+
+  @visibleForTesting
+  Future<void> restoreSoundStateForHistoryEntryForTesting(
+    DialogueHistoryEntry entry,
+  ) async {
+    final nextScriptIndex =
+        (entry.scriptIndex + 1).clamp(0, _script.children.length).toInt();
+    final targetLoopingSounds = _resolveLoopingSoundsForSnapshot(
+      entry.stateSnapshot,
+      nextScriptIndex,
+    );
+    await _stopSoundsForHistoryJump();
+    await _restoreLoopingSoundsAfterHistoryJump(targetLoopingSounds);
+  }
+
+  Future<void> _restoreSoundStateFromSnapshot(
+    GameStateSnapshot snapshot,
+  ) async {
+    final targetLoopingSounds = _resolveLoopingSoundsForSnapshot(
+      snapshot,
+      _scriptIndex,
+    );
+    await _stopSoundsForHistoryJump();
+    await _restoreLoopingSoundsAfterHistoryJump(targetLoopingSounds);
   }
 
   /// 构建音乐区间列表
@@ -3697,31 +3792,35 @@ class GameManager {
       }
 
       if (node is PlaySoundNode) {
-        // 播放音效
-        String soundFile = node.soundFile;
-        if (!soundFile.contains('.')) {
-          // 尝试 .ogg 扩展名（优先）
-          soundFile = '$soundFile.mp3';
+        final soundPath = _buildSoundAssetPath(node.soundFile);
+        if (node.loop && soundPath.isNotEmpty) {
+          _activeLoopingSounds
+            ..remove(soundPath)
+            ..add(soundPath);
         }
 
-        await MusicManager().playAudio(
-          'Assets/sound/$soundFile',
-          AudioTrackConfig.sound,
-          fadeTransition: true,
-          fadeDuration: const Duration(milliseconds: 300), // 音效淡入较快
-          loop: node.loop,
-        );
+        if (!_disableRuntimeSideEffectsForTesting && soundPath.isNotEmpty) {
+          await MusicManager().playAudio(
+            soundPath,
+            AudioTrackConfig.sound,
+            fadeTransition: true,
+            fadeDuration: const Duration(milliseconds: 300), // 音效淡入较快
+            loop: node.loop,
+          );
+        }
         _scriptIndex++;
         continue;
       }
 
       if (node is StopSoundNode) {
-        // 停止音效
-        await MusicManager().stopAudio(
-          AudioTrackConfig.sound,
-          fadeOut: true,
-          fadeDuration: const Duration(milliseconds: 200),
-        );
+        _activeLoopingSounds.clear();
+        if (!_disableRuntimeSideEffectsForTesting) {
+          await MusicManager().stopAudio(
+            AudioTrackConfig.sound,
+            fadeOut: true,
+            fadeDuration: const Duration(milliseconds: 200),
+          );
+        }
         _scriptIndex++;
         continue;
       }
@@ -3866,6 +3965,7 @@ class GameManager {
       isNvlOverlayVisible: _currentState.isNvlOverlayVisible, // 新增：保存NVL遮罩可见性
       nvlDialogues: List.from(_currentState.nvlDialogues),
       isFastForwardMode: _isFastForwardMode, // 保存快进状态
+      activeLoopingSounds: List<String>.unmodifiable(_activeLoopingSounds),
     );
   }
 
@@ -3986,6 +4086,7 @@ class GameManager {
       isNvlnMode: _currentState.isNvlnMode, // 新增：保存无遮罩NVL模式状态
       isNvlOverlayVisible: _currentState.isNvlOverlayVisible,
       nvlDialogues: List.from(_currentState.nvlDialogues),
+      activeLoopingSounds: List<String>.unmodifiable(_activeLoopingSounds),
     );
 
     _dialogueHistory.add(DialogueHistoryEntry(
@@ -4125,6 +4226,9 @@ class GameManager {
     final targetBackground = snapshot.currentState.background;
     final nextScriptIndex =
         (entry.scriptIndex + 1).clamp(0, _script.children.length).toInt();
+
+    // 先立即停止未来剧情已触发的音效；目标位置需要的循环环境音在状态恢复后重启。
+    await _stopSoundsForHistoryJump();
 
     Future<void> restoreAndAlignHistoryJumpState() async {
       await restoreFromSnapshot(scriptName, snapshot, shouldReExecute: false);
@@ -4544,8 +4648,13 @@ class GameManager {
   }
 
   void stopAllSounds() {
+    _activeLoopingSounds.clear();
     MusicManager().stopAudio(AudioTrackConfig.sound);
   }
+
+  @visibleForTesting
+  Set<String> get activeLoopingSoundsForTesting =>
+      Set<String>.unmodifiable(_activeLoopingSounds);
 
   // 存储当前正在播放动画的角色控制器
   final Map<String, CharacterAnimationController> _activeCharacterAnimations =
@@ -5378,6 +5487,7 @@ class GameStateSnapshot {
   final bool isNvlOverlayVisible; // 新增：NVL遮罩可见性
   final List<NvlDialogue> nvlDialogues;
   final bool isFastForwardMode; // 添加快进状态保存
+  final List<String>? activeLoopingSounds;
 
   GameStateSnapshot({
     required this.scriptIndex,
@@ -5389,6 +5499,7 @@ class GameStateSnapshot {
     this.isNvlOverlayVisible = false, // 新增：NVL遮罩默认隐藏
     this.nvlDialogues = const [],
     this.isFastForwardMode = false, // 默认非快进状态
+    this.activeLoopingSounds,
   });
 }
 

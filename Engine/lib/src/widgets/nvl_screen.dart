@@ -38,6 +38,8 @@ class _NvlScreenState extends State<NvlScreen> with TickerProviderStateMixin imp
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   final ScrollController _scrollController = ScrollController();
+  bool _scrollToBottomScheduled = false;
+  bool _animateNextScrollToBottom = false;
   
   // 文本淡入动画控制器列表，为每个对话单独管理
   final Map<int, AnimationController> _textFadeControllers = {};
@@ -134,16 +136,7 @@ class _NvlScreenState extends State<NvlScreen> with TickerProviderStateMixin imp
       }
     }
     
-    // 自动滚动到底部
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    _scheduleScrollToBottom(animate: !widget.isFastForwarding);
   }
 
   @override
@@ -173,16 +166,42 @@ class _NvlScreenState extends State<NvlScreen> with TickerProviderStateMixin imp
       // 重新播放淡入动画（可选，显示新对话的效果）
       _fadeController.forward();
       
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
+      _scheduleScrollToBottom(animate: !widget.isFastForwarding);
     }
+  }
+
+  void _scheduleScrollToBottom({bool animate = false}) {
+    _animateNextScrollToBottom = _animateNextScrollToBottom || animate;
+    if (_scrollToBottomScheduled) {
+      return;
+    }
+
+    _scrollToBottomScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottomScheduled = false;
+      if (!mounted || !_scrollController.hasClients) {
+        _animateNextScrollToBottom = false;
+        return;
+      }
+
+      final position = _scrollController.position;
+      final target = position.maxScrollExtent;
+      final shouldAnimate = _animateNextScrollToBottom;
+      _animateNextScrollToBottom = false;
+      if ((target - position.pixels).abs() < 0.5) {
+        return;
+      }
+
+      if (shouldAnimate) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
   }
 
   @override
@@ -483,13 +502,28 @@ class _NvlScreenState extends State<NvlScreen> with TickerProviderStateMixin imp
             Expanded(
               child: SingleChildScrollView(
                 controller: _scrollController,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: widget.nvlDialogues.asMap().entries.map((entry) {
-                    int index = entry.key;
-                    NvlDialogue dialogue = entry.value;
-                    return _buildNvlDialogue(dialogue, config, textScale, uiScale, index);
-                  }).toList(),
+                child: NotificationListener<SizeChangedLayoutNotification>(
+                  onNotification: (_) {
+                    _scheduleScrollToBottom();
+                    return false;
+                  },
+                  child: SizeChangedLayoutNotifier(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children:
+                          widget.nvlDialogues.asMap().entries.map((entry) {
+                        int index = entry.key;
+                        NvlDialogue dialogue = entry.value;
+                        return _buildNvlDialogue(
+                          dialogue,
+                          config,
+                          textScale,
+                          uiScale,
+                          index,
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -7,7 +7,7 @@ import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 
 /// 二进制序列化工具类，用于将游戏数据序列化为二进制格式
 class BinarySerializer {
-  static const int _version = 15; // 增加版本号以支持角色蒙版状态持久化
+  static const int _version = 16; // 增加版本号以支持循环音效状态持久化
   static const String _magicNumber = 'SAKI';
 
   /// 将SaveSlot序列化为二进制数据
@@ -152,6 +152,11 @@ class BinarySerializer {
       buffer.addAll(_serializeNvlDialogue(nvlDialogue));
     }
 
+    buffer.addAll(_writeInt32(snapshot.activeLoopingSounds?.length ?? 0));
+    for (final soundPath in snapshot.activeLoopingSounds ?? const <String>[]) {
+      buffer.addAll(_writeString(soundPath));
+    }
+
     return Uint8List.fromList(buffer);
   }
 
@@ -188,6 +193,13 @@ class BinarySerializer {
     for (int i = 0; i < nvlDialoguesLength; i++) {
       nvlDialogues.add(_deserializeNvlDialogue(reader, version));
     }
+    List<String>? activeLoopingSounds;
+    if (version != null && version >= 16) {
+      final activeLoopingSoundCount = reader.readInt32();
+      activeLoopingSounds = <String>[
+        for (int i = 0; i < activeLoopingSoundCount; i++) reader.readString(),
+      ];
+    }
 
     return GameStateSnapshot(
       scriptIndex: scriptIndex,
@@ -198,6 +210,7 @@ class BinarySerializer {
       isNvlnMode: isNvlnMode, // 添加无遮罩NVL模式状态
       isNvlOverlayVisible: isNvlOverlayVisible, // 添加NVL遮罩可见性
       nvlDialogues: nvlDialogues,
+      activeLoopingSounds: activeLoopingSounds,
     );
   }
 

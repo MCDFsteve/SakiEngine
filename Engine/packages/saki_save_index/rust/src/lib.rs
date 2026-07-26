@@ -7,7 +7,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const MAX_SAVE_VERSION: i32 = 15;
+const MAX_SAVE_VERSION: i32 = 16;
 const MAX_FIELD_LENGTH: usize = 64 * 1024 * 1024;
 const MAX_COLLECTION_LENGTH: i32 = 100_000;
 

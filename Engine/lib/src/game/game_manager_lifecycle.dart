@@ -88,6 +88,7 @@ extension _GameManagerLifecycle on GameManager {
     //print('📚 加载合并脚本后: _script.children.length = ${_script.children.length}');
 
     _scriptIndex = snapshot.scriptIndex;
+    await _restoreSoundStateFromSnapshot(snapshot);
 
     // 分析脚本中的所有CG组合并预热（在恢复索引后）
     _analyzeCgCombinationsAndPreWarm(isLoadGame: true);
