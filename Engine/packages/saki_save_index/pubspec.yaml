@@ -1,0 +1,19 @@
+name: saki_save_index
+description: Native Rust indexer for SakiEngine save metadata.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+platforms:
+  macos:
+
+dependencies:
+  code_assets: ^1.0.0
+  ffi: ^2.1.4
+  hooks: ^1.0.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.28.0

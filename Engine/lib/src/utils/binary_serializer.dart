@@ -28,7 +28,8 @@ class BinarySerializer {
     // Web平台使用Int32存储时间戳（秒级精度），桌面平台使用Int64（毫秒级精度）
     if (kIsWeb) {
       buffer.addAll(
-          _writeInt32((saveSlot.saveTime.millisecondsSinceEpoch ~/ 1000)));
+        _writeInt32((saveSlot.saveTime.millisecondsSinceEpoch ~/ 1000)),
+      );
     } else {
       buffer.addAll(_writeInt64(saveSlot.saveTime.millisecondsSinceEpoch));
     }
@@ -56,7 +57,8 @@ class BinarySerializer {
 
     if (magic != _magicNumber) {
       throw FormatException(
-          'Invalid file format: expected $_magicNumber, got $magic');
+        'Invalid file format: expected $_magicNumber, got $magic',
+      );
     }
 
     //print('Debug: 读取版本号...');
@@ -65,7 +67,8 @@ class BinarySerializer {
 
     if (version < 1 || version > _version) {
       throw FormatException(
-          'Unsupported version: $version (supported: 1-$_version)');
+        'Unsupported version: $version (supported: 1-$_version)',
+      );
     }
 
     // 读取基本信息
@@ -153,8 +156,10 @@ class BinarySerializer {
   }
 
   /// 反序列化GameStateSnapshot
-  static GameStateSnapshot _deserializeGameStateSnapshot(_BinaryReader reader,
-      [int? version]) {
+  static GameStateSnapshot _deserializeGameStateSnapshot(
+    _BinaryReader reader, [
+    int? version,
+  ]) {
     final scriptIndex = reader.readInt32();
     final currentState = _deserializeGameState(reader, version);
 
@@ -175,8 +180,9 @@ class BinarySerializer {
     } else {
       isNvlnMode = false;
     }
-    final bool isNvlOverlayVisible =
-        (version != null && version >= 6) ? reader.readByte() == 1 : isNvlMode;
+    final bool isNvlOverlayVisible = (version != null && version >= 6)
+        ? reader.readByte() == 1
+        : isNvlMode;
     final nvlDialoguesLength = reader.readInt32();
     final nvlDialogues = <NvlDialogue>[];
     for (int i = 0; i < nvlDialoguesLength; i++) {
@@ -298,8 +304,9 @@ class BinarySerializer {
     } else {
       isNvlnMode = false;
     }
-    final bool isNvlOverlayVisible =
-        (version != null && version >= 6) ? reader.readByte() == 1 : isNvlMode;
+    final bool isNvlOverlayVisible = (version != null && version >= 6)
+        ? reader.readByte() == 1
+        : isNvlMode;
     final nvlDialoguesLength = reader.readInt32();
     final nvlDialogues = <NvlDialogue>[];
     for (int i = 0; i < nvlDialoguesLength; i++) {
@@ -474,7 +481,8 @@ class BinarySerializer {
     // Web平台使用Int32存储时间戳（秒级精度）
     if (kIsWeb) {
       buffer.addAll(
-          _writeInt32((entry.timestamp.millisecondsSinceEpoch ~/ 1000)));
+        _writeInt32((entry.timestamp.millisecondsSinceEpoch ~/ 1000)),
+      );
     } else {
       buffer.addAll(_writeInt64(entry.timestamp.millisecondsSinceEpoch));
     }
@@ -488,12 +496,14 @@ class BinarySerializer {
 
   /// 反序列化DialogueHistoryEntry
   static DialogueHistoryEntry _deserializeDialogueHistoryEntry(
-      _BinaryReader reader,
-      [int? version]) {
+    _BinaryReader reader, [
+    int? version,
+  ]) {
     final speaker = reader.readNullableString();
     final dialogue = reader.readString();
-    final String? dialogueTag =
-        (version != null && version >= 12) ? reader.readNullableString() : null;
+    final String? dialogueTag = (version != null && version >= 12)
+        ? reader.readNullableString()
+        : null;
     // 读取时间戳
     final DateTime timestamp;
     if (kIsWeb) {
@@ -503,13 +513,16 @@ class BinarySerializer {
       timestamp = DateTime.fromMillisecondsSinceEpoch(reader.readInt64());
     }
     final scriptIndex = reader.readInt32();
-    final String? sourceScriptFile =
-        (version != null && version >= 13) ? reader.readNullableString() : null;
+    final String? sourceScriptFile = (version != null && version >= 13)
+        ? reader.readNullableString()
+        : null;
     final int? sourceLine = (version != null && version >= 13)
         ? int.tryParse(reader.readNullableString() ?? '')
         : null;
-    final stateSnapshot =
-        _deserializeGameStateSnapshot(reader, version); // 传递版本号
+    final stateSnapshot = _deserializeGameStateSnapshot(
+      reader,
+      version,
+    ); // 传递版本号
 
     return DialogueHistoryEntry(
       speaker: speaker,
@@ -574,7 +587,8 @@ class BinarySerializer {
     // Web平台使用Int32存储时间戳（秒级精度）
     if (kIsWeb) {
       buffer.addAll(
-          _writeInt32((nvlDialogue.timestamp.millisecondsSinceEpoch ~/ 1000)));
+        _writeInt32((nvlDialogue.timestamp.millisecondsSinceEpoch ~/ 1000)),
+      );
     } else {
       buffer.addAll(_writeInt64(nvlDialogue.timestamp.millisecondsSinceEpoch));
     }
@@ -588,8 +602,9 @@ class BinarySerializer {
   ]) {
     final speaker = reader.readNullableString();
     final dialogue = reader.readString();
-    final String? dialogueTag =
-        (version != null && version >= 12) ? reader.readNullableString() : null;
+    final String? dialogueTag = (version != null && version >= 12)
+        ? reader.readNullableString()
+        : null;
     // 读取时间戳
     final DateTime timestamp;
     if (kIsWeb) {
@@ -690,6 +705,9 @@ class SaveSlot {
   final String dialoguePreview; // 已废弃，保留用于向后兼容
   final GameStateSnapshot snapshot;
   final Uint8List? screenshotData; // 内嵌的截图数据
+  final String? screenshotFilePath; // 原生索引使用：截图所在存档文件
+  final int? screenshotOffset; // 原生索引使用：截图字节偏移
+  final int? screenshotLength; // 原生索引使用：截图字节长度
   final bool isLocked; // 存档是否被锁定
 
   SaveSlot({
@@ -699,6 +717,9 @@ class SaveSlot {
     required this.dialoguePreview,
     required this.snapshot,
     this.screenshotData,
+    this.screenshotFilePath,
+    this.screenshotOffset,
+    this.screenshotLength,
     this.isLocked = false,
   });
 
@@ -709,6 +730,9 @@ class SaveSlot {
     String? dialoguePreview,
     GameStateSnapshot? snapshot,
     Uint8List? screenshotData,
+    String? screenshotFilePath,
+    int? screenshotOffset,
+    int? screenshotLength,
     bool? isLocked,
   }) {
     return SaveSlot(
@@ -718,6 +742,9 @@ class SaveSlot {
       dialoguePreview: dialoguePreview ?? this.dialoguePreview,
       snapshot: snapshot ?? this.snapshot,
       screenshotData: screenshotData ?? this.screenshotData,
+      screenshotFilePath: screenshotFilePath ?? this.screenshotFilePath,
+      screenshotOffset: screenshotOffset ?? this.screenshotOffset,
+      screenshotLength: screenshotLength ?? this.screenshotLength,
       isLocked: isLocked ?? this.isLocked,
     );
   }
@@ -745,6 +772,7 @@ class SaveSlot {
     // 我们需要在UI层调用时处理，而不是在这里直接调用
     // 因此这个方法只是一个占位符，实际实现在SaveLoadManager中
     throw UnimplementedError(
-        'Please use SaveLoadManager.getDialoguePreview(saveSlot.snapshot) instead');
+      'Please use SaveLoadManager.getDialoguePreview(saveSlot.snapshot) instead',
+    );
   }
 }

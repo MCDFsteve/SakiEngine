@@ -24,7 +24,9 @@ class SaveLoadManager {
   /// Web 平台没有文件系统：用 localStorage 模拟原子写入语义。
   /// 这里保持与 IO 版本同名 API，避免跨平台调用处编译失败。
   static Future<void> writeBinaryFileAtomically(
-      Object targetFile, Uint8List data) async {
+    Object targetFile,
+    Uint8List data,
+  ) async {
     final storageKey = targetFile.toString();
     html.window.localStorage[storageKey] = base64Encode(data);
   }
@@ -58,8 +60,9 @@ class SaveLoadManager {
     }
 
     _characterConfigsLoadFuture ??= () async {
-      final charactersContent = await AssetManager()
-          .loadString('assets/GameScript/configs/characters.sks');
+      final charactersContent = await AssetManager().loadString(
+        'assets/GameScript/configs/characters.sks',
+      );
       return ConfigParser().parseCharacters(charactersContent);
     }();
 
@@ -80,8 +83,9 @@ class SaveLoadManager {
       if (currentState.currentNode != null &&
           currentState.currentNode is MenuNode) {
         final menuNode = currentState.currentNode as MenuNode;
-        final choiceTexts =
-            menuNode.choices.map((choice) => '[${choice.text}]').toList();
+        final choiceTexts = menuNode.choices
+            .map((choice) => '[${choice.text}]')
+            .toList();
         final localization = LocalizationManager();
         return '${localization.t('saveLoad.choiceMenu')}\n${choiceTexts.join('\n')}';
       }
@@ -164,8 +168,9 @@ class SaveLoadManager {
   Future<String> _getCurrentProjectName() async {
     try {
       // 从assets读取default_game.txt
-      final assetContent =
-          await EngineAssetLoader.loadString('assets/default_game.txt');
+      final assetContent = await EngineAssetLoader.loadString(
+        'assets/default_game.txt',
+      );
       final projectName = assetContent.trim();
 
       if (projectName.isEmpty) {
@@ -202,13 +207,18 @@ class SaveLoadManager {
     final sanitized = normalized
         .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
-    final bounded =
-        sanitized.length > 64 ? sanitized.substring(0, 64) : sanitized;
+    final bounded = sanitized.length > 64
+        ? sanitized.substring(0, 64)
+        : sanitized;
     return bounded.isEmpty ? 'quicksave.sakisav' : 'quicksave_$bounded.sakisav';
   }
 
-  Future<void> saveGame(int slotId, String currentScript,
-      GameStateSnapshot snapshot, Map<String, PoseConfig> poseConfigs) async {
+  Future<void> saveGame(
+    int slotId,
+    String currentScript,
+    GameStateSnapshot snapshot,
+    Map<String, PoseConfig> poseConfigs,
+  ) async {
     // 检查目标位置是否有被锁定的存档
     final existingSlot = await loadGame(slotId);
     if (existingSlot?.isLocked == true) {
@@ -222,8 +232,9 @@ class SaveLoadManager {
     if (currentState.currentNode != null &&
         currentState.currentNode is MenuNode) {
       final menuNode = currentState.currentNode as MenuNode;
-      final choiceTexts =
-          menuNode.choices.map((choice) => '[${choice.text}]').toList();
+      final choiceTexts = menuNode.choices
+          .map((choice) => '[${choice.text}]')
+          .toList();
       final localization = LocalizationManager();
       dialoguePreview =
           '${localization.t('saveLoad.choiceMenu')}\n${choiceTexts.join('\n')}';
@@ -479,6 +490,10 @@ class SaveLoadManager {
     return null;
   }
 
+  Future<Uint8List?> loadSaveScreenshot(SaveSlot slot) async {
+    return slot.screenshotData;
+  }
+
   Future<List<SaveSlot>> listSaveSlots() async {
     final saveSlots = <SaveSlot>[];
 
@@ -486,17 +501,17 @@ class SaveLoadManager {
     html.window.localStorage.keys
         .where((key) => key.startsWith(_storageKeyPrefix))
         .forEach((key) {
-      try {
-        final base64Data = html.window.localStorage[key];
-        if (base64Data != null) {
-          final binaryData = base64Decode(base64Data);
-          final saveSlot = SaveSlot.fromBinary(binaryData);
-          saveSlots.add(saveSlot);
-        }
-      } catch (e) {
-        print('Error loading save slot from key $key: $e');
-      }
-    });
+          try {
+            final base64Data = html.window.localStorage[key];
+            if (base64Data != null) {
+              final binaryData = base64Decode(base64Data);
+              final saveSlot = SaveSlot.fromBinary(binaryData);
+              saveSlots.add(saveSlot);
+            }
+          } catch (e) {
+            print('Error loading save slot from key $key: $e');
+          }
+        });
 
     saveSlots.sort((a, b) => a.id.compareTo(b.id));
     return saveSlots;
@@ -504,7 +519,9 @@ class SaveLoadManager {
 
   /// 获取指定范围的存档位信息（懒加载支持）
   Future<List<SaveSlot?>> listSaveSlotsInRange(
-      int startSlotId, int endSlotId) async {
+    int startSlotId,
+    int endSlotId,
+  ) async {
     final result = <SaveSlot?>[];
 
     for (int slotId = startSlotId; slotId <= endSlotId; slotId++) {
@@ -526,19 +543,19 @@ class SaveLoadManager {
     html.window.localStorage.keys
         .where((key) => key.startsWith(_storageKeyPrefix))
         .forEach((key) {
-      try {
-        // 从key提取ID: saki_save_slot_123 -> 123
-        final parts = key.split('_');
-        if (parts.length >= 3) {
-          final id = int.tryParse(parts.last);
-          if (id != null) {
-            existingIds.add(id);
+          try {
+            // 从key提取ID: saki_save_slot_123 -> 123
+            final parts = key.split('_');
+            if (parts.length >= 3) {
+              final id = int.tryParse(parts.last);
+              if (id != null) {
+                existingIds.add(id);
+              }
+            }
+          } catch (e) {
+            // 忽略解析错误的key
           }
-        }
-      } catch (e) {
-        // 忽略解析错误的key
-      }
-    });
+        });
 
     existingIds.sort();
     return existingIds;
@@ -632,8 +649,9 @@ class SaveLoadManager {
           isLocked: saveSlot1.isLocked,
         );
         final binaryData = updatedSaveSlot1.toBinary();
-        html.window.localStorage[_getSaveKey(slotId2)] =
-            base64Encode(binaryData);
+        html.window.localStorage[_getSaveKey(slotId2)] = base64Encode(
+          binaryData,
+        );
       }
 
       if (saveSlot2 != null) {
@@ -647,8 +665,9 @@ class SaveLoadManager {
           isLocked: saveSlot2.isLocked,
         );
         final binaryData = updatedSaveSlot2.toBinary();
-        html.window.localStorage[_getSaveKey(slotId1)] =
-            base64Encode(binaryData);
+        html.window.localStorage[_getSaveKey(slotId1)] = base64Encode(
+          binaryData,
+        );
       }
 
       return true;

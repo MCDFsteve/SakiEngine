@@ -151,7 +151,15 @@ class InitializerIsolate {
 
     while (!disposed) {
       completer = Completer();
-      final event = mpv.mpv_wait_event(handle, kReleaseMode ? -1 : 0.1);
+      // A blocking debug wait keeps this isolate inside FFI and can prevent
+      // Flutter's main isolate from entering the shared isolate group. This is
+      // particularly visible on macOS with merged UI/platform threads: an
+      // active looping sound turns a 100 ms wait into sustained UI jank.
+      //
+      // Poll without blocking, then yield the isolate for a short interval.
+      // Release builds keep the efficient blocking wait; they normally use
+      // InitializerNativeCallable instead of this debug fallback.
+      final event = mpv.mpv_wait_event(handle, kReleaseMode ? -1 : 0);
       if (disposed) {
         break;
       }
@@ -159,7 +167,7 @@ class InitializerIsolate {
         port.send(event.address);
         await completer.future;
       } else {
-        await Future.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 8));
       }
     }
 

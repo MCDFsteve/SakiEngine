@@ -16,6 +16,7 @@ import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'package:sakiengine/src/localization/script_text_localizer.dart';
+import 'package:saki_save_index/saki_save_index.dart';
 
 class SaveLoadManager {
   static const int _autoSaveSlotCount = 18;
@@ -27,6 +28,7 @@ class SaveLoadManager {
   static Map<String, CharacterConfig>? _cachedCharacterConfigs;
   static Future<ScriptNode>? _scriptLoadFuture;
   static Future<Map<String, CharacterConfig>>? _characterConfigsLoadFuture;
+  static bool _nativeSaveIndexUnavailable = false;
 
   static Future<void> _ensureScriptLoaded() async {
     if (_cachedScript != null) {
@@ -51,8 +53,9 @@ class SaveLoadManager {
     }
 
     _characterConfigsLoadFuture ??= () async {
-      final charactersContent = await AssetManager()
-          .loadString('assets/GameScript/configs/characters.sks');
+      final charactersContent = await AssetManager().loadString(
+        'assets/GameScript/configs/characters.sks',
+      );
       return ConfigParser().parseCharacters(charactersContent);
     }();
 
@@ -73,8 +76,9 @@ class SaveLoadManager {
       if (currentState.currentNode != null &&
           currentState.currentNode is MenuNode) {
         final menuNode = currentState.currentNode as MenuNode;
-        final choiceTexts =
-            menuNode.choices.map((choice) => '[${choice.text}]').toList();
+        final choiceTexts = menuNode.choices
+            .map((choice) => '[${choice.text}]')
+            .toList();
         final localization = LocalizationManager();
         return '${localization.t('saveLoad.choiceMenu')}\n${choiceTexts.join('\n')}';
       }
@@ -171,8 +175,9 @@ class SaveLoadManager {
   Future<String> getSavesDirectory() async {
     final directory = await getApplicationDocumentsDirectory();
     final projectName = await _getCurrentProjectName();
-    final savesDir =
-        Directory('${directory.path}/SakiEngine/Saves/$projectName');
+    final savesDir = Directory(
+      '${directory.path}/SakiEngine/Saves/$projectName',
+    );
     if (!await savesDir.exists()) {
       await savesDir.create(recursive: true);
     }
@@ -187,13 +192,18 @@ class SaveLoadManager {
     final sanitized = normalized
         .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
-    final bounded =
-        sanitized.length > 64 ? sanitized.substring(0, 64) : sanitized;
+    final bounded = sanitized.length > 64
+        ? sanitized.substring(0, 64)
+        : sanitized;
     return bounded.isEmpty ? 'quicksave.sakisav' : 'quicksave_$bounded.sakisav';
   }
 
-  Future<void> saveGame(int slotId, String currentScript,
-      GameStateSnapshot snapshot, Map<String, PoseConfig> poseConfigs) async {
+  Future<void> saveGame(
+    int slotId,
+    String currentScript,
+    GameStateSnapshot snapshot,
+    Map<String, PoseConfig> poseConfigs,
+  ) async {
     // 检查目标位置是否有被锁定的存档
     final existingSlot = await loadGame(slotId);
     if (existingSlot?.isLocked == true) {
@@ -404,7 +414,10 @@ class SaveLoadManager {
 
   Future<List<SaveSlot>> listSaveSlots() async {
     final directory = await getSavesDirectory();
-    //print('DEBUG: 存档目录: $directory');
+    final nativeSlots = await _tryListSaveSlotsWithNativeIndex(directory);
+    if (nativeSlots != null) {
+      return nativeSlots;
+    }
 
     final files = await Directory(directory).list().toList();
     //print('DEBUG: 找到 ${files.length} 个文件');
@@ -414,7 +427,8 @@ class SaveLoadManager {
     for (var fileEntity in files) {
       //print('DEBUG: 检查文件: ${fileEntity.path}');
 
-      if (fileEntity is File && fileEntity.path.endsWith('.sakisav')) {
+      if (fileEntity is File &&
+          RegExp(r'^save_\d+\.sakisav$').hasMatch(p.basename(fileEntity.path))) {
         //print('DEBUG: 尝试读取存档文件: ${fileEntity.path}');
         try {
           final binaryData = await fileEntity.readAsBytes();
@@ -444,8 +458,25 @@ class SaveLoadManager {
 
   /// 获取指定范围的存档位信息（懒加载支持）
   Future<List<SaveSlot?>> listSaveSlotsInRange(
-      int startSlotId, int endSlotId) async {
+    int startSlotId,
+    int endSlotId,
+  ) async {
     final directory = await getSavesDirectory();
+    final nativeSlots = await _tryListSaveSlotsWithNativeIndex(
+      directory,
+      startSlotId: startSlotId,
+      endSlotId: endSlotId,
+    );
+    if (nativeSlots != null) {
+      final slotsById = <int, SaveSlot>{
+        for (final slot in nativeSlots) slot.id: slot,
+      };
+      return <SaveSlot?>[
+        for (int slotId = startSlotId; slotId <= endSlotId; slotId++)
+          slotsById[slotId],
+      ];
+    }
+
     final result = <SaveSlot?>[];
 
     for (int slotId = startSlotId; slotId <= endSlotId; slotId++) {
@@ -458,6 +489,119 @@ class SaveLoadManager {
     }
 
     return result;
+  }
+
+  Future<List<SaveSlot>?> _tryListSaveSlotsWithNativeIndex(
+    String directory, {
+    int startSlotId = 1,
+    int endSlotId = 0x7fffffff,
+  }) async {
+    if (!Platform.isMacOS || _nativeSaveIndexUnavailable) {
+      return null;
+    }
+
+    final stopwatch = Stopwatch()..start();
+    try {
+      final result = await scanSakiSaveHeaders(
+        directory,
+        startSlotId: startSlotId,
+        endSlotId: endSlotId,
+      );
+      if (result.invalidFiles.isNotEmpty) {
+        throw FormatException(
+          'Rust save index could not parse ${result.invalidFiles.length} '
+          'save file(s): ${result.invalidFiles.first}',
+        );
+      }
+      final slots = result.slots.map(_saveSlotFromNativeHeader).toList();
+      stopwatch.stop();
+
+      if (kEngineDebugMode) {
+        print(
+          '[SAVE_INDEX][Rust] slots=${slots.length} '
+          'native=${result.elapsedMicros / 1000.0}ms '
+          'total=${stopwatch.elapsedMicroseconds / 1000.0}ms '
+          'invalid=${result.invalidFiles.length}',
+        );
+      }
+      return slots;
+    } catch (error, stackTrace) {
+      _nativeSaveIndexUnavailable = true;
+      if (kEngineDebugMode) {
+        print('[SAVE_INDEX][Rust] unavailable, using Dart fallback: $error');
+        print(stackTrace);
+      }
+      return null;
+    }
+  }
+
+  SaveSlot _saveSlotFromNativeHeader(SakiSaveHeader header) {
+    final preview = _previewFromNativeHeader(header);
+    return SaveSlot(
+      id: header.id,
+      saveTime: DateTime.fromMillisecondsSinceEpoch(header.saveTimeMillis),
+      currentScript: header.currentScript,
+      dialoguePreview: preview,
+      snapshot: GameStateSnapshot(
+        scriptIndex: header.scriptIndex,
+        currentState: GameState(dialogue: preview.isEmpty ? '...' : preview),
+      ),
+      screenshotFilePath: header.filePath,
+      screenshotOffset: header.screenshotOffset,
+      screenshotLength: header.screenshotLength,
+      isLocked: header.isLocked,
+    );
+  }
+
+  String _previewFromNativeHeader(SakiSaveHeader header) {
+    if (header.previewKind == 'menu' && header.previewChoices.isNotEmpty) {
+      final localization = LocalizationManager();
+      final choices = header.previewChoices
+          .map((choice) => '[$choice]')
+          .join('\n');
+      return '${localization.t('saveLoad.choiceMenu')}\n$choices';
+    }
+
+    final text = header.previewText;
+    if (text != null && text.isNotEmpty) {
+      final speaker = header.previewSpeaker;
+      if (speaker != null && speaker.isNotEmpty) {
+        return '【$speaker】${RichTextParser.cleanText(text)}';
+      }
+      return RichTextParser.cleanText(text);
+    }
+
+    return header.dialoguePreview;
+  }
+
+  Future<Uint8List?> loadSaveScreenshot(SaveSlot slot) async {
+    if (slot.screenshotData != null) {
+      return slot.screenshotData;
+    }
+
+    final path = slot.screenshotFilePath;
+    final offset = slot.screenshotOffset;
+    final length = slot.screenshotLength;
+    if (path == null || offset == null || length == null || length <= 0) {
+      return null;
+    }
+
+    RandomAccessFile? file;
+    try {
+      file = await File(path).open();
+      await file.setPosition(offset);
+      final data = await file.read(length);
+      return data.length == length ? data : null;
+    } catch (error) {
+      if (kEngineDebugMode) {
+        print(
+          '[SAVE_INDEX] screenshot read failed for slot ${slot.id}: $error',
+        );
+      }
+      return null;
+    } finally {
+      await file?.close();
+    }
   }
 
   /// 获取所有存在的存档位ID（用于快速检测存档分布）
@@ -649,7 +793,9 @@ class SaveLoadManager {
   }
 
   static Future<void> writeBinaryFileAtomically(
-      File targetFile, Uint8List data) async {
+    File targetFile,
+    Uint8List data,
+  ) async {
     await targetFile.parent.create(recursive: true);
 
     final tempPath =

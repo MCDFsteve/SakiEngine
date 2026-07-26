@@ -21,6 +21,7 @@ import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'package:sakiengine/src/utils/binary_serializer.dart';
 import 'package:sakiengine/src/utils/debug_logger.dart';
 import 'package:sakiengine/src/utils/global_variable_manager.dart';
+import 'package:sakiengine/src/utils/performance_monitor.dart';
 import 'package:sakiengine/src/utils/settings_manager.dart';
 import 'package:sakiengine/src/utils/transition_prewarming.dart';
 import 'package:sakiengine/src/utils/ui_sound_manager.dart';
@@ -476,6 +477,9 @@ Future<void> runSakiEngine({
   await runZoned(
     () async {
       final frameRateBinding = SakiEngineFrameRateBinding.ensureInitialized();
+      if (kEngineDebugMode) {
+        SakiPerformanceMonitor.instance.start();
+      }
 
       final previousFlutterErrorHandler = FlutterError.onError;
       FlutterError.onError = (FlutterErrorDetails details) {
