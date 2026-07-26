@@ -46,6 +46,8 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
     with TickerProviderStateMixin {
   AnimationController? _animationController;
   List<ImageInfo> _frames = [];
+  WebPFrameLease? _cacheLease;
+  bool _ownsFrames = false;
   bool _isLoading = true;
   String? _error;
 
@@ -62,8 +64,14 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
     _animationController?.dispose();
     _animationController = null;
 
-    // 不清理图像资源，因为它们来自全局预加载缓存
-    // 缓存的图像资源由WebPPreloadCache统一管理生命周期
+    _cacheLease?.release();
+    _cacheLease = null;
+    if (_ownsFrames) {
+      for (final frame in _frames) {
+        frame.image.dispose();
+      }
+    }
+    _frames = [];
     super.dispose();
   }
 
@@ -78,7 +86,8 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
   /// 加载WebP字节数据，支持外部文件系统
   Future<Uint8List?> _loadWebPBytes() async {
     try {
-      final isAbsolutePath = widget.assetPath.startsWith('/') ||
+      final isAbsolutePath =
+          widget.assetPath.startsWith('/') ||
           (widget.assetPath.length > 2 && widget.assetPath[1] == ':');
       if (!kIsWeb && isAbsolutePath) {
         final file = createFile(widget.assetPath);
@@ -140,9 +149,11 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
 
       // 首先尝试从预加载缓存获取
       final cache = WebPPreloadCache();
-      if (cache.isCached(assetName)) {
-        final cachedFrames = cache.getCachedFrames(assetName)!;
-        final cachedDuration = cache.getCachedDuration(assetName)!;
+      final lease = cache.acquire(assetName);
+      if (lease != null) {
+        _cacheLease = lease;
+        final cachedFrames = lease.frames;
+        final cachedDuration = lease.duration;
 
         // 将ui.Image包装为ImageInfo
         _frames = cachedFrames.map((frame) => ImageInfo(image: frame)).toList();
@@ -204,6 +215,7 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
       // 使用Flutter的图像解码器
       final codec = await ui.instantiateImageCodec(bytes);
       final frameCount = codec.frameCount;
+      _ownsFrames = true;
 
       if (frameCount > 1) {
         // 这是一个动图
@@ -256,6 +268,7 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
           );
         }
       }
+      codec.dispose();
 
       if (mounted) {
         setState(() {
@@ -311,10 +324,7 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
             width: widget.width,
             height: widget.height,
             child: const Center(
-              child: Text(
-                'WebP无帧数据',
-                style: TextStyle(color: Colors.red),
-              ),
+              child: Text('WebP无帧数据', style: TextStyle(color: Colors.red)),
             ),
           );
     }
@@ -350,7 +360,7 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
                 try {
                   final frameIndex =
                       (_animationController!.value * _frames.length).floor() %
-                          _frames.length;
+                      _frames.length;
                   if (frameIndex < 0 || frameIndex >= _frames.length) {
                     return Container();
                   }

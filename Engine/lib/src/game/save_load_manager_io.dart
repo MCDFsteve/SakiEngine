@@ -16,7 +16,8 @@ import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'package:sakiengine/src/localization/script_text_localizer.dart';
-import 'package:saki_save_index/saki_save_index.dart';
+import 'package:saki_native/saki_native.dart';
+import 'package:sakiengine/src/native/saki_native_runtime.dart';
 
 class SaveLoadManager {
   static const int _autoSaveSlotCount = 18;
@@ -29,6 +30,7 @@ class SaveLoadManager {
   static Future<ScriptNode>? _scriptLoadFuture;
   static Future<Map<String, CharacterConfig>>? _characterConfigsLoadFuture;
   static bool _nativeSaveIndexUnavailable = false;
+  static bool _nativeSaveCodecLogged = false;
 
   static Future<void> _ensureScriptLoaded() async {
     if (_cachedScript != null) {
@@ -283,8 +285,7 @@ class SaveLoadManager {
       final directory = await getSavesDirectory();
       final file = File('$directory/${_quickSaveFileName(namespace)}');
       if (await file.exists()) {
-        final binaryData = await file.readAsBytes();
-        return _decodeSaveSlot(binaryData, file.path);
+        return await _readSaveSlotFile(file);
       }
     } catch (e) {
       print('Error loading quick save: $e');
@@ -379,8 +380,7 @@ class SaveLoadManager {
       }
 
       try {
-        final binaryData = await file.readAsBytes();
-        final saveSlot = _decodeSaveSlot(binaryData, file.path);
+        final saveSlot = await _readSaveSlotFile(file);
         if (saveSlot != null) {
           autoSaveSlots.add(saveSlot);
         }
@@ -403,8 +403,7 @@ class SaveLoadManager {
       final directory = await getSavesDirectory();
       final file = File('$directory/save_$slotId.sakisav');
       if (await file.exists()) {
-        final binaryData = await file.readAsBytes();
-        return _decodeSaveSlot(binaryData, file.path);
+        return await _readSaveSlotFile(file);
       }
     } catch (e) {
       print('Error loading game from slot $slotId: $e');
@@ -428,13 +427,12 @@ class SaveLoadManager {
       //print('DEBUG: 检查文件: ${fileEntity.path}');
 
       if (fileEntity is File &&
-          RegExp(r'^save_\d+\.sakisav$').hasMatch(p.basename(fileEntity.path))) {
+          RegExp(
+            r'^save_\d+\.sakisav$',
+          ).hasMatch(p.basename(fileEntity.path))) {
         //print('DEBUG: 尝试读取存档文件: ${fileEntity.path}');
         try {
-          final binaryData = await fileEntity.readAsBytes();
-          //print('DEBUG: 成功读取 ${binaryData.length} 字节数据');
-
-          final saveSlot = _decodeSaveSlot(binaryData, fileEntity.path);
+          final saveSlot = await _readSaveSlotFile(fileEntity);
           if (saveSlot == null) {
             continue;
           }
@@ -496,14 +494,15 @@ class SaveLoadManager {
     int startSlotId = 1,
     int endSlotId = 0x7fffffff,
   }) async {
-    if (!Platform.isMacOS || _nativeSaveIndexUnavailable) {
+    if (_nativeSaveIndexUnavailable ||
+        !await SakiNativeRuntime.ensureInitialized()) {
       return null;
     }
 
     final stopwatch = Stopwatch()..start();
     try {
-      final result = await scanSakiSaveHeaders(
-        directory,
+      final result = await scanSaveHeaders(
+        directory: directory,
         startSlotId: startSlotId,
         endSlotId: endSlotId,
       );
@@ -519,7 +518,7 @@ class SaveLoadManager {
       if (kEngineDebugMode) {
         print(
           '[SAVE_INDEX][Rust] slots=${slots.length} '
-          'native=${result.elapsedMicros / 1000.0}ms '
+          'native=${result.elapsedMicros.toDouble() / 1000.0}ms '
           'total=${stopwatch.elapsedMicroseconds / 1000.0}ms '
           'invalid=${result.invalidFiles.length}',
         );
@@ -535,7 +534,7 @@ class SaveLoadManager {
     }
   }
 
-  SaveSlot _saveSlotFromNativeHeader(SakiSaveHeader header) {
+  SaveSlot _saveSlotFromNativeHeader(RustSaveHeader header) {
     final preview = _previewFromNativeHeader(header);
     return SaveSlot(
       id: header.id,
@@ -553,7 +552,7 @@ class SaveLoadManager {
     );
   }
 
-  String _previewFromNativeHeader(SakiSaveHeader header) {
+  String _previewFromNativeHeader(RustSaveHeader header) {
     if (header.previewKind == 'menu' && header.previewChoices.isNotEmpty) {
       final localization = LocalizationManager();
       final choices = header.previewChoices
@@ -798,6 +797,34 @@ class SaveLoadManager {
   ) async {
     await targetFile.parent.create(recursive: true);
 
+    final isSakiSave =
+        data.length >= 4 &&
+        data[0] == 0x53 &&
+        data[1] == 0x41 &&
+        data[2] == 0x4b &&
+        data[3] == 0x49;
+    if (isSakiSave && await SakiNativeRuntime.ensureInitialized()) {
+      try {
+        final metadata = await writeSaveFile(path: targetFile.path, data: data);
+        if (kEngineDebugMode && !_nativeSaveCodecLogged) {
+          _nativeSaveCodecLogged = true;
+          print(
+            '[SAKI_NATIVE][SAVE] codec active '
+            'version=${metadata.version}',
+          );
+        }
+        return;
+      } catch (error, stackTrace) {
+        if (kEngineDebugMode) {
+          print(
+            '[SAKI_NATIVE][SAVE] native write rejected data; '
+            'Dart fallback enabled: $error',
+          );
+          print(stackTrace);
+        }
+      }
+    }
+
     final tempPath =
         '${targetFile.path}.tmp.${DateTime.now().microsecondsSinceEpoch}';
     final tempFile = File(tempPath);
@@ -842,6 +869,34 @@ class SaveLoadManager {
       }
       return null;
     }
+  }
+
+  Future<SaveSlot?> _readSaveSlotFile(File file) async {
+    Uint8List binaryData;
+    if (await SakiNativeRuntime.ensureInitialized()) {
+      try {
+        final decoded = await readSaveFile(path: file.path);
+        binaryData = decoded.data;
+        if (kEngineDebugMode && !_nativeSaveCodecLogged) {
+          _nativeSaveCodecLogged = true;
+          print(
+            '[SAKI_NATIVE][SAVE] codec active '
+            'version=${decoded.metadata.version}',
+          );
+        }
+      } catch (error) {
+        if (kEngineDebugMode) {
+          print(
+            '[SAKI_NATIVE][SAVE] native read failed for ${file.path}; '
+            'Dart compatibility decoder will retry: $error',
+          );
+        }
+        binaryData = await file.readAsBytes();
+      }
+    } else {
+      binaryData = await file.readAsBytes();
+    }
+    return _decodeSaveSlot(binaryData, file.path);
   }
 }
 

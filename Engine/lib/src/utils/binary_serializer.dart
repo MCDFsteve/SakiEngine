@@ -10,6 +10,21 @@ class BinarySerializer {
   static const int _version = 16; // 增加版本号以支持循环音效状态持久化
   static const String _magicNumber = 'SAKI';
 
+  static Uint8List serializeGameStateSnapshot(GameStateSnapshot snapshot) =>
+      _serializeGameStateSnapshot(snapshot);
+
+  static GameStateSnapshot deserializeGameStateSnapshot(
+    Uint8List data, {
+    int version = _version,
+  }) {
+    final reader = _BinaryReader(data);
+    final snapshot = _deserializeGameStateSnapshot(reader, version);
+    if (reader.hasMoreData()) {
+      throw const FormatException('Trailing history snapshot bytes');
+    }
+    return snapshot;
+  }
+
   /// 将SaveSlot序列化为二进制数据
   static Uint8List serializeSaveSlot(SaveSlot saveSlot) {
     final buffer = <int>[];
@@ -502,7 +517,7 @@ class BinarySerializer {
     buffer.addAll(_writeInt32(entry.scriptIndex));
     buffer.addAll(_writeNullableString(entry.sourceScriptFile));
     buffer.addAll(_writeNullableString(entry.sourceLine?.toString()));
-    buffer.addAll(_serializeGameStateSnapshot(entry.stateSnapshot));
+    buffer.addAll(entry.serializedStateSnapshot);
 
     return Uint8List.fromList(buffer);
   }

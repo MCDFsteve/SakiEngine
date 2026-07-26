@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -6,6 +7,8 @@ import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:saki_native/saki_native.dart';
+import 'package:sakiengine/src/native/saki_native_runtime.dart';
 
 /// 已读文本跟踪器
 ///
@@ -20,18 +23,34 @@ class ReadTextTracker extends ChangeNotifier {
   // 存储已读对话的标识符集合
   // 使用对话内容的哈希值作为唯一标识
   final Set<String> _readDialogues = <String>{};
+  final Set<int> _stableReadHashes = <int>{};
+  BigInt? _nativeHandle;
+  Timer? _nativeFlushTimer;
 
   // 二进制文件配置
   static const String _fileName = 'saki.sakiread';
   static const String _magicNumber = 'SAKI';
+  static const String _logMagicNumber = 'SAKR';
   static const int _version = 1;
+  static const int _logVersion = 2;
 
   /// 初始化，从二进制文件加载已读记录
   Future<void> initialize() async {
     //print('[ReadTextTracker] ========== 开始初始化 ==========');
     //print('[ReadTextTracker] 实例hashCode: $hashCode');
     //print('[ReadTextTracker] 初始化前已读数量: ${_readDialogues.length}');
+    _nativeFlushTimer?.cancel();
+    final previousHandle = _nativeHandle;
+    _nativeHandle = null;
+    if (previousHandle != null) {
+      try {
+        await readStateClose(handle: previousHandle);
+      } catch (_) {
+        // A stale native handle must not prevent a clean reload.
+      }
+    }
     _readDialogues.clear(); // 确保清空任何现有数据
+    _stableReadHashes.clear();
     //print('[ReadTextTracker] 清空后已读数量: ${_readDialogues.length}');
     await _loadFromStorage();
     //print('[ReadTextTracker] 初始化完成，最终已读数量: ${_readDialogues.length}');
@@ -49,14 +68,19 @@ class ReadTextTracker extends ChangeNotifier {
     }
 
     // 创建唯一标识符，结合说话者、对话内容和脚本索引
-    final identifier = _createIdentifier(speaker, dialogue, scriptIndex);
+    final stableHash = _createStableIdentifier(speaker, dialogue, scriptIndex);
     //print('[ReadTextTracker] 生成标识符: $identifier');
 
-    if (!_readDialogues.contains(identifier)) {
-      _readDialogues.add(identifier);
+    if (!_stableReadHashes.contains(stableHash)) {
+      _stableReadHashes.add(stableHash);
       //print('[ReadTextTracker] 新增已读: $identifier (总数: ${_readDialogues.length})');
       //print('[ReadTextTracker] 当前实例hashCode: ${hashCode}');
-      _saveToStorage();
+      final nativeHandle = _nativeHandle;
+      if (nativeHandle != null) {
+        _appendNativeReadHash(nativeHandle, stableHash);
+      } else {
+        _saveToStorage();
+      }
       notifyListeners();
     } else {
       //print('[ReadTextTracker] 已存在，跳过: $identifier');
@@ -71,7 +95,10 @@ class ReadTextTracker extends ChangeNotifier {
     if (dialogue.trim().isEmpty) return false;
 
     final identifier = _createIdentifier(speaker, dialogue, scriptIndex);
-    final result = _readDialogues.contains(identifier);
+    final stableHash = _createStableIdentifier(speaker, dialogue, scriptIndex);
+    final result =
+        _stableReadHashes.contains(stableHash) ||
+        _readDialogues.contains(identifier);
     //print('[ReadTextTracker] 检查是否已读: "$identifier" = $result (实例${hashCode}, 总数${_readDialogues.length})');
     return result;
   }
@@ -86,8 +113,42 @@ class ReadTextTracker extends ChangeNotifier {
     return content.hashCode.toString();
   }
 
+  int _createStableIdentifier(
+    String? speaker,
+    String dialogue,
+    int scriptIndex,
+  ) {
+    final bytes = utf8.encode('${speaker ?? ''}|$dialogue|$scriptIndex');
+    var hash = 1469598103934665603;
+    for (final byte in bytes) {
+      hash ^= byte;
+      hash = (hash * 1099511628211) & 0x7fffffffffffffff;
+    }
+    return hash;
+  }
+
+  Future<void> _appendNativeReadHash(BigInt handle, int hash) async {
+    try {
+      await readStateMark(handle: handle, stableHash: hash);
+      _nativeFlushTimer?.cancel();
+      _nativeFlushTimer = Timer(const Duration(milliseconds: 250), () async {
+        try {
+          await readStateFlush(handle: handle);
+        } catch (error) {
+          if (kEngineDebugMode) {
+            print('[SAKI_NATIVE][READ] flush failed: $error');
+          }
+        }
+      });
+    } catch (error) {
+      if (kEngineDebugMode) {
+        print('[SAKI_NATIVE][READ] append failed: $error');
+      }
+    }
+  }
+
   /// 获取已读对话数量
-  int get readCount => _readDialogues.length;
+  int get readCount => _stableReadHashes.length + _readDialogues.length;
 
   /// 清除所有已读记录（删除.sakiread文件）
   Future<void> clearAllReadRecords() async {
@@ -95,6 +156,14 @@ class ReadTextTracker extends ChangeNotifier {
     //print('[ReadTextTracker] 当前实例hashCode: ${hashCode}');
 
     try {
+      final nativeHandle = _nativeHandle;
+      if (nativeHandle != null) {
+        await readStateClear(handle: nativeHandle);
+        _stableReadHashes.clear();
+        _readDialogues.clear();
+        notifyListeners();
+        return;
+      }
       final filePath = await _getReadFilePath();
       final file = File(filePath);
 
@@ -106,12 +175,14 @@ class ReadTextTracker extends ChangeNotifier {
       }
 
       _readDialogues.clear();
+      _stableReadHashes.clear();
       //print('[ReadTextTracker] 清除后: ${_readDialogues.length} 条已读记录');
       //print('[ReadTextTracker] 清除操作完成');
     } catch (e) {
       //print('[ReadTextTracker] 删除.sakiread文件失败: $e');
       // 即使删除文件失败，也清空内存中的数据
       _readDialogues.clear();
+      _stableReadHashes.clear();
     }
 
     notifyListeners();
@@ -122,8 +193,9 @@ class ReadTextTracker extends ChangeNotifier {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final projectName = await _getCurrentProjectName();
-      final savesDir =
-          Directory('${directory.path}/SakiEngine/Saves/$projectName');
+      final savesDir = Directory(
+        '${directory.path}/SakiEngine/Saves/$projectName',
+      );
       if (!await savesDir.exists()) {
         await savesDir.create(recursive: true);
       }
@@ -157,7 +229,39 @@ class ReadTextTracker extends ChangeNotifier {
       //print('[ReadTextTracker] 尝试加载文件: $filePath');
 
       if (!await file.exists()) {
-        //print('[ReadTextTracker] .sakiread文件不存在，无已读记录');
+        // Rust open also creates the new append-log file.
+      }
+
+      if (await SakiNativeRuntime.ensureInitialized()) {
+        try {
+          final snapshot = await readStateOpen(path: filePath);
+          _nativeHandle = snapshot.handle;
+          _stableReadHashes.addAll(
+            snapshot.stableHashes.map((hash) => hash.toInt()),
+          );
+          _readDialogues.addAll(
+            snapshot.legacyHashes.map((hash) => hash.toString()),
+          );
+          if (kEngineDebugMode) {
+            print(
+              '[SAKI_NATIVE][READ] stable=${_stableReadHashes.length} '
+              'legacy=${_readDialogues.length} '
+              'migrated=${snapshot.migratedLegacyFile}',
+            );
+          }
+          return;
+        } catch (error, stackTrace) {
+          if (kEngineDebugMode) {
+            print(
+              '[SAKI_NATIVE][READ] open failed; '
+              'Dart fallback enabled: $error',
+            );
+            print(stackTrace);
+          }
+        }
+      }
+
+      if (!await file.exists()) {
         return;
       }
 
@@ -176,6 +280,25 @@ class ReadTextTracker extends ChangeNotifier {
       // 检查魔法数字
       final magic = String.fromCharCodes(bytes.sublist(0, 4));
       offset += 4;
+      if (magic == _logMagicNumber) {
+        final version = buffer.getInt32(offset, Endian.little);
+        offset += 4;
+        if (version != _logVersion) {
+          return;
+        }
+        while (offset + 9 <= bytes.length) {
+          final kind = bytes[offset];
+          offset += 1;
+          final hash = buffer.getInt64(offset, Endian.little);
+          offset += 8;
+          if (kind == 0) {
+            _readDialogues.add(hash.toSigned(32).toString());
+          } else if (kind == 1) {
+            _stableReadHashes.add(hash);
+          }
+        }
+        return;
+      }
       if (magic != _magicNumber) {
         //print('[ReadTextTracker] 魔法数字不匹配: $magic');
         return;
@@ -216,36 +339,42 @@ class ReadTextTracker extends ChangeNotifier {
   /// 保存已读记录到二进制文件
   Future<void> _saveToStorage() async {
     try {
+      if (_nativeHandle != null) {
+        return;
+      }
       final filePath = await _getReadFilePath();
       final file = File(filePath);
 
-      // 计算所需缓冲区大小
+      // 与 Rust 使用同一 v2 追加日志格式，确保原生库暂时不可用时
+      // 仍能读取迁移后的记录，且不会退回并覆盖成旧格式。
       final bufferSize =
-          4 + 4 + 4 + (_readDialogues.length * 4); // 魔法数字 + 版本 + 计数 + 哈希值数组
+          8 + ((_readDialogues.length + _stableReadHashes.length) * 9);
       final buffer = Uint8List(bufferSize);
       final byteData = buffer.buffer.asByteData();
 
       int offset = 0;
 
       // 写入魔法数字
-      for (int i = 0; i < _magicNumber.length; i++) {
-        buffer[offset + i] = _magicNumber.codeUnitAt(i);
+      for (int i = 0; i < _logMagicNumber.length; i++) {
+        buffer[offset + i] = _logMagicNumber.codeUnitAt(i);
       }
       offset += 4;
 
       // 写入版本
-      byteData.setInt32(offset, _version, Endian.little);
+      byteData.setInt32(offset, _logVersion, Endian.little);
       offset += 4;
 
-      // 写入已读记录数量
-      byteData.setInt32(offset, _readDialogues.length, Endian.little);
-      offset += 4;
-
-      // 写入所有哈希值
+      // kind=0: 旧版 Dart int32 hash；kind=1: 稳定 int64 hash。
       for (final hashString in _readDialogues) {
         final hashCode = int.parse(hashString);
-        byteData.setInt32(offset, hashCode, Endian.little);
-        offset += 4;
+        buffer[offset++] = 0;
+        byteData.setInt64(offset, hashCode, Endian.little);
+        offset += 8;
+      }
+      for (final hashCode in _stableReadHashes) {
+        buffer[offset++] = 1;
+        byteData.setInt64(offset, hashCode, Endian.little);
+        offset += 8;
       }
 
       await file.writeAsBytes(buffer);
@@ -263,8 +392,9 @@ class ReadTextTracker extends ChangeNotifier {
   Map<String, dynamic> exportReadRecords() {
     return {
       'version': _version,
-      'readCount': _readDialogues.length,
+      'readCount': readCount,
       'readDialogues': _readDialogues.toList(),
+      'stableReadHashes': _stableReadHashes.toList(),
       'exportTime': DateTime.now().toIso8601String(),
       'storageType': 'binary_file', // 标记存储类型
     };
@@ -274,9 +404,24 @@ class ReadTextTracker extends ChangeNotifier {
   Future<void> importReadRecords(Map<String, dynamic> data) async {
     try {
       final List<dynamic> readList = data['readDialogues'] ?? [];
+      final List<dynamic> stableList = data['stableReadHashes'] ?? [];
       _readDialogues.clear();
       _readDialogues.addAll(readList.cast<String>());
-      await _saveToStorage(); // 保存到二进制文件
+      _stableReadHashes.clear();
+      _stableReadHashes.addAll(stableList.map((value) => value as int));
+      final nativeHandle = _nativeHandle;
+      if (nativeHandle != null) {
+        await replaceReadStateValues(
+          handle: nativeHandle,
+          stableHashes: _stableReadHashes.toList(),
+          legacyHashes: _readDialogues
+              .map(int.tryParse)
+              .whereType<int>()
+              .toList(growable: false),
+        );
+      } else {
+        await _saveToStorage(); // 保存到二进制文件
+      }
       notifyListeners();
       //print('[ReadTextTracker] 成功导入 ${_readDialogues.length} 条已读记录');
     } catch (e) {

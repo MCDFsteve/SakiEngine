@@ -155,8 +155,10 @@ class StoryFlowchartManager extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final dataManager = UnifiedGameDataManager();
-      final savedData =
-          dataManager.getStringVariable('story_flowchart', defaultValue: '');
+      final savedData = dataManager.getStringVariable(
+        'story_flowchart',
+        defaultValue: '',
+      );
 
       if (savedData.isNotEmpty) {
         final jsonData = jsonDecode(savedData) as Map<String, dynamic>;
@@ -202,7 +204,10 @@ class StoryFlowchartManager extends ChangeNotifier {
       final dataManager = UnifiedGameDataManager();
       final projectName = await ProjectInfoManager().getAppName();
       await dataManager.setStringVariable(
-          'story_flowchart', jsonEncode(jsonData), projectName);
+        'story_flowchart',
+        jsonEncode(jsonData),
+        projectName,
+      );
 
       if (kEngineDebugMode) {
         //print('[StoryFlowchart] 保存成功，共 ${_nodes.length} 个节点');
@@ -239,6 +244,22 @@ class StoryFlowchartManager extends ChangeNotifier {
       }
     }
 
+    await save();
+    notifyListeners();
+  }
+
+  /// Replaces a complete precomputed graph and persists it once.
+  Future<void> replaceGraph(
+    Iterable<StoryFlowNode> nodes, {
+    required Iterable<String> rootIds,
+  }) async {
+    _nodes
+      ..clear()
+      ..addEntries(nodes.map((node) => MapEntry(node.id, node)));
+    _rootNodeIds
+      ..clear()
+      ..addAll(rootIds.where(_nodes.containsKey));
+    _currentNodeId = null;
     await save();
     notifyListeners();
   }

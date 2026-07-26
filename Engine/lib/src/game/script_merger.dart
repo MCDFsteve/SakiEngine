@@ -5,12 +5,19 @@ import 'package:sakiengine/src/sks_compiler/compiled_sks_bundle.dart';
 import 'package:sakiengine/src/sks_compiler/compiled_sks_registry.dart';
 import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 import 'package:sakiengine/src/sks_parser/sks_parser.dart';
+import 'package:sakiengine/src/native/native_script_compiler.dart';
+import 'package:sakiengine/src/native/native_runtime_index.dart';
 
 class ScriptMerger {
+  static ScriptNode? _sharedMergedScript;
+  static Map<String, int> _sharedFileStartIndices = const {};
+  static Map<String, String> _sharedGlobalLabelMap = const {};
+
   final Map<String, ScriptNode> _loadedScripts = {};
   final Map<String, int> _fileStartIndices = {}; // 记录每个文件在合并脚本中的起始索引
   final Map<String, String> _globalLabelMap = {}; // label -> filename
   ScriptNode? _mergedScript;
+  NativeRuntimeIndex? _nativeRuntimeIndex;
 
   /// 构建全局标签映射，扫描所有脚本文件
   Future<void> _buildGlobalLabelMap() async {
@@ -30,15 +37,22 @@ class ScriptMerger {
 
     try {
       // 获取所有 .sks 文件
-      final scriptFiles =
-          await AssetManager().listAssets('assets/GameScript/labels/', '.sks');
+      final scriptFiles = await AssetManager().listAssets(
+        'assets/GameScript/labels/',
+        '.sks',
+      );
       scriptFiles.sort();
+
+      if (await _tryBuildWithNativeCompiler(scriptFiles)) {
+        return;
+      }
 
       for (final fileName in scriptFiles) {
         final fileNameWithoutExt = fileName.replaceAll('.sks', '');
         try {
-          final scriptContent = await AssetManager()
-              .loadString('assets/GameScript/labels/$fileName');
+          final scriptContent = await AssetManager().loadString(
+            'assets/GameScript/labels/$fileName',
+          );
           final script = SksParser().parse(
             scriptContent,
             sourceFile: fileNameWithoutExt,
@@ -59,6 +73,80 @@ class ScriptMerger {
       if (kEngineDebugMode) {
         //print('[ScriptMerger] 构建全局标签映射失败: $e');
       }
+    }
+  }
+
+  Future<bool> _tryBuildWithNativeCompiler(List<String> scriptFiles) async {
+    if (scriptFiles.isEmpty) {
+      return false;
+    }
+    try {
+      final sources = await Future.wait([
+        for (final fileName in scriptFiles)
+          AssetManager()
+              .loadString('assets/GameScript/labels/$fileName')
+              .then(
+                (content) =>
+                    NativeScriptSource(fileName: fileName, content: content),
+              ),
+      ]);
+      final compiled = await compileScriptsNatively(sources);
+      if (compiled == null || compiled.mergedSource.isEmpty) {
+        return false;
+      }
+
+      final script = SksParser().parse(compiled.mergedSource);
+      _nativeRuntimeIndex = await buildRuntimeIndexNatively(script.children);
+      _fileStartIndices.clear();
+      String? currentFile;
+      for (var index = 0; index < script.children.length; index++) {
+        final node = script.children[index];
+        if (node is! CommentNode) {
+          if (node is LabelNode && currentFile != null) {
+            _globalLabelMap[node.name] = currentFile;
+          }
+          continue;
+        }
+        final match = RegExp(r'^=== 文件: (.+) ===$').firstMatch(node.comment);
+        if (match != null) {
+          currentFile = match.group(1)!;
+          _fileStartIndices[currentFile] = index;
+        }
+      }
+      _mergedScript = script;
+      _publishSharedScript();
+      if (kEngineDebugMode) {
+        print(
+          '[SAKI_NATIVE][SKS] files=${compiled.orderedFiles.length} '
+          'nodes=${script.children.length} '
+          'native=${compiled.elapsedMicros / 1000.0}ms',
+        );
+        final runtime = _nativeRuntimeIndex;
+        if (runtime != null) {
+          print(
+            '[SAKI_NATIVE][RUNTIME] labels=${runtime.labelIndices.length} '
+            'flow=${runtime.flowNodes.length} '
+            'compact=${runtime.compactBytes}B '
+            'native=${runtime.elapsedMicros / 1000.0}ms',
+          );
+        }
+        for (final diagnostic in compiled.diagnostics) {
+          print('[SAKI_NATIVE][SKS] $diagnostic');
+        }
+      }
+      return true;
+    } catch (error, stackTrace) {
+      if (kEngineDebugMode) {
+        print(
+          '[SAKI_NATIVE][SKS] merged parse failed; '
+          'Dart fallback enabled: $error',
+        );
+        print(stackTrace);
+      }
+      _mergedScript = null;
+      _fileStartIndices.clear();
+      _globalLabelMap.clear();
+      return false;
     }
   }
 
@@ -131,8 +219,29 @@ class ScriptMerger {
     if (_mergedScript != null) {
       return _mergedScript!;
     }
+    final shared = _sharedMergedScript;
+    if (shared != null) {
+      _mergedScript = shared;
+      _fileStartIndices
+        ..clear()
+        ..addAll(_sharedFileStartIndices);
+      _globalLabelMap
+        ..clear()
+        ..addAll(_sharedGlobalLabelMap);
+      _nativeRuntimeIndex = await buildRuntimeIndexNatively(shared.children);
+      if (kEngineDebugMode) {
+        print(
+          '[SAKI_NATIVE][SKS] shared nodes=${shared.children.length} '
+          'runtime=${_nativeRuntimeIndex?.elapsedMicros ?? 0}us',
+        );
+      }
+      return shared;
+    }
 
     await _buildGlobalLabelMap();
+    if (_mergedScript != null) {
+      return _mergedScript!;
+    }
 
     final mergedChildren = <SksNode>[];
     _fileStartIndices.clear();
@@ -149,12 +258,29 @@ class ScriptMerger {
     }
 
     _mergedScript = ScriptNode(mergedChildren);
+    _nativeRuntimeIndex = await buildRuntimeIndexNatively(
+      _mergedScript!.children,
+    );
+    _publishSharedScript();
     return _mergedScript!;
   }
 
+  void _publishSharedScript() {
+    final script = _mergedScript;
+    if (script == null) {
+      return;
+    }
+    _sharedMergedScript = script;
+    _sharedFileStartIndices = Map.unmodifiable(_fileStartIndices);
+    _sharedGlobalLabelMap = Map.unmodifiable(_globalLabelMap);
+  }
+
   /// 递归合并文件，按照 jump 顺序
-  Future<void> _mergeFileRecursively(String fileName,
-      List<SksNode> mergedChildren, Set<String> processedFiles) async {
+  Future<void> _mergeFileRecursively(
+    String fileName,
+    List<SksNode> mergedChildren,
+    Set<String> processedFiles,
+  ) async {
     if (processedFiles.contains(fileName) ||
         !_loadedScripts.containsKey(fileName)) {
       return;
@@ -271,6 +397,11 @@ class ScriptMerger {
   /// 获取所有文件的起始索引映射
   Map<String, int> get fileStartIndices => Map.unmodifiable(_fileStartIndices);
 
+  Map<String, int> get nativeLabelIndices =>
+      Map.unmodifiable(_nativeRuntimeIndex?.labelIndices ?? const {});
+
+  NativeRuntimeIndex? get nativeRuntimeIndex => _nativeRuntimeIndex;
+
   /// 根据合并脚本中的索引找到对应的原始文件名
   String? getFileNameByIndex(int index) {
     String? result;
@@ -288,9 +419,14 @@ class ScriptMerger {
 
   /// 清理缓存，强制重新合并
   void clearCache() {
+    _nativeRuntimeIndex?.dispose();
+    _sharedMergedScript = null;
+    _sharedFileStartIndices = const {};
+    _sharedGlobalLabelMap = const {};
     _mergedScript = null;
     _loadedScripts.clear();
     _fileStartIndices.clear();
     _globalLabelMap.clear();
+    _nativeRuntimeIndex = null;
   }
 }

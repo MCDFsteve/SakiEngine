@@ -9,10 +9,14 @@ import 'package:sakiengine/src/game/game_script_localization.dart';
 import 'package:sakiengine/src/sks_compiler/compiled_sks_bundle.dart';
 import 'package:sakiengine/src/sks_compiler/compiled_sks_registry.dart';
 import 'package:sakiengine/src/config/saki_pack_store.dart';
+import 'package:sakiengine/src/native/saki_native_runtime.dart';
+import 'package:saki_native/saki_native.dart';
 
 class AssetManager {
-  static const bool _forceAssetDiagnostics =
-      bool.fromEnvironment('SAKI_ASSET_DIAG', defaultValue: false);
+  static const bool _forceAssetDiagnostics = bool.fromEnvironment(
+    'SAKI_ASSET_DIAG',
+    defaultValue: false,
+  );
 
   static final AssetManager _instance = AssetManager._internal();
   factory AssetManager() => _instance;
@@ -21,7 +25,8 @@ class AssetManager {
     if (_shouldLoadFromExternal()) {
       print("AssetManager CWD: ${Directory.current.path}");
       print(
-          "Game path hint: ${GamePathResolver.configuredGamePathHint() ?? ''}");
+        "Game path hint: ${GamePathResolver.configuredGamePathHint() ?? ''}",
+      );
     }
     _assetDiag(
       'AssetManager 初始化: mode=${kEngineDebugMode ? "debug" : "release"}, '
@@ -31,6 +36,11 @@ class AssetManager {
 
   Map<String, dynamic>? _assetManifest;
   final Map<String, String> _imageCache = {};
+  final Set<String> _imageMissCache = <String>{};
+  Future<bool>? _nativeCatalogInitialization;
+  List<RustAssetEntry> _nativeAssetEntries = const <RustAssetEntry>[];
+  final Map<String, RustAssetEntry> _nativeAssetsByRelativePath =
+      <String, RustAssetEntry>{};
   bool _manifestDiagPrinted = false;
   int _findAssetDiagCount = 0;
   int _findAssetMissDiagCount = 0;
@@ -65,6 +75,68 @@ class AssetManager {
     return gamePath;
   }
 
+  Future<bool> _ensureNativeAssetCatalog() {
+    return _nativeCatalogInitialization ??= _initializeNativeAssetCatalog();
+  }
+
+  Future<bool> _initializeNativeAssetCatalog() async {
+    if (!_shouldLoadFromExternal() ||
+        !await SakiNativeRuntime.ensureInitialized()) {
+      return false;
+    }
+    final gamePath = await _getGamePath();
+    if (gamePath.isEmpty) {
+      return false;
+    }
+    try {
+      final catalog = await scanAssets(rootPath: gamePath);
+      _nativeAssetEntries = catalog.entries;
+      _nativeAssetsByRelativePath.clear();
+      for (final entry in catalog.entries) {
+        _nativeAssetsByRelativePath[entry.relativePath
+                .replaceAll('\\', '/')
+                .toLowerCase()] =
+            entry;
+      }
+      if (kEngineDebugMode) {
+        print(
+          '[SAKI_NATIVE][ASSETS] indexed=${catalog.entries.length} '
+          'root=${catalog.rootPath} '
+          'time=${catalog.elapsedMicros.toDouble() / 1000.0}ms',
+        );
+      }
+      return true;
+    } catch (error, stackTrace) {
+      if (kEngineDebugMode) {
+        print(
+          '[SAKI_NATIVE][ASSETS] indexing failed; '
+          'Dart fallback enabled: $error',
+        );
+        print(stackTrace);
+      }
+      return false;
+    }
+  }
+
+  RustAssetEntry? _nativeExactAsset(String name) {
+    for (final candidate in _exactAssetPathCandidates(name)) {
+      final normalized = candidate.replaceAll('\\', '/').toLowerCase();
+      final direct = _nativeAssetsByRelativePath[normalized];
+      if (direct != null) {
+        return direct;
+      }
+      final withoutBundlePrefix = normalized.startsWith('assets/')
+          ? normalized.substring('assets/'.length)
+          : normalized;
+      final prefixed =
+          _nativeAssetsByRelativePath['assets/$withoutBundlePrefix'];
+      if (prefixed != null) {
+        return prefixed;
+      }
+    }
+    return null;
+  }
+
   Future<String> loadString(String path) async {
     final candidates = GameScriptLocalization.resolveAssetPaths(path);
     Object? lastError;
@@ -94,7 +166,8 @@ class AssetManager {
       final gamePath = await _getGamePath();
       if (gamePath.isEmpty) {
         throw Exception(
-            'Game path is not defined. Please set SAKI_GAME_PATH environment variable or create default_game.txt');
+          'Game path is not defined. Please set SAKI_GAME_PATH environment variable or create default_game.txt',
+        );
       }
 
       for (final candidate in candidates) {
@@ -107,13 +180,15 @@ class AssetManager {
           lastError = e;
           if (_shouldLoadFromExternal()) {
             print(
-                '[AssetManager] Failed to load $fileSystemPath, trying fallback if available. Error: $e');
+              '[AssetManager] Failed to load $fileSystemPath, trying fallback if available. Error: $e',
+            );
           }
         }
       }
 
       throw Exception(
-          'Failed to load asset from file system. Tried: ${candidates.join(', ')}. Last error: $lastError');
+        'Failed to load asset from file system. Tried: ${candidates.join(', ')}. Last error: $lastError',
+      );
     } else {
       for (final candidate in candidates) {
         for (final bundleCandidate in _bundleCandidates(candidate)) {
@@ -126,7 +201,8 @@ class AssetManager {
       }
 
       throw Exception(
-          'Failed to load asset from bundle. Tried: ${candidates.join(', ')}. Last error: $lastError');
+        'Failed to load asset from bundle. Tried: ${candidates.join(', ')}. Last error: $lastError',
+      );
     }
   }
 
@@ -152,15 +228,18 @@ class AssetManager {
       _manifestDiagPrinted = true;
       final keys = _assetManifest!.keys.toList(growable: false);
       final total = keys.length;
-      final projectAssets =
-          keys.where((key) => key.startsWith('Assets/')).length;
+      final projectAssets = keys
+          .where((key) => key.startsWith('Assets/'))
+          .length;
       final imageAssets = keys
           .where((key) => key.toLowerCase().contains('assets/images/'))
           .length;
       final scriptAssets = keys
-          .where((key) =>
-              key.startsWith('GameScript') &&
-              key.toLowerCase().endsWith('.sks'))
+          .where(
+            (key) =>
+                key.startsWith('GameScript') &&
+                key.toLowerCase().endsWith('.sks'),
+          )
           .length;
       _assetDiag(
         'AssetManifest 已加载: total=$total, projectAssets=$projectAssets, '
@@ -176,11 +255,14 @@ class AssetManager {
   Future<List<String>> listAssets(String directory, String extension) async {
     final assets = <String>[];
     final seen = <String>{};
-    final candidates =
-        GameScriptLocalization.resolveAssetDirectories(directory);
+    final candidates = GameScriptLocalization.resolveAssetDirectories(
+      directory,
+    );
     final resolvedDirectories = <String>[];
-    final precompiledAssets =
-        _listPrecompiledAssets(candidates: candidates, extension: extension);
+    final precompiledAssets = _listPrecompiledAssets(
+      candidates: candidates,
+      extension: extension,
+    );
     if (precompiledAssets.isNotEmpty) {
       return precompiledAssets;
     }
@@ -209,8 +291,31 @@ class AssetManager {
         return assets;
       }
 
+      final nativeCatalogAvailable = await _ensureNativeAssetCatalog();
       for (final candidate in candidates) {
         final assetPath = GameScriptLocalization.stripAssetsPrefix(candidate);
+        if (nativeCatalogAvailable) {
+          final normalizedDirectory = assetPath
+              .replaceAll('\\', '/')
+              .replaceAll(RegExp(r'^/+|/+$'), '');
+          final prefix = '${normalizedDirectory.toLowerCase()}/';
+          final currentAssets = <String>[
+            for (final entry in _nativeAssetEntries)
+              if (entry.relativePath.toLowerCase().startsWith(prefix) &&
+                  !entry.relativePath.substring(prefix.length).contains('/') &&
+                  entry.relativePath.endsWith(extension))
+                entry.fileName,
+          ];
+          if (currentAssets.isNotEmpty) {
+            resolvedDirectories.add(candidate);
+            for (final fileName in currentAssets) {
+              if (seen.add(fileName)) {
+                assets.add(fileName);
+              }
+            }
+          }
+          continue;
+        }
         final dirPath = p.join(gamePath, assetPath);
         final dir = Directory(dirPath);
         final currentAssets = <String>[];
@@ -370,9 +475,9 @@ class AssetManager {
       return null;
     }
 
-    final candidates = _exactAssetPathCandidates(name)
-        .map((candidate) => candidate.toLowerCase())
-        .toSet();
+    final candidates = _exactAssetPathCandidates(
+      name,
+    ).map((candidate) => candidate.toLowerCase()).toSet();
     for (final key in _bundleAssetKeysByPriority()) {
       final normalizedKey = key.replaceAll('\\', '/').toLowerCase();
       final keyWithoutBundleAssetsPrefix = normalizedKey.startsWith('assets/')
@@ -384,8 +489,9 @@ class AssetManager {
         return key;
       }
       if (normalizedKey.startsWith('packages/') &&
-          candidates
-              .any((candidate) => normalizedKey.endsWith('/$candidate'))) {
+          candidates.any(
+            (candidate) => normalizedKey.endsWith('/$candidate'),
+          )) {
         _imageCache[name] = key;
         return key;
       }
@@ -408,6 +514,9 @@ class AssetManager {
         _assetDiag('findAsset 缓存命中: "$name" -> "${_imageCache[name]}"');
       }
       return _imageCache[name];
+    }
+    if (_imageMissCache.contains(name)) {
+      return null;
     }
 
     String? result;
@@ -439,8 +548,9 @@ class AssetManager {
         resolvedVirtual = packStore.resolveVirtualAssetPath(name);
       }
       if (resolvedVirtual != null) {
-        final materialized =
-            await packStore.materializeFilePath(resolvedVirtual);
+        final materialized = await packStore.materializeFilePath(
+          resolvedVirtual,
+        );
         if (materialized != null) {
           _imageCache[name] = materialized;
           return materialized;
@@ -455,6 +565,7 @@ class AssetManager {
       _findAssetMissDiagCount++;
       _assetDiag('findAsset 未命中: "$name"');
     }
+    _imageMissCache.add(name);
 
     return null;
   }
@@ -480,26 +591,26 @@ class AssetManager {
       '.bmp',
       '.webp',
       '.avif',
-      '.svg'
+      '.svg',
     ];
     final videoExtensions = [
       '.mp4',
       '.mov',
       '.avi',
       '.mkv',
-      '.webm'
+      '.webm',
     ]; // 新增：视频扩展名
     final supportedExtensions = [
       ...imageExtensions,
-      ...videoExtensions
+      ...videoExtensions,
     ]; // 合并支持的扩展名
 
     // 从查询名称中提取文件名，例如 "backgrounds/sky" -> "sky"
     final targetFileName = name.split('/').last;
     final targetFileNameLower = targetFileName.toLowerCase();
     final targetFileNameWithoutExt = p.basenameWithoutExtension(targetFileName);
-    final targetFileNameWithoutExtLower =
-        targetFileNameWithoutExt.toLowerCase();
+    final targetFileNameWithoutExtLower = targetFileNameWithoutExt
+        .toLowerCase();
 
     // 提取路径部分，例如 "backgrounds/sky" -> "backgrounds"
     final pathParts = name.split('/');
@@ -522,11 +633,12 @@ class AssetManager {
         if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
           continue;
         }
-        final keyFileNameWithoutExtLower =
-            p.basenameWithoutExtension(keyFileName).toLowerCase();
+        final keyFileNameWithoutExtLower = p
+            .basenameWithoutExtension(keyFileName)
+            .toLowerCase();
         final fileNameMatched =
             keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-                keyFileNameLower == targetFileNameLower;
+            keyFileNameLower == targetFileNameLower;
 
         // 检查文件名是否匹配且路径包含cg（支持cg的任意子文件夹）
         if (fileNameMatched) {
@@ -550,13 +662,14 @@ class AssetManager {
       if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
         continue;
       }
-      final keyFileNameWithoutExtLower =
-          p.basenameWithoutExtension(keyFileName).toLowerCase();
+      final keyFileNameWithoutExtLower = p
+          .basenameWithoutExtension(keyFileName)
+          .toLowerCase();
 
       // 检查文件名是否匹配
       final fileNameMatched =
           keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-              keyFileNameLower == targetFileNameLower;
+          keyFileNameLower == targetFileNameLower;
       if (fileNameMatched) {
         // 如果查询有路径要求，检查路径是否匹配
         if (targetPath.isNotEmpty) {
@@ -584,11 +697,12 @@ class AssetManager {
       if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
         continue;
       }
-      final keyFileNameWithoutExtLower =
-          p.basenameWithoutExtension(keyFileName).toLowerCase();
+      final keyFileNameWithoutExtLower = p
+          .basenameWithoutExtension(keyFileName)
+          .toLowerCase();
       final fileNameMatched =
           keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-              keyFileNameLower == targetFileNameLower;
+          keyFileNameLower == targetFileNameLower;
 
       if (fileNameMatched) {
         _imageCache[name] = key;
@@ -610,10 +724,76 @@ class AssetManager {
     // 从资源名中提取文件名用于搜索，例如 "backgrounds/bg-school" -> "bg-school"
     final fileNameToSearch = name.split('/').last;
     final fileNameToSearchLower = fileNameToSearch.toLowerCase();
-    final fileNameToSearchWithoutExtLower =
-        p.basenameWithoutExtension(fileNameToSearch).toLowerCase();
+    final fileNameToSearchWithoutExtLower = p
+        .basenameWithoutExtension(fileNameToSearch)
+        .toLowerCase();
     final normalizedName = name.replaceAll('\\', '/');
     final normalizedNameLower = normalizedName.toLowerCase();
+
+    if (await _ensureNativeAssetCatalog()) {
+      if (_isPreciseAssetLookup(name)) {
+        final exact = _nativeExactAsset(name);
+        if (exact != null) {
+          _imageCache[name] = exact.absolutePath;
+          return exact.absolutePath;
+        }
+        return null;
+      }
+
+      final targetPath = normalizedNameLower.contains('/')
+          ? normalizedNameLower.substring(
+              0,
+              normalizedNameLower.lastIndexOf('/'),
+            )
+          : '';
+      final supportedExtensions = <String>{
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.gif',
+        '.bmp',
+        '.webp',
+        '.avif',
+        '.svg',
+        '.mp4',
+        '.mov',
+        '.avi',
+        '.mkv',
+        '.webm',
+      };
+      final matches = _nativeAssetEntries
+          .where((entry) {
+            if (!supportedExtensions.contains(entry.extension_.toLowerCase())) {
+              return false;
+            }
+            return entry.fileName.toLowerCase() == fileNameToSearchLower ||
+                entry.stem.toLowerCase() == fileNameToSearchWithoutExtLower;
+          })
+          .toList(growable: false);
+      RustAssetEntry? resolved;
+      if (targetPath.isNotEmpty) {
+        for (final entry in matches) {
+          if (entry.relativePath.toLowerCase().contains(targetPath)) {
+            resolved = entry;
+            break;
+          }
+        }
+      }
+      if (resolved == null && name.toLowerCase().contains('cg')) {
+        for (final entry in matches) {
+          if (entry.relativePath.toLowerCase().contains('/cg/')) {
+            resolved = entry;
+            break;
+          }
+        }
+      }
+      resolved ??= matches.firstOrNull;
+      if (resolved != null) {
+        _imageCache[name] = resolved.absolutePath;
+        return resolved.absolutePath;
+      }
+      return null;
+    }
 
     final searchBase = p.join(gamePath, 'Assets', 'images');
 
@@ -662,11 +842,12 @@ class AssetManager {
 
           final fileName = p.basename(file.path);
           final fileNameLower = fileName.toLowerCase();
-          final fileNameWithoutExtLower =
-              p.basenameWithoutExtension(fileName).toLowerCase();
+          final fileNameWithoutExtLower = p
+              .basenameWithoutExtension(fileName)
+              .toLowerCase();
           final fileNameMatched =
               fileNameWithoutExtLower == fileNameToSearchWithoutExtLower ||
-                  fileNameLower == fileNameToSearchLower;
+              fileNameLower == fileNameToSearchLower;
 
           if (!fileNameMatched) continue;
 
@@ -677,8 +858,9 @@ class AssetManager {
           final lowerAssetPath = assetPath.toLowerCase();
           if (normalizedNameLower.contains('/')) {
             if (lowerAssetPath.contains('/assets/$normalizedNameLower') ||
-                lowerAssetPath
-                    .contains('/assets/images/$normalizedNameLower')) {
+                lowerAssetPath.contains(
+                  '/assets/images/$normalizedNameLower',
+                )) {
               pathMatchedFallback = assetPath;
               break;
             }
@@ -706,7 +888,8 @@ class AssetManager {
   /// 递归扫描指定角色ID的所有可用图层文件
   /// 使用与findAsset相同的递归搜索逻辑
   static Future<List<String>> getAvailableCharacterLayersRecursive(
-      String characterId) async {
+    String characterId,
+  ) async {
     final availableLayers = <String>[];
 
     final packStore = SakiPackStore.instance;
@@ -735,6 +918,32 @@ class AssetManager {
     }
 
     try {
+      final manager = AssetManager();
+      if (await manager._ensureNativeAssetCatalog()) {
+        final prefix = '$characterId-';
+        final imageExtensions = <String>{
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.webp',
+          '.avif',
+        };
+        for (final entry in manager._nativeAssetEntries) {
+          if (!entry.relativePath.toLowerCase().contains(
+                'assets/images/characters/',
+              ) ||
+              !imageExtensions.contains(entry.extension_.toLowerCase()) ||
+              !entry.stem.startsWith(prefix)) {
+            continue;
+          }
+          final layerName = entry.stem.substring(prefix.length);
+          if (layerName.isNotEmpty) {
+            availableLayers.add(layerName);
+          }
+        }
+        availableLayers.sort();
+        return availableLayers;
+      }
       final gamePath = await _getGamePath();
       if (gamePath.isEmpty) {
         return availableLayers;
@@ -758,8 +967,9 @@ class AssetManager {
 
           // 检查是否以指定角色ID开头且是图片文件
           if (fileNameWithoutExt.startsWith(prefix) &&
-              imageExtensions
-                  .any((ext) => fileName.toLowerCase().endsWith(ext))) {
+              imageExtensions.any(
+                (ext) => fileName.toLowerCase().endsWith(ext),
+              )) {
             // 提取图层名称（去掉角色ID前缀）
             final layerName = fileNameWithoutExt.substring(prefix.length);
             if (layerName.isNotEmpty) {
@@ -783,7 +993,8 @@ class AssetManager {
   /// 扫描指定角色ID的所有可用图层文件
   /// 返回按字母顺序排序的文件名列表（不包含扩展名和角色ID前缀）
   static Future<List<String>> getAvailableCharacterLayers(
-      String characterId) async {
+    String characterId,
+  ) async {
     final availableLayers = <String>[];
 
     final packStore = SakiPackStore.instance;
@@ -813,8 +1024,9 @@ class AssetManager {
 
     try {
       final gamePath = await _getGamePath();
-      final charactersDir =
-          Directory(p.join(gamePath, 'Assets', 'images', 'characters'));
+      final charactersDir = Directory(
+        p.join(gamePath, 'Assets', 'images', 'characters'),
+      );
       if (!await charactersDir.exists()) {
         return availableLayers;
       }
@@ -830,8 +1042,9 @@ class AssetManager {
 
           // 检查是否以指定角色ID开头且是图片文件
           if (fileNameWithoutExt.startsWith(prefix) &&
-              imageExtensions
-                  .any((ext) => fileName.toLowerCase().endsWith(ext))) {
+              imageExtensions.any(
+                (ext) => fileName.toLowerCase().endsWith(ext),
+              )) {
             // 提取图层名称（去掉角色ID前缀）
             final layerName = fileNameWithoutExt.substring(prefix.length);
             if (layerName.isNotEmpty) {
@@ -854,7 +1067,9 @@ class AssetManager {
   /// 获取指定角色ID和图层级别的默认图层名称
   /// 返回该级别下按字母顺序第一个可用的图层
   static Future<String?> getDefaultLayerForLevel(
-      String characterId, int layerLevel) async {
+    String characterId,
+    int layerLevel,
+  ) async {
     final availableLayers = await getAvailableCharacterLayers(characterId);
 
     // 筛选出指定级别的图层

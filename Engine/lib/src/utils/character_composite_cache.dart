@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:ui' as ui;
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
@@ -10,8 +12,17 @@ class CharacterCompositeCache {
   CharacterCompositeCache._();
   static final CharacterCompositeCache instance = CharacterCompositeCache._();
 
-  final Map<String, ui.Image> _imageCache = {};
+  final LinkedHashMap<String, ui.Image> _imageCache = LinkedHashMap();
   final Map<String, Future<ui.Image?>> _pendingTasks = {};
+  static const int _maxEntries = 24;
+  static const int _maxDecodedBytes =
+      int.fromEnvironment(
+        'SAKI_CHARACTER_COMPOSITE_CACHE_MB',
+        defaultValue: 128,
+      ) *
+      1024 *
+      1024;
+  int _decodedBytes = 0;
 
   String _buildKey(String resourceId, String pose, String expression) {
     return '$resourceId::$pose::$expression';
@@ -25,8 +36,9 @@ class CharacterCompositeCache {
     final key = _buildKey(resourceId, pose, expression);
     //print('[CharacterCompositeCache] preload调用 - key: $key');
 
-    final cached = _imageCache[key];
+    final cached = _imageCache.remove(key);
     if (cached != null) {
+      _imageCache[key] = cached;
       //print('[CharacterCompositeCache] 使用缓存图像 - key: $key');
       return SynchronousFuture(cached);
     }
@@ -41,7 +53,14 @@ class CharacterCompositeCache {
     final task = _compose(resourceId, pose, expression).then((image) {
       if (image != null) {
         //print('[CharacterCompositeCache] 合成成功，缓存图像 - key: $key');
+        final replaced = _imageCache.remove(key);
+        if (replaced != null) {
+          _decodedBytes -= _estimatedBytes(replaced);
+          _disposeAfterCurrentFrame(replaced);
+        }
         _imageCache[key] = image;
+        _decodedBytes += _estimatedBytes(image);
+        _prune();
       } else {
         //print('[CharacterCompositeCache] 合成失败 - key: $key');
       }
@@ -54,7 +73,10 @@ class CharacterCompositeCache {
   }
 
   Future<ui.Image?> _compose(
-      String resourceId, String pose, String expression) async {
+    String resourceId,
+    String pose,
+    String expression,
+  ) async {
     try {
       //print('[CharacterCompositeCache] 开始合成角色 - resourceId: $resourceId, pose: $pose, expression: $expression');
 
@@ -91,20 +113,22 @@ class CharacterCompositeCache {
 
         //print('[CharacterCompositeCache] 图像加载成功: $assetPath');
 
-        final (xOffset, yOffset, alpha, scale) =
-            ExpressionOffsetManager().getExpressionOffset(
-          characterId: resourceId,
-          pose: pose,
-          layerType: info.layerType,
-        );
+        final (xOffset, yOffset, alpha, scale) = ExpressionOffsetManager()
+            .getExpressionOffset(
+              characterId: resourceId,
+              pose: pose,
+              layerType: info.layerType,
+            );
 
-        images.add(_CompositeLayer(
-          image: image,
-          xOffset: xOffset,
-          yOffset: yOffset,
-          alpha: alpha,
-          scale: scale,
-        ));
+        images.add(
+          _CompositeLayer(
+            image: image,
+            xOffset: xOffset,
+            yOffset: yOffset,
+            alpha: alpha,
+            scale: scale,
+          ),
+        );
 
         baseImage ??= image;
       }
@@ -171,7 +195,11 @@ class CharacterCompositeCache {
   }
 
   void clear() {
+    for (final image in _imageCache.values) {
+      _disposeAfterCurrentFrame(image);
+    }
     _imageCache.clear();
+    _decodedBytes = 0;
     _pendingTasks.clear();
   }
 
@@ -181,9 +209,37 @@ class CharacterCompositeCache {
         .where((key) => key.startsWith(prefix))
         .toList(growable: false);
     for (final key in keysToRemove) {
-      _imageCache.remove(key);
+      final image = _imageCache.remove(key);
+      if (image != null) {
+        _decodedBytes -= _estimatedBytes(image);
+        _disposeAfterCurrentFrame(image);
+      }
       _pendingTasks.remove(key);
     }
+  }
+
+  int _estimatedBytes(ui.Image image) => image.width * image.height * 4;
+
+  void _prune() {
+    while (_imageCache.length > _maxEntries ||
+        (_decodedBytes > _maxDecodedBytes && _imageCache.length > 1)) {
+      final oldestKey = _imageCache.keys.first;
+      final image = _imageCache.remove(oldestKey);
+      if (image == null) {
+        continue;
+      }
+      _decodedBytes -= _estimatedBytes(image);
+      _disposeAfterCurrentFrame(image);
+    }
+  }
+
+  void _disposeAfterCurrentFrame(ui.Image image) {
+    // Callers may still be painting the previous image during a cache
+    // invalidation. Give that frame time to retire before releasing the GPU
+    // resource.
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 250), image.dispose),
+    );
   }
 }
 

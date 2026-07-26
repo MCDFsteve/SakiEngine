@@ -2,8 +2,10 @@ import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 import 'package:sakiengine/src/sks_parser/sks_line_utils.dart';
 
 class SksParser {
-  static const bool _musicParseDiagnostics =
-      bool.fromEnvironment('SAKI_MUSIC_PARSE_DIAGNOSTICS', defaultValue: false);
+  static const bool _musicParseDiagnostics = bool.fromEnvironment(
+    'SAKI_MUSIC_PARSE_DIAGNOSTICS',
+    defaultValue: false,
+  );
 
   static void _logMusicParse(String message) {
     if (_musicParseDiagnostics) {
@@ -14,8 +16,9 @@ class SksParser {
   static bool _isValidHexColor(String color) {
     if (!color.startsWith('#')) return false;
     final hex = color.substring(1);
-    return RegExp(r'^([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$')
-        .hasMatch(hex);
+    return RegExp(
+      r'^([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$',
+    ).hasMatch(hex);
   }
 
   /// 为角色对话添加引号（旁白除外）
@@ -137,8 +140,9 @@ class SksParser {
     String? tailPose,
     String? tailExpression,
     String? tailAnimation,
-    int? tailRepeatCount
-  }) _parseDialogueTail(String? rawTail) {
+    int? tailRepeatCount,
+  })
+  _parseDialogueTail(String? rawTail) {
     final tail = rawTail?.trim() ?? '';
     if (tail.isEmpty) {
       return (
@@ -151,8 +155,10 @@ class SksParser {
       );
     }
 
-    final tokens =
-        tail.split(RegExp(r'\s+')).where((s) => s.trim().isNotEmpty).toList();
+    final tokens = tail
+        .split(RegExp(r'\s+'))
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
     if (tokens.isEmpty) {
       return (
         dialogueTag: null,
@@ -195,8 +201,9 @@ class SksParser {
       String? tailPose,
       String? tailExpression,
       String? tailAnimation,
-      int? tailRepeatCount
-    }) parseTailControl(List<String> controlTokens) {
+      int? tailRepeatCount,
+    })
+    parseTailControl(List<String> controlTokens) {
       if (controlTokens.isEmpty) {
         return (
           tailCharacter: null,
@@ -353,22 +360,44 @@ class SksParser {
 
   ScriptNode parse(String content, {String? sourceFile}) {
     _activeSourceFile = sourceFile;
+    var sourceLineOffset = 0;
     final lines = content.split('\n');
     final nodes = <SksNode>[];
     int i = 0;
     while (i < lines.length) {
-      _activeSourceLine = i + 1;
+      _activeSourceLine = i + 1 - sourceLineOffset;
       final originalLine = lines[i];
-      final lineWithoutComment =
-          SksLineUtils.stripLineCommentOutsideQuotes(originalLine);
+      final lineWithoutComment = SksLineUtils.stripLineCommentOutsideQuotes(
+        originalLine,
+      );
       final trimmedLine = lineWithoutComment.trim();
 
       if (trimmedLine.isEmpty || trimmedLine.startsWith('//')) {
         i++;
         continue;
       }
-      final parts =
-          trimmedLine.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+      final sourceMarker = RegExp(
+        r'^__saki_source\s+"([^"]+)"$',
+      ).firstMatch(trimmedLine);
+      if (sourceMarker != null) {
+        _activeSourceFile = sourceMarker.group(1);
+        sourceLineOffset = i + 1;
+        nodes.add(CommentNode('=== 文件: ${_activeSourceFile!} ==='));
+        i++;
+        continue;
+      }
+      final sourceEndMarker = RegExp(
+        r'^__saki_source_end\s+"([^"]+)"$',
+      ).firstMatch(trimmedLine);
+      if (sourceEndMarker != null) {
+        nodes.add(CommentNode('=== 文件 ${sourceEndMarker.group(1)!} 结束 ==='));
+        i++;
+        continue;
+      }
+      final parts = trimmedLine
+          .split(RegExp(r'\s+'))
+          .where((s) => s.isNotEmpty)
+          .toList();
       final command = parts[0];
       switch (command) {
         case 'label':
@@ -380,8 +409,8 @@ class SksParser {
               'true' => true,
               'false' => false,
               _ => throw FormatException(
-                  'jump 条件值必须是 true 或 false：$trimmedLine',
-                ),
+                'jump 条件值必须是 true 或 false：$trimmedLine',
+              ),
             };
             nodes.add(
               JumpNode(
@@ -418,8 +447,9 @@ class SksParser {
               break;
             }
             if (menuLine.isNotEmpty && !menuLine.startsWith('//')) {
-              final choiceMatch =
-                  RegExp(r'"([^"]*)"\s+(\w+)').firstMatch(menuLine);
+              final choiceMatch = RegExp(
+                r'"([^"]*)"\s+(\w+)',
+              ).firstMatch(menuLine);
               if (choiceMatch != null) {
                 final text = choiceMatch.group(1)!;
                 final targetLabel = choiceMatch.group(2)!;
@@ -451,8 +481,10 @@ class SksParser {
             final endBracket = layerContent.indexOf(']');
 
             if (startBracket >= 0 && endBracket > startBracket) {
-              final layerString =
-                  layerContent.substring(startBracket + 1, endBracket);
+              final layerString = layerContent.substring(
+                startBracket + 1,
+                endBracket,
+              );
               layers = layerString.split(',').map((s) => s.trim()).toList();
 
               // 第一个图层作为主背景名
@@ -510,7 +542,7 @@ class SksParser {
               withIndex,
               anIndex,
               repeatIndex,
-              fxIndex
+              fxIndex,
             ].where((index) => index >= 0).toList();
 
             final firstKeywordIndex = keywordIndices.isEmpty
@@ -551,19 +583,27 @@ class SksParser {
 
           // 检查是否为十六进制颜色格式
           if (_isValidHexColor(backgroundName.trim())) {
-            nodes.add(BackgroundNode(backgroundName.trim(),
+            nodes.add(
+              BackgroundNode(
+                backgroundName.trim(),
                 timer: timerValue,
                 layers: layers,
                 transitionType: transitionType,
                 animation: animation,
-                repeatCount: repeatCount));
+                repeatCount: repeatCount,
+              ),
+            );
           } else {
-            nodes.add(BackgroundNode(backgroundName,
+            nodes.add(
+              BackgroundNode(
+                backgroundName,
                 timer: timerValue,
                 layers: layers,
                 transitionType: transitionType,
                 animation: animation,
-                repeatCount: repeatCount));
+                repeatCount: repeatCount,
+              ),
+            );
           }
 
           // 如果有fx参数，添加FxNode
@@ -590,8 +630,10 @@ class SksParser {
             final endBracket = layerContent.indexOf(']');
 
             if (startBracket >= 0 && endBracket > startBracket) {
-              final layerString =
-                  layerContent.substring(startBracket + 1, endBracket);
+              final layerString = layerContent.substring(
+                startBracket + 1,
+                endBracket,
+              );
               layers = layerString.split(',').map((s) => s.trim()).toList();
 
               // 第一个图层作为主视频文件名
@@ -647,7 +689,7 @@ class SksParser {
               withIndex,
               anIndex,
               repeatIndex,
-              fxIndex
+              fxIndex,
             ].where((index) => index >= 0).toList();
 
             final firstKeywordIndex = keywordIndices.isEmpty
@@ -683,12 +725,16 @@ class SksParser {
             }
           }
 
-          nodes.add(MovieNode(movieFile,
+          nodes.add(
+            MovieNode(
+              movieFile,
               timer: timerValue,
               layers: layers,
               transitionType: transitionType,
               animation: animation,
-              repeatCount: repeatCount));
+              repeatCount: repeatCount,
+            ),
+          );
 
           // 如果有fx参数，添加FxNode
           if (fxString != null && fxString.isNotEmpty) {
@@ -722,11 +768,15 @@ class SksParser {
           }
 
           //print('[SksParser] 解析anime命令: $animeName, loop: $isLoop, keep: $keepAfterComplete, transition: $transitionType, timer: $timerValue');
-          nodes.add(AnimeNode(animeName,
+          nodes.add(
+            AnimeNode(
+              animeName,
               loop: isLoop,
               keep: keepAfterComplete,
               transitionType: transitionType,
-              timer: timerValue));
+              timer: timerValue,
+            ),
+          );
           break;
         case 'show':
           //print('[SksParser] 解析show命令: $trimmedLine');
@@ -823,12 +873,16 @@ class SksParser {
             }
           }
 
-          nodes.add(ShowNode(character,
+          nodes.add(
+            ShowNode(
+              character,
               pose: pose,
               expression: expression,
               position: position,
               animation: animation,
-              repeatCount: repeatCount));
+              repeatCount: repeatCount,
+            ),
+          );
           break;
         case 'cg':
           //print('[SksParser] 解析cg命令: $trimmedLine');
@@ -908,13 +962,17 @@ class SksParser {
           }
 
           //print('[SksParser] CG解析结果: character=$character, pose=$pose, expression=$expression, position=$position, animation=$animation');
-          nodes.add(CgNode(character,
+          nodes.add(
+            CgNode(
+              character,
               pose: pose,
               expression: expression,
               position: position,
               transitionType: transitionType,
               animation: animation,
-              repeatCount: repeatCount));
+              repeatCount: repeatCount,
+            ),
+          );
           break;
         case 'hide':
           nodes.add(HideNode(parts[1]));
@@ -939,11 +997,13 @@ class SksParser {
           break;
         case 'fx':
           final filterString = parts.sublist(1).join(' ');
-          nodes.add(FxNode(
-            filterString,
-            sourceFile: _activeSourceFile,
-            sourceLine: _activeSourceLine > 0 ? _activeSourceLine : null,
-          ));
+          nodes.add(
+            FxNode(
+              filterString,
+              sourceFile: _activeSourceFile,
+              sourceLine: _activeSourceLine > 0 ? _activeSourceLine : null,
+            ),
+          );
           break;
         case 'play':
           _logMusicParse(
@@ -991,13 +1051,15 @@ class SksParser {
           final apiName = splitIndex < 0
               ? payload
               : payload.substring(0, splitIndex).trim();
-          final rawParams =
-              splitIndex < 0 ? '' : payload.substring(splitIndex + 1).trim();
+          final rawParams = splitIndex < 0
+              ? ''
+              : payload.substring(splitIndex + 1).trim();
           if (apiName.isEmpty) {
             break;
           }
           nodes.add(
-              ApiCallNode(apiName, parameters: _parseApiParameters(rawParams)));
+            ApiCallNode(apiName, parameters: _parseApiParameters(rawParams)),
+          );
           break;
         case 'achievement':
           // 语法糖：
@@ -1081,8 +1143,9 @@ class SksParser {
             }
           }
 
-          nodes.add(ShakeNode(
-              duration: duration, intensity: intensity, target: target));
+          nodes.add(
+            ShakeNode(duration: duration, intensity: intensity, target: target),
+          );
           break;
         default:
           final sayNode = _parseSay(trimmedLine);
@@ -1103,8 +1166,9 @@ class SksParser {
 
   SksNode? _parseSay(String line) {
     // 先处理行末注释
-    final processedLine =
-        SksLineUtils.stripLineCommentOutsideQuotes(line).trim();
+    final processedLine = SksLineUtils.stripLineCommentOutsideQuotes(
+      line,
+    ).trim();
 
     // 检查是否是pause语法：pause(0.5)
     final pauseRegex = RegExp(r'^pause\(([0-9.]+)\)$');
@@ -1125,8 +1189,9 @@ class SksParser {
       String? position,
       String? inlineApiToken,
       String? animation,
-      int? repeatCount
-    }) parseTimedPrefixAttributes(String raw) {
+      int? repeatCount,
+    })
+    parseTimedPrefixAttributes(String raw) {
       final result = (
         pose: null as String?,
         position: null as String?,
@@ -1134,8 +1199,10 @@ class SksParser {
         animation: null as String?,
         repeatCount: null as int?,
       );
-      final attrs =
-          raw.split(RegExp(r'\s+')).where((s) => s.trim().isNotEmpty).toList();
+      final attrs = raw
+          .split(RegExp(r'\s+'))
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
       if (attrs.isEmpty) {
         return result;
       }
@@ -1434,8 +1501,10 @@ class SksParser {
       );
     }
 
-    final parts =
-        beforeQuote.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+    final parts = beforeQuote
+        .split(RegExp(r'\s+'))
+        .where((s) => s.isNotEmpty)
+        .toList();
     if (parts.isEmpty) {
       return null; // Should not happen with this regex, but for safety
     }
@@ -1517,25 +1586,6 @@ class SksParser {
       }
 
       return SayNode(
-          character: character,
-          dialogue: _formatDialogueWithQuotes(dialogue, character),
-          inlineApiToken: inlineApiToken,
-          dialogueTag: tailMeta.dialogueTag,
-          tailCharacter: tailMeta.tailCharacter,
-          tailPose: tailMeta.tailPose,
-          tailExpression: tailMeta.tailExpression,
-          tailAnimation: tailMeta.tailAnimation,
-          tailRepeatCount: tailMeta.tailRepeatCount,
-          sourceFile: _activeSourceFile,
-          sourceLine: _activeSourceLine > 0 ? _activeSourceLine : null,
-          pose: pose,
-          expression: expression,
-          position: position,
-          animation: animation,
-          repeatCount: repeatCount);
-    }
-
-    return SayNode(
         character: character,
         dialogue: _formatDialogueWithQuotes(dialogue, character),
         inlineApiToken: inlineApiToken,
@@ -1549,7 +1599,28 @@ class SksParser {
         sourceLine: _activeSourceLine > 0 ? _activeSourceLine : null,
         pose: pose,
         expression: expression,
-        position: position);
+        position: position,
+        animation: animation,
+        repeatCount: repeatCount,
+      );
+    }
+
+    return SayNode(
+      character: character,
+      dialogue: _formatDialogueWithQuotes(dialogue, character),
+      inlineApiToken: inlineApiToken,
+      dialogueTag: tailMeta.dialogueTag,
+      tailCharacter: tailMeta.tailCharacter,
+      tailPose: tailMeta.tailPose,
+      tailExpression: tailMeta.tailExpression,
+      tailAnimation: tailMeta.tailAnimation,
+      tailRepeatCount: tailMeta.tailRepeatCount,
+      sourceFile: _activeSourceFile,
+      sourceLine: _activeSourceLine > 0 ? _activeSourceLine : null,
+      pose: pose,
+      expression: expression,
+      position: position,
+    );
   }
 
   bool _isInlineApiToken(String token) {

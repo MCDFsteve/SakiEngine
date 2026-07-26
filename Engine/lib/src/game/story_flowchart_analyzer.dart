@@ -6,22 +6,24 @@ import 'package:sakiengine/src/game/script_merger.dart';
 import 'package:sakiengine/src/game/save_load_manager.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'package:sakiengine/src/localization/script_text_localizer.dart';
+import 'package:sakiengine/src/native/native_runtime_index.dart';
 
 /// 剧情流程图分析器 - 完全重写版本
 class StoryFlowchartAnalyzer {
+  static Future<void>? _sharedAnalysis;
+
   final StoryFlowchartManager _manager = StoryFlowchartManager();
   final ScriptMerger _scriptMerger = ScriptMerger();
   final LocalizationManager _localization = LocalizationManager();
 
   /// 分析整个脚本，构建流程图
-  Future<void> analyzeScript() async {
+  Future<void> analyzeScript() => _sharedAnalysis ??= _analyzeScript();
+
+  Future<void> _analyzeScript() async {
     try {
       if (kEngineDebugMode) {
         //print('[FlowchartAnalyzer] 开始分析脚本...');
       }
-
-      // 清空旧数据
-      await _manager.clearAll();
 
       if (kEngineDebugMode) {
         //print('[FlowchartAnalyzer] 正在获取合并后的脚本...');
@@ -30,6 +32,28 @@ class StoryFlowchartAnalyzer {
       // 获取合并后的脚本
       final script = await _scriptMerger.getMergedScript();
       final nodes = script.children;
+
+      final nativeIndex = await buildRuntimeIndexNatively(nodes);
+      if (nativeIndex != null && nativeIndex.flowNodes.isNotEmpty) {
+        try {
+          await _applyNativeIndex(nativeIndex);
+          await _restoreUnlockStatusFromAutoSaves();
+          if (kEngineDebugMode) {
+            print(
+              '[SAKI_NATIVE][FLOW] nodes=${nativeIndex.flowNodes.length} '
+              'compact=${nativeIndex.compactBytes}B '
+              'native=${nativeIndex.elapsedMicros / 1000.0}ms',
+            );
+          }
+        } finally {
+          nativeIndex.dispose();
+        }
+        return;
+      }
+      nativeIndex?.dispose();
+
+      // Native is optional on Web and in unit-test runners.
+      await _manager.clearAll();
 
       if (kEngineDebugMode) {
         //print('[FlowchartAnalyzer] 获取到 ${nodes.length} 个节点');
@@ -59,8 +83,12 @@ class StoryFlowchartAnalyzer {
         // 检查当前位置是否是汇合点的label位置
         if (node is LabelNode && mergeLabels.containsKey(node.name)) {
           // 在这个位置创建汇合点节点
-          await _createMergePointNode(node.name, mergeLabels[node.name]!,
-              currentChapter, currentChapterId);
+          await _createMergePointNode(
+            node.name,
+            mergeLabels[node.name]!,
+            currentChapter,
+            currentChapterId,
+          );
         }
 
         // 检测章节
@@ -71,13 +99,26 @@ class StoryFlowchartAnalyzer {
         }
         // 检测分支
         else if (node is MenuNode) {
-          await _createBranchNode(i, node, nodes, labelIndex, currentChapter,
-              currentChapterId, mergeLabels);
+          await _createBranchNode(
+            i,
+            node,
+            nodes,
+            labelIndex,
+            currentChapter,
+            currentChapterId,
+            mergeLabels,
+          );
         }
         // 检测结局
         else if (node is ReturnNode) {
-          await _createEndingNode(i, nodes, labelIndex, currentChapter,
-              currentChapterId, mergeLabels);
+          await _createEndingNode(
+            i,
+            nodes,
+            labelIndex,
+            currentChapter,
+            currentChapterId,
+            mergeLabels,
+          );
         }
       }
 
@@ -104,6 +145,53 @@ class StoryFlowchartAnalyzer {
       }
       print(stack);
     }
+  }
+
+  Future<void> _applyNativeIndex(NativeRuntimeIndex index) async {
+    final nodes = <StoryFlowNode>[];
+    for (final native in index.flowNodes) {
+      final type = switch (native.kind) {
+        'chapter' => StoryNodeType.chapter,
+        'merge' => StoryNodeType.merge,
+        'ending' => StoryNodeType.ending,
+        _ => StoryNodeType.branch,
+      };
+      final chapterName = native.chapterName == null
+          ? null
+          : _extractChapterName(native.chapterName);
+      final displayName = switch (type) {
+        StoryNodeType.chapter => _extractChapterName(native.displayName),
+        StoryNodeType.merge => _localization.t('flowchart.nodeType.merge'),
+        StoryNodeType.ending =>
+          native.displayName.startsWith('ending:')
+              ? '结局: ${native.label}'
+              : native.displayName,
+        StoryNodeType.branch =>
+          native.branchText == null
+              ? _localization.t('flowchart.nodeType.branch')
+              : ScriptTextLocalizer.resolve(native.displayName),
+      };
+      nodes.add(
+        StoryFlowNode(
+          id: native.id,
+          label: native.label,
+          type: type,
+          displayName: displayName,
+          scriptIndex: native.scriptIndex,
+          chapterName: chapterName,
+          parentNodeId: native.parentId,
+          childNodeIds: native.childIds,
+          metadata: {
+            if (native.branchText != null)
+              'branchText': ScriptTextLocalizer.resolve(native.branchText!),
+            if (native.parentIds.isNotEmpty) 'parentIds': native.parentIds,
+            if (native.parentIds.isNotEmpty)
+              'parentCount': native.parentIds.length,
+          },
+        ),
+      );
+    }
+    await _manager.replaceGraph(nodes, rootIds: index.rootIds);
   }
 
   /// 创建章节节点
@@ -279,10 +367,7 @@ class StoryFlowchartAnalyzer {
         scriptIndex: scriptIndex,
         chapterName: currentChapter,
         parentNodeId: null, // 暂时没有父节点
-        metadata: {
-          'parentCount': 0,
-          'parentIds': <String>[],
-        },
+        metadata: {'parentCount': 0, 'parentIds': <String>[]},
       );
 
       await _manager.addOrUpdateNode(mergeNode);
@@ -385,10 +470,7 @@ class StoryFlowchartAnalyzer {
           // 这是一个需要更新的汇合点
           final updatedNode = existingNode.copyWith(
             parentNodeId: parents.first,
-            metadata: {
-              'parentCount': parents.length,
-              'parentIds': parents,
-            },
+            metadata: {'parentCount': parents.length, 'parentIds': parents},
           );
 
           await _manager.addOrUpdateNode(updatedNode);
@@ -412,7 +494,8 @@ class StoryFlowchartAnalyzer {
   ) async {
     final lastSceneIndex = _findLastSceneBeforeReturn(returnIndex, nodes);
     if (lastSceneIndex != null) {
-      final label = _findNearestLabel(lastSceneIndex, nodes, labelIndex) ??
+      final label =
+          _findNearestLabel(lastSceneIndex, nodes, labelIndex) ??
           'ending_$lastSceneIndex';
       final endingId = 'ending_$lastSceneIndex';
 
@@ -479,7 +562,7 @@ class StoryFlowchartAnalyzer {
           if (endingIndex != null) {
             final endingLabel =
                 _findNearestLabel(endingIndex, nodes, labelIndex) ??
-                    'ending_$endingIndex';
+                'ending_$endingIndex';
             final endingId = 'ending_$endingIndex';
 
             // 检查这个结局节点是否已经存在
@@ -510,8 +593,9 @@ class StoryFlowchartAnalyzer {
           final targetLabel = node.targetLabel;
 
           // 检查跳转目标是否是章节
-          if (allNodes
-              .containsKey('chapter_${_extractChapterName(targetLabel)}')) {
+          if (allNodes.containsKey(
+            'chapter_${_extractChapterName(targetLabel)}',
+          )) {
             // 跳转到下一章，不需要创建新节点
             if (kEngineDebugMode) {
               //print('[FlowchartAnalyzer] 汇合点 $mergeLabel 跳转到下一章: $targetLabel');
@@ -541,22 +625,26 @@ class StoryFlowchartAnalyzer {
   ) async {
     // 获取所有章节节点
     final allNodes = _manager.nodes;
-    final chapterNodes =
-        allNodes.values.where((n) => n.type == StoryNodeType.chapter).toList();
+    final chapterNodes = allNodes.values
+        .where((n) => n.type == StoryNodeType.chapter)
+        .toList();
 
     for (final chapterNode in chapterNodes) {
       // 找到该章节下的所有节点
       final chapterNodesInSameChapter = allNodes.values
-          .where((n) =>
-              n.chapterName == chapterNode.displayName &&
-              n.id != chapterNode.id)
+          .where(
+            (n) =>
+                n.chapterName == chapterNode.displayName &&
+                n.id != chapterNode.id,
+          )
           .toList();
 
       if (chapterNodesInSameChapter.isEmpty) continue;
 
       // 找到最后一个节点（scriptIndex最大的）
-      chapterNodesInSameChapter
-          .sort((a, b) => a.scriptIndex.compareTo(b.scriptIndex));
+      chapterNodesInSameChapter.sort(
+        (a, b) => a.scriptIndex.compareTo(b.scriptIndex),
+      );
       final lastNode = chapterNodesInSameChapter.last;
 
       // 检查最后一个节点是否有子节点
@@ -565,8 +653,10 @@ class StoryFlowchartAnalyzer {
       if (!hasChildren) {
         // 最后一个节点没有子节点，创建章节末尾节点
         // 使用章节ID（去掉"chapter_"前缀）+ "_end"作为末尾节点ID
-        final chapterIdWithoutPrefix =
-            chapterNode.id.replaceFirst('chapter_', '');
+        final chapterIdWithoutPrefix = chapterNode.id.replaceFirst(
+          'chapter_',
+          '',
+        );
         final endId = 'chapter_end_$chapterIdWithoutPrefix';
 
         final endNode = StoryFlowNode(
@@ -636,15 +726,19 @@ class StoryFlowchartAnalyzer {
   String _extractChapterName(String? bgName) {
     if (bgName == null) return 'Unknown';
 
-    final chapterMatch =
-        RegExp(r'chapter[_\s-]?(\d+)', caseSensitive: false).firstMatch(bgName);
+    final chapterMatch = RegExp(
+      r'chapter[_\s-]?(\d+)',
+      caseSensitive: false,
+    ).firstMatch(bgName);
     if (chapterMatch != null) {
       final chapterNum = chapterMatch.group(1)!;
       return _localization.t('flowchart.chapter', params: {'num': chapterNum});
     }
 
-    final chMatch =
-        RegExp(r'\bch(\d+)\b', caseSensitive: false).firstMatch(bgName);
+    final chMatch = RegExp(
+      r'\bch(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(bgName);
     if (chMatch != null) {
       final chapterNum = chMatch.group(1)!;
       return _localization.t('flowchart.chapter', params: {'num': chapterNum});
@@ -665,14 +759,18 @@ class StoryFlowchartAnalyzer {
   String _extractChapterId(String? bgName) {
     if (bgName == null) return 'unknown';
 
-    final chapterMatch =
-        RegExp(r'chapter[_\s-]?(\d+)', caseSensitive: false).firstMatch(bgName);
+    final chapterMatch = RegExp(
+      r'chapter[_\s-]?(\d+)',
+      caseSensitive: false,
+    ).firstMatch(bgName);
     if (chapterMatch != null) {
       return 'chapter_${chapterMatch.group(1)}';
     }
 
-    final chMatch =
-        RegExp(r'\bch(\d+)\b', caseSensitive: false).firstMatch(bgName);
+    final chMatch = RegExp(
+      r'\bch(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(bgName);
     if (chMatch != null) {
       return 'chapter_${chMatch.group(1)}';
     }
@@ -690,7 +788,10 @@ class StoryFlowchartAnalyzer {
 
   /// 查找最近的label
   String? _findNearestLabel(
-      int index, List<SksNode> nodes, Map<String, int> labelIndex) {
+    int index,
+    List<SksNode> nodes,
+    Map<String, int> labelIndex,
+  ) {
     for (int i = index; i >= 0; i--) {
       if (nodes[i] is LabelNode) {
         return (nodes[i] as LabelNode).name;
@@ -712,6 +813,7 @@ class StoryFlowchartAnalyzer {
 
   /// 清空并重新分析
   Future<void> resetAndAnalyze() async {
+    _sharedAnalysis = null;
     await analyzeScript();
   }
 
@@ -751,8 +853,10 @@ class StoryFlowchartAnalyzer {
       int unlockedCount = 0;
       for (final autoSaveId in autoSaveFiles) {
         // 从文件名提取nodeId (移除前缀 "auto_story_")
-        final nodeId =
-            autoSaveId.replaceFirst(StoryFlowchartManager.autoSavePrefix, '');
+        final nodeId = autoSaveId.replaceFirst(
+          StoryFlowchartManager.autoSavePrefix,
+          '',
+        );
 
         // 查找对应的节点（同时支持两种匹配方式）
         final allNodes = _manager.nodes;

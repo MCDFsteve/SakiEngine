@@ -9,6 +9,7 @@ import 'package:sakiengine/src/utils/cg_cache_storage.dart';
 import 'package:sakiengine/src/utils/character_layer_parser.dart';
 import 'package:sakiengine/src/utils/image_loader.dart';
 import 'package:sakiengine/src/rendering/image_sampling.dart';
+import 'package:sakiengine/src/native/native_image_metadata.dart';
 
 /// CG图像合成器 - 负责将多层图像合成为单张图像并将结果保存到磁盘缓存
 class CgImageCompositor {
@@ -33,6 +34,12 @@ class CgImageCompositor {
     defaultValue: false,
   );
   static const int _maxMemoryEntries = 180;
+  static const int _maxMemoryBytes =
+      int.fromEnvironment('SAKI_CG_MEMORY_CACHE_MB', defaultValue: 64) *
+      1024 *
+      1024;
+  int _memoryBytes = 0;
+  bool _loggedNativeImageMetadata = false;
 
   /// 生成缓存键
   String _generateCacheKey(String resourceId, String pose, String expression) {
@@ -147,10 +154,41 @@ class CgImageCompositor {
         return null;
       }
 
+      final layerPaths = <String>[];
+      for (final layerInfo in layerInfos) {
+        final path = await AssetManager().findAsset(layerInfo.assetName);
+        if (path == null) {
+          return null;
+        }
+        layerPaths.add(path);
+      }
+
+      final physicalPaths = layerPaths
+          .where(
+            (path) =>
+                path.startsWith('/') || (path.length > 2 && path[1] == ':'),
+          )
+          .toList(growable: false);
+      final metadata = await inspectImagesNatively(physicalPaths);
+      if (kEngineDebugMode &&
+          !_loggedNativeImageMetadata &&
+          metadata != null &&
+          metadata.isNotEmpty) {
+        _loggedNativeImageMetadata = true;
+        final decodedBytes = metadata.fold<int>(
+          0,
+          (sum, image) => sum + image.decodedRgbaBytes,
+        );
+        print(
+          '[SAKI_NATIVE][IMAGE] layers=${metadata.length} '
+          'decodedEstimate=${decodedBytes}B',
+        );
+      }
+
       // 加载所有图层图像
       final layerImages = <ui.Image>[];
-      for (final layerInfo in layerInfos) {
-        final image = await _loadLayerImage(layerInfo.assetName);
+      for (final layerPath in layerPaths) {
+        final image = await ImageLoader.loadImage(layerPath);
         if (image == null) {
           for (final loaded in layerImages) {
             loaded.dispose();
@@ -201,19 +239,6 @@ class CgImageCompositor {
       if (kEngineDebugMode) {
         print('[CgImageCompositor] Composition failed: $e');
       }
-      return null;
-    }
-  }
-
-  /// 加载单个图层图像
-  Future<ui.Image?> _loadLayerImage(String assetName) async {
-    try {
-      final assetPath = await AssetManager().findAsset(assetName);
-      if (assetPath == null) {
-        return null;
-      }
-      return await ImageLoader.loadImage(assetPath);
-    } catch (e) {
       return null;
     }
   }
@@ -324,6 +349,7 @@ class CgImageCompositor {
       _diskPathCache.clear();
       _memoryPathCache.clear();
       _memoryBytesCache.clear();
+      _memoryBytes = 0;
       _compositingTasks.clear();
       await CgCacheStorage().clear();
 
@@ -343,10 +369,8 @@ class CgImageCompositor {
       final stats = await CgCacheStorage().collectStats();
       stats['disk_index'] = _diskPathCache.length;
       stats['memory_index'] = _memoryBytesCache.length;
-      stats['memory_bytes'] = _memoryBytesCache.values.fold<int>(
-        0,
-        (sum, bytes) => sum + bytes.length,
-      );
+      stats['memory_bytes'] = _memoryBytes;
+      stats['memory_limit_bytes'] = _maxMemoryBytes;
       stats['prefer_memory_cache'] = _preferMemoryCache;
       stats['disk_fallback_enabled'] = _enableDiskFallback;
       stats['compositing_tasks'] = _compositingTasks.length;
@@ -414,12 +438,20 @@ class CgImageCompositor {
   }
 
   void _cacheMemoryBytes(String cacheKey, Uint8List bytes) {
-    _memoryBytesCache.remove(cacheKey);
+    final replaced = _memoryBytesCache.remove(cacheKey);
+    if (replaced != null) {
+      _memoryBytes -= replaced.length;
+    }
     _memoryBytesCache[cacheKey] = bytes;
+    _memoryBytes += bytes.length;
 
-    while (_memoryBytesCache.length > _maxMemoryEntries) {
+    while (_memoryBytesCache.length > _maxMemoryEntries ||
+        (_memoryBytes > _maxMemoryBytes && _memoryBytesCache.length > 1)) {
       final oldestKey = _memoryBytesCache.keys.first;
-      _memoryBytesCache.remove(oldestKey);
+      final removed = _memoryBytesCache.remove(oldestKey);
+      if (removed != null) {
+        _memoryBytes -= removed.length;
+      }
       _memoryPathCache.remove(oldestKey);
     }
   }

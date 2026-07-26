@@ -7,6 +7,8 @@ import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/utils/bundle_asset_path_probe.dart';
 import 'package:sakiengine/src/utils/async_initialization_gate.dart';
 import 'package:path/path.dart' as p;
+import 'package:saki_native/saki_native.dart';
+import 'package:sakiengine/src/native/saki_native_runtime.dart';
 
 class _PackEntry {
   final String path;
@@ -37,6 +39,7 @@ class SakiPackStore {
       AsyncInitializationGate<bool>();
   bool _available = false;
   String? _packPath;
+  BigInt? _nativePackHandle;
   Uint8List? _packBytes;
   final Map<String, _PackEntry> _entryMap = <String, _PackEntry>{};
   final Map<String, String> _searchCache = <String, String>{};
@@ -60,10 +63,12 @@ class SakiPackStore {
     if (fromBundle != null && fromBundleExists == true) {
       candidates.add(fromBundle);
     }
-    final fromCacheBundle =
-        probeBundleAssetAbsolutePath('.saki_cache/game.sakipak');
-    final fromCacheBundleExists =
-        probeBundleAssetExists('.saki_cache/game.sakipak');
+    final fromCacheBundle = probeBundleAssetAbsolutePath(
+      '.saki_cache/game.sakipak',
+    );
+    final fromCacheBundleExists = probeBundleAssetExists(
+      '.saki_cache/game.sakipak',
+    );
     if (fromCacheBundle != null && fromCacheBundleExists == true) {
       candidates.add(fromCacheBundle);
     }
@@ -86,6 +91,34 @@ class SakiPackStore {
       }
     }
     if (packFile != null && packPath != null && await packFile.exists()) {
+      if (await SakiNativeRuntime.ensureInitialized()) {
+        try {
+          final catalog = await openSakiPack(path: packPath);
+          _packPath = packPath;
+          _nativePackHandle = catalog.handle;
+          for (final entry in catalog.entries) {
+            _entryMap[entry.path] = _PackEntry(
+              path: entry.path,
+              offset: entry.offset.toInt(),
+              length: entry.length.toInt(),
+              text: entry.text,
+              sha256: entry.sha256,
+            );
+          }
+          _available = true;
+          print(
+            '[SAKI_NATIVE][PACK] opened=${catalog.entries.length} '
+            'path=${catalog.path}',
+          );
+          return true;
+        } catch (error, stackTrace) {
+          print(
+            '[SAKI_NATIVE][PACK] native open failed; '
+            'Dart fallback enabled: $error',
+          );
+          print(stackTrace);
+        }
+      }
       try {
         final raf = await packFile.open(mode: FileMode.read);
         try {
@@ -267,6 +300,15 @@ class SakiPackStore {
       }
       return Uint8List.sublistView(bytes, start, end);
     }
+    final nativeHandle = _nativePackHandle;
+    if (nativeHandle != null) {
+      try {
+        return await readSakiPackEntry(handle: nativeHandle, path: entry.path);
+      } catch (error) {
+        print('[SAKI_NATIVE][PACK] read failed for ${entry.path}: $error');
+        return null;
+      }
+    }
     if (_packPath == null) {
       return null;
     }
@@ -313,11 +355,6 @@ class SakiPackStore {
   }
 
   Future<String?> _materializeFilePathUncached(String normalized) async {
-    final bytes = await loadBytes(normalized);
-    if (bytes == null) {
-      return null;
-    }
-
     final entry = _entryMap[normalized];
     if (entry == null) {
       return null;
@@ -326,9 +363,27 @@ class SakiPackStore {
     try {
       final tmpRoot = await _ensureMaterializeRoot();
       final suffix = p.extension(entry.path);
-      final digest =
-          base64Url.encode(utf8.encode(entry.path)).replaceAll('=', '');
+      final digest = base64Url
+          .encode(utf8.encode(entry.path))
+          .replaceAll('=', '');
       final outputPath = p.join(tmpRoot.path, '$digest$suffix');
+      final nativeHandle = _nativePackHandle;
+      if (nativeHandle != null) {
+        final materialized = await materializeSakiPackEntry(
+          handle: nativeHandle,
+          path: entry.path,
+          outputPath: outputPath,
+        );
+        if (materialized) {
+          _materializedFiles[normalized] = outputPath;
+          return outputPath;
+        }
+        return null;
+      }
+      final bytes = await loadBytes(normalized);
+      if (bytes == null) {
+        return null;
+      }
       final tempFile = File(
         '$outputPath.${DateTime.now().microsecondsSinceEpoch}.tmp',
       );
@@ -353,14 +408,17 @@ class SakiPackStore {
     }
 
     late final Future<Directory> rootCreation;
-    rootCreation = Directory.systemTemp.createTemp('saki_pack_').then((root) {
-      _materializeRoot = root;
-      return root;
-    }).whenComplete(() {
-      if (identical(_materializeRootFuture, rootCreation)) {
-        _materializeRootFuture = null;
-      }
-    });
+    rootCreation = Directory.systemTemp
+        .createTemp('saki_pack_')
+        .then((root) {
+          _materializeRoot = root;
+          return root;
+        })
+        .whenComplete(() {
+          if (identical(_materializeRootFuture, rootCreation)) {
+            _materializeRootFuture = null;
+          }
+        });
     _materializeRootFuture = rootCreation;
     return rootCreation;
   }
@@ -370,8 +428,9 @@ class SakiPackStore {
       return const <String>[];
     }
     final normalizedDir = _normalizePath(directory).replaceAll('\\', '/');
-    final prefix =
-        normalizedDir.endsWith('/') ? normalizedDir : '$normalizedDir/';
+    final prefix = normalizedDir.endsWith('/')
+        ? normalizedDir
+        : '$normalizedDir/';
     final lowerExt = extension.toLowerCase();
     final result = <String>[];
     final seen = <String>{};

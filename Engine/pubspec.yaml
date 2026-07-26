@@ -59,8 +59,8 @@ dependencies:
   just_audio: ^0.9.46
   just_audio_media_kit: ^2.1.0
   flutter_steamworks: ^0.0.4
-  saki_save_index:
-    path: packages/saki_save_index
+  saki_native:
+    path: packages/saki_native
 
 dev_dependencies:
   flutter_test:
