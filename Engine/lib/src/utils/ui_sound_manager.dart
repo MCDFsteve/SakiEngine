@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:just_audio/just_audio.dart';
@@ -23,6 +24,9 @@ class UISoundManager {
   final Random _random = Random();
   bool _initialized = false;
   bool _uiSoundsResolved = false;
+  Future<void>? _shutdownFuture;
+  final Set<Future<void>> _activePlaybackOperations = <Future<void>>{};
+  bool _isShuttingDown = false;
   final List<String> _hoverSounds = <String>[];
   String? _clickSound;
   String? _backSound;
@@ -84,23 +88,33 @@ class UISoundManager {
     }
   }
 
-  Future<void> playButtonHover() async {
-    await _playRandomSound(_hoverSounds, 'playButtonHover');
-  }
+  Future<void> playButtonHover() =>
+      _trackPlayback(() => _playRandomSound(_hoverSounds, 'playButtonHover'));
 
-  Future<void> playButtonClick() async {
-    await _playResolvedSound(() => _clickSound, 'playButtonClick');
-  }
+  Future<void> playButtonClick() => _trackPlayback(
+    () => _playResolvedSound(() => _clickSound, 'playButtonClick'),
+  );
 
-  Future<void> playButtonBack() async {
-    await _playResolvedSound(() => _backSound ?? _clickSound, 'playButtonBack');
-  }
+  Future<void> playButtonBack() => _trackPlayback(
+    () => _playResolvedSound(() => _backSound ?? _clickSound, 'playButtonBack'),
+  );
 
-  Future<void> playSettingAdjust() async {
-    await _playResolvedSound(
+  Future<void> playSettingAdjust() => _trackPlayback(
+    () => _playResolvedSound(
       () => _adjustSound ?? _clickSound,
       'playSettingAdjust',
-    );
+    ),
+  );
+
+  Future<void> _trackPlayback(Future<void> Function() createOperation) {
+    if (_isShuttingDown) {
+      return Future<void>.value();
+    }
+    final operation = createOperation();
+    _activePlaybackOperations.add(operation);
+    return operation.whenComplete(() {
+      _activePlaybackOperations.remove(operation);
+    });
   }
 
   Future<void> _playRandomSound(List<String> sounds, String debugLabel) async {
@@ -168,10 +182,20 @@ class UISoundManager {
     }
   }
 
-  void dispose() {
-    for (final AudioPlayer player in _players) {
-      player.dispose();
+  Future<void> shutdown() async {
+    final activeShutdown = _shutdownFuture;
+    if (activeShutdown != null) {
+      await activeShutdown;
+      return;
     }
+
+    _isShuttingDown = true;
+    final pendingOperations = List<Future<void>>.of(_activePlaybackOperations);
+    if (pendingOperations.isNotEmpty) {
+      await Future.wait<void>(pendingOperations, eagerError: false);
+    }
+
+    final players = List<AudioPlayer>.of(_players);
     _players.clear();
     _hoverSounds.clear();
     _clickSound = null;
@@ -179,6 +203,23 @@ class UISoundManager {
     _adjustSound = null;
     _uiSoundsResolved = false;
     _initialized = false;
+    final shutdown = Future.wait<void>(
+      players.map((player) async {
+        try {
+          await player.stop();
+        } catch (_) {}
+        try {
+          await player.dispose();
+        } catch (_) {}
+      }),
+      eagerError: false,
+    );
+    _shutdownFuture = shutdown;
+    await shutdown;
+  }
+
+  void dispose() {
+    unawaited(shutdown());
   }
 
   Future<void> _ensureReady() async {
@@ -207,7 +248,8 @@ class UISoundManager {
         } catch (e) {
           if (kEngineDebugMode) {
             print(
-                '[UISoundManager] listAssets failed: dir=$directory ext=$extension error=$e');
+              '[UISoundManager] listAssets failed: dir=$directory ext=$extension error=$e',
+            );
           }
         }
       }
@@ -219,7 +261,8 @@ class UISoundManager {
     }
 
     final hoverCandidates = _pickHoverCandidates(audioAssets);
-    final clickCandidate = _pickPreferredSound(audioAssets, const <String>[
+    final clickCandidate =
+        _pickPreferredSound(audioAssets, const <String>[
           'ui_click',
           'click',
           'confirm',
@@ -351,7 +394,7 @@ class UISoundManager {
     final String resolved = _normalizeBundleAssetPath(trimmed);
     final String? packPlaybackPath =
         await SakiPackStore.instance.resolvePathForPlayback(resolved) ??
-            await SakiPackStore.instance.resolvePathForPlayback(trimmed);
+        await SakiPackStore.instance.resolvePathForPlayback(trimmed);
     if (packPlaybackPath != null) {
       try {
         await player.setFilePath(packPlaybackPath);
@@ -359,7 +402,8 @@ class UISoundManager {
       } catch (e) {
         if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
           print(
-              '[UISoundManager] setFilePath(sakipack) failed: $packPlaybackPath, error=$e');
+            '[UISoundManager] setFilePath(sakipack) failed: $packPlaybackPath, error=$e',
+          );
         }
       }
     }
@@ -374,7 +418,8 @@ class UISoundManager {
       } catch (e) {
         if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
           print(
-              '[UISoundManager] setFilePath(bundle) failed: $bundlePath, error=$e');
+            '[UISoundManager] setFilePath(bundle) failed: $bundlePath, error=$e',
+          );
         }
       }
     }
@@ -387,7 +432,8 @@ class UISoundManager {
       } catch (e) {
         if (kEngineDebugMode && !_isExpectedInterruptionError(e)) {
           print(
-              '[UISoundManager] setFilePath(game) failed: $gamePath, error=$e');
+            '[UISoundManager] setFilePath(game) failed: $gamePath, error=$e',
+          );
         }
       }
     }

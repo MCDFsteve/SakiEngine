@@ -65,14 +65,14 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
   @override
   void initState() {
     super.initState();
-    // 每次进入存档界面时清除缓存，确保语言切换后对话预览使用最新脚本
-    SaveLoadManager.clearCache();
     _initializeSaveSlots();
     _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    _cachedSlots.clear();
+    _existingSlotIds = null;
     _totalPages.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -86,6 +86,15 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
   }
 
   Future<void> _initializeSaveSlots() async {
+    final openingStopwatch = Stopwatch()..start();
+    var waitingStage = 'request-save-headers';
+    final waitingHeartbeat = Timer.periodic(const Duration(seconds: 1), (_) {
+      print(
+        '[SAKI_SAVE][SCREEN] waiting mode=${widget.mode.name} '
+        'stage=$waitingStage elapsedMs=${openingStopwatch.elapsedMilliseconds}',
+      );
+    });
+    print('[SAKI_SAVE][SCREEN] open mode=${widget.mode.name}');
     if (mounted) {
       setState(() {
         _isInitializing = true;
@@ -96,9 +105,16 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
     try {
       // Rust 索引器一次扫描并解析列表所需的轻量字段，避免先扫文件名、
       // 再逐个完整反序列化同一批存档。
+      print('[SAKI_SAVE][SCREEN] list-request-start mode=${widget.mode.name}');
       final slots = await _saveLoadManager.listSaveSlots();
+      waitingStage = 'apply-save-headers';
+      print(
+        '[SAKI_SAVE][SCREEN] list-request-done mode=${widget.mode.name} '
+        'slots=${slots.length} elapsedMs=${openingStopwatch.elapsedMilliseconds}',
+      );
       if (!mounted) return;
 
+      final applyStopwatch = Stopwatch()..start();
       _cachedSlots.clear();
       for (final slot in slots) {
         _cachedSlots[slot.id] = slot;
@@ -112,9 +128,20 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
         initialPages = (maxSlotId / _slotsPerPage).ceil();
       }
       _totalPages.value = initialPages;
+      applyStopwatch.stop();
+      print(
+        '[SAKI_SAVE][SCREEN] index-ready '
+        'slots=${slots.length} applyMs='
+        '${applyStopwatch.elapsedMicroseconds / 1000.0} elapsedMs='
+        '${openingStopwatch.elapsedMicroseconds / 1000.0}',
+      );
     } catch (error) {
       if (!mounted) return;
       _initializationError = error;
+      print(
+        '[SAKI_SAVE][SCREEN] failed elapsedMs='
+        '${openingStopwatch.elapsedMicroseconds / 1000.0} error=$error',
+      );
       _notificationOverlayKey.currentState?.show(
         _localization.t(
           'saveLoad.notification.initFailed',
@@ -122,9 +149,19 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
         ),
       );
     } finally {
+      waitingHeartbeat.cancel();
       if (mounted) {
+        waitingStage = 'build-first-grid-frame';
         setState(() {
           _isInitializing = false;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          openingStopwatch.stop();
+          print(
+            '[SAKI_SAVE][SCREEN] first-grid-frame '
+            'slots=${_existingSlotIds?.length ?? 0} elapsedMs='
+            '${openingStopwatch.elapsedMicroseconds / 1000.0}',
+          );
         });
       }
     }
@@ -268,9 +305,13 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
     }
 
     if (widget.onLoadSlot != null) {
-      // 使用新的回调传递存档信息
-      widget.onLoadSlot!(fullSlot);
-      widget.onClose(); // 关闭对话框
+      // 先让存档网格及其缩略图、语义节点完整卸载，再创建游戏页面。
+      // 旧顺序会让读档页和游戏页在至少一个 frame 内重叠，并可能被
+      // 异步语义回调继续强引用，显著抬高峰值和返回菜单后的内存。
+      final onLoadSlot = widget.onLoadSlot!;
+      widget.onClose();
+      await WidgetsBinding.instance.endOfFrame;
+      onLoadSlot(fullSlot);
     } else if (widget.onLoadSuccess != null) {
       // 如果有读档成功回调，就调用它而不是直接导航
       widget.onLoadSuccess!();

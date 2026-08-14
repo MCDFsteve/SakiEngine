@@ -69,6 +69,10 @@ class MusicManager extends ChangeNotifier {
     'SAKI_AUDIO_VERBOSE_LOG',
     defaultValue: false,
   );
+  static const bool _memoryLifecycleDiagnostics = bool.fromEnvironment(
+    'SAKI_MEMORY_DIAG',
+    defaultValue: false,
+  );
 
   // 统一的音频轨道管理
   final Map<AudioTrackType, AudioPlayer> _trackPlayers = {
@@ -79,6 +83,13 @@ class MusicManager extends ChangeNotifier {
   // 音效可能需要多个播放器来支持重叠播放
   final List<AudioPlayer> _soundPlayers = [];
   int _soundPlayerIndex = 0;
+  bool _initialized = false;
+  Future<void>? _initializeFuture;
+  Future<void>? _soundPoolInitialization;
+  Future<void>? _gameAudioReleaseFuture;
+  Future<void>? _shutdownFuture;
+  int _audioSessionGeneration = 0;
+  static const int _overlappingSoundPlayerCount = 5;
 
   final _dataManager = UnifiedGameDataManager();
   String? _projectName;
@@ -116,6 +127,30 @@ class MusicManager extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    if (_initialized) {
+      await _updateTrackVolume(AudioTrackType.music);
+      await _updateTrackVolume(AudioTrackType.sound);
+      return;
+    }
+    final activeInitialization = _initializeFuture;
+    if (activeInitialization != null) {
+      await activeInitialization;
+      return;
+    }
+
+    final initialization = _initializeInternal();
+    _initializeFuture = initialization;
+    try {
+      await initialization;
+      _initialized = true;
+    } finally {
+      if (identical(_initializeFuture, initialization)) {
+        _initializeFuture = null;
+      }
+    }
+  }
+
+  Future<void> _initializeInternal() async {
     // 获取项目名称
     try {
       _projectName = await ProjectInfoManager().getAppName();
@@ -129,24 +164,54 @@ class MusicManager extends ChangeNotifier {
     // 设置音乐轨道为循环播放
     await _trackPlayers[AudioTrackType.music]!.setLoopMode(LoopMode.one);
     _attachPlayerDiagnostics(
-        _trackPlayers[AudioTrackType.music]!, 'music-main');
+      _trackPlayers[AudioTrackType.music]!,
+      'music-main',
+    );
 
     // 设置音效轨道为单次播放
     await _trackPlayers[AudioTrackType.sound]!.setLoopMode(LoopMode.off);
     _attachPlayerDiagnostics(
-        _trackPlayers[AudioTrackType.sound]!, 'sound-main');
+      _trackPlayers[AudioTrackType.sound]!,
+      'sound-main',
+    );
 
-    // 初始化多个音效播放器支持重叠播放
-    for (int i = 0; i < 5; i++) {
-      // 支持最多5个音效同时播放
-      final player = AudioPlayer();
-      await player.setLoopMode(LoopMode.off);
-      _soundPlayers.add(player);
-      _attachPlayerDiagnostics(player, 'sound-$i');
-    }
+    await _ensureSoundPlayerPool();
 
     await _updateTrackVolume(AudioTrackType.music);
     await _updateTrackVolume(AudioTrackType.sound);
+  }
+
+  Future<void> _ensureSoundPlayerPool() async {
+    if (_soundPlayers.isNotEmpty) {
+      return;
+    }
+    final activeInitialization = _soundPoolInitialization;
+    if (activeInitialization != null) {
+      await activeInitialization;
+      return;
+    }
+
+    final generation = _audioSessionGeneration;
+    final initialization = () async {
+      for (int i = 0; i < _overlappingSoundPlayerCount; i++) {
+        final player = AudioPlayer();
+        await player.setLoopMode(LoopMode.off);
+        if (generation != _audioSessionGeneration) {
+          await player.dispose();
+          return;
+        }
+        _soundPlayers.add(player);
+        _attachPlayerDiagnostics(player, 'sound-$i');
+      }
+    }();
+    _soundPoolInitialization = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (identical(_soundPoolInitialization, initialization)) {
+        _soundPoolInitialization = null;
+      }
+    }
   }
 
   void _attachPlayerDiagnostics(AudioPlayer player, String label) {
@@ -293,8 +358,9 @@ class MusicManager extends ChangeNotifier {
     _fadeCompleters[trackType] = completer;
 
     const steps = 20; // 分20步进行淡出
-    final stepDuration =
-        Duration(milliseconds: duration.inMilliseconds ~/ steps);
+    final stepDuration = Duration(
+      milliseconds: duration.inMilliseconds ~/ steps,
+    );
     final volumeStep = baseVolume / steps;
 
     int currentStep = 0;
@@ -361,8 +427,9 @@ class MusicManager extends ChangeNotifier {
     _fadeCompleters[trackType] = completer;
 
     const steps = 20; // 分20步进行淡入
-    final stepDuration =
-        Duration(milliseconds: duration.inMilliseconds ~/ steps);
+    final stepDuration = Duration(
+      milliseconds: duration.inMilliseconds ~/ steps,
+    );
     final volumeStep = baseVolume / steps;
 
     int currentStep = 0;
@@ -444,7 +511,8 @@ class MusicManager extends ChangeNotifier {
     } catch (e, stackTrace) {
       if (kEngineDebugMode) {
         print(
-            '[MusicManager] playAudio failed: track=${config.trackName}, assetPath=$assetPath, error=$e');
+          '[MusicManager] playAudio failed: track=${config.trackName}, assetPath=$assetPath, error=$e',
+        );
         print(stackTrace);
       }
     }
@@ -466,8 +534,7 @@ class MusicManager extends ChangeNotifier {
 
   /// 播放音乐的具体实现
   Future<void> _playMusic(
-    String assetPath,
-    {
+    String assetPath, {
     required bool fadeTransition,
     required Duration fadeDuration,
     required bool loop,
@@ -546,19 +613,18 @@ class MusicManager extends ChangeNotifier {
           _musicSourceLog('startNewMusic: stop current player then set source');
           await musicPlayer.stop();
           await musicPlayer.setLoopMode(loop ? LoopMode.one : LoopMode.off);
-          await _setPlayerSource(
-            musicPlayer,
-            assetPath,
-            sourceLabel: 'music',
-          );
+          await _setPlayerSource(musicPlayer, assetPath, sourceLabel: 'music');
           final playFuture = musicPlayer.play();
-          unawaited(playFuture.catchError((Object e, StackTrace stackTrace) {
-            if (kEngineDebugMode) {
-              print(
-                  '[MusicManager] music.play async failed: $assetPath, error=$e');
-              print(stackTrace);
-            }
-          }));
+          unawaited(
+            playFuture.catchError((Object e, StackTrace stackTrace) {
+              if (kEngineDebugMode) {
+                print(
+                  '[MusicManager] music.play async failed: $assetPath, error=$e',
+                );
+                print(stackTrace);
+              }
+            }),
+          );
           _audioVerboseLog(
             '_playMusic started (non-blocking): $assetPath, '
             'playing=${musicPlayer.playing}, state=${musicPlayer.processingState}',
@@ -566,14 +632,17 @@ class MusicManager extends ChangeNotifier {
         } catch (e, stackTrace) {
           if (kEngineDebugMode) {
             print(
-                '[MusicManager] _playMusic startNewMusic failed: $assetPath, error=$e');
+              '[MusicManager] _playMusic startNewMusic failed: $assetPath, error=$e',
+            );
             print(stackTrace);
           }
           rethrow;
         }
       }
 
-      _audioVerboseLog('_playMusic transition: old=$oldMusicPath -> new=$assetPath');
+      _audioVerboseLog(
+        '_playMusic transition: old=$oldMusicPath -> new=$assetPath',
+      );
       if (oldMusicPath != null && fadeTransition) {
         // 先淡出旧音乐
         await _fadeOut(
@@ -583,8 +652,9 @@ class MusicManager extends ChangeNotifier {
             await startNewMusic();
             await _fadeIn(
               AudioTrackType.music,
-              duration:
-                  Duration(milliseconds: fadeDuration.inMilliseconds ~/ 2),
+              duration: Duration(
+                milliseconds: fadeDuration.inMilliseconds ~/ 2,
+              ),
             );
           },
         );
@@ -613,11 +683,19 @@ class MusicManager extends ChangeNotifier {
     required Duration fadeDuration,
     required bool loop,
   }) async {
+    final activeRelease = _gameAudioReleaseFuture;
+    if (activeRelease != null) {
+      await activeRelease;
+    }
     if (!_dataManager.isSoundEnabled) {
       _currentSound = assetPath;
       return;
     }
 
+    if (config.canOverlap) {
+      await _ensureSoundPlayerPool();
+    }
+    final sessionGeneration = _audioSessionGeneration;
     _currentSound = assetPath;
 
     // 对于音效，如果允许重叠，使用额外的播放器
@@ -633,11 +711,10 @@ class MusicManager extends ChangeNotifier {
 
     await player.stop();
     await player.setLoopMode(loop ? LoopMode.one : LoopMode.off);
-    await _setPlayerSource(
-      player,
-      assetPath,
-      sourceLabel: 'sound',
-    );
+    await _setPlayerSource(player, assetPath, sourceLabel: 'sound');
+    if (sessionGeneration != _audioSessionGeneration) {
+      return;
+    }
     await player.play();
 
     if (fadeTransition) {
@@ -714,7 +791,9 @@ class MusicManager extends ChangeNotifier {
         try {
           await player.setFilePath(packPlaybackPath);
           if (traceMusic) {
-            _musicSourceLog('setFilePath(sakipack) success: "$packPlaybackPath"');
+            _musicSourceLog(
+              'setFilePath(sakipack) success: "$packPlaybackPath"',
+            );
           }
           return;
         } catch (packError, packStackTrace) {
@@ -725,7 +804,8 @@ class MusicManager extends ChangeNotifier {
           }
           if (kEngineDebugMode) {
             print(
-                '[MusicManager] setFilePath(sakipack) failed: path=$packPlaybackPath, error=$packError');
+              '[MusicManager] setFilePath(sakipack) failed: path=$packPlaybackPath, error=$packError',
+            );
             print(packStackTrace);
           }
         }
@@ -762,7 +842,8 @@ class MusicManager extends ChangeNotifier {
           }
           if (kEngineDebugMode) {
             print(
-                '[MusicManager] bundle absolute setFilePath failed: path=$absoluteBundlePath, error=$bundleFileError');
+              '[MusicManager] bundle absolute setFilePath failed: path=$absoluteBundlePath, error=$bundleFileError',
+            );
             print(bundleFileStackTrace);
           }
         }
@@ -776,7 +857,9 @@ class MusicManager extends ChangeNotifier {
       }
       if (fallbackFilePath != null) {
         if (traceMusic) {
-          _musicSourceLog('try setFilePath(primary fallback): "$fallbackFilePath"');
+          _musicSourceLog(
+            'try setFilePath(primary fallback): "$fallbackFilePath"',
+          );
         }
         _audioVerboseLog(
           'try setFilePath first via SAKI_GAME_PATH: $fallbackFilePath',
@@ -797,7 +880,8 @@ class MusicManager extends ChangeNotifier {
           }
           if (kEngineDebugMode) {
             print(
-                '[MusicManager] setFilePath primary failed, fallback to setAsset: path=$fallbackFilePath, error=$fileError');
+              '[MusicManager] setFilePath primary failed, fallback to setAsset: path=$fallbackFilePath, error=$fileError',
+            );
             print(fileStackTrace);
           }
         }
@@ -818,7 +902,8 @@ class MusicManager extends ChangeNotifier {
         if (fallbackFilePath != null) {
           if (kEngineDebugMode) {
             print(
-                '[MusicManager] setAsset failed, fallback to file path: $fallbackFilePath, error=$assetError');
+              '[MusicManager] setAsset failed, fallback to file path: $fallbackFilePath, error=$assetError',
+            );
           }
           try {
             if (traceMusic) {
@@ -841,14 +926,16 @@ class MusicManager extends ChangeNotifier {
             }
             if (kEngineDebugMode) {
               print(
-                  '[MusicManager] fallback setFilePath failed: path=$fallbackFilePath, error=$fallbackError');
+                '[MusicManager] fallback setFilePath failed: path=$fallbackFilePath, error=$fallbackError',
+              );
               print(fallbackStackTrace);
             }
           }
         }
         if (kEngineDebugMode) {
           print(
-              '[MusicManager] setAsset failed without usable fallback: resolved=$resolved, error=$assetError');
+            '[MusicManager] setAsset failed without usable fallback: resolved=$resolved, error=$assetError',
+          );
           print(assetStackTrace);
         }
         rethrow;
@@ -861,7 +948,8 @@ class MusicManager extends ChangeNotifier {
       }
       if (kEngineDebugMode) {
         print(
-            '[MusicManager] _setPlayerSource failed: input=$assetPath, trimmed=$trimmed, error=$e');
+          '[MusicManager] _setPlayerSource failed: input=$assetPath, trimmed=$trimmed, error=$e',
+        );
         print(stackTrace);
       }
       rethrow;
@@ -880,7 +968,8 @@ class MusicManager extends ChangeNotifier {
   }
 
   Future<String?> _resolveGameAssetFallbackPath(
-      String resolvedAssetPath) async {
+    String resolvedAssetPath,
+  ) async {
     if (!GamePathResolver.shouldUseFileSystemAssets) {
       return null;
     }
@@ -1076,8 +1165,10 @@ class MusicManager extends ChangeNotifier {
       if (_dataManager.isMusicEnabled && _currentBackgroundMusic != null) {
         await _trackPlayers[AudioTrackType.music]!.play();
         // 恢复播放时淡入
-        await _fadeIn(AudioTrackType.music,
-            duration: const Duration(milliseconds: 500));
+        await _fadeIn(
+          AudioTrackType.music,
+          duration: const Duration(milliseconds: 500),
+        );
       }
     } catch (e) {
       if (kEngineDebugMode) {
@@ -1097,20 +1188,113 @@ class MusicManager extends ChangeNotifier {
     );
   }
 
+  /// 返回主菜单时释放本局剧情使用过的 mpv 音效核心和解码源。
+  ///
+  /// 主音乐播放器继续保留给菜单音乐复用；音效主轨与重叠播放器按需重建，
+  /// 从而让已经启动的 mpv worker/demux 线程和其缓冲真正退出。
+  Future<void> releaseGameAudioResources() async {
+    final activeRelease = _gameAudioReleaseFuture;
+    if (activeRelease != null) {
+      await activeRelease;
+      return;
+    }
+
+    final release = _releaseGameAudioResourcesInternal();
+    _gameAudioReleaseFuture = release;
+    try {
+      await release;
+    } finally {
+      if (identical(_gameAudioReleaseFuture, release)) {
+        _gameAudioReleaseFuture = null;
+      }
+    }
+  }
+
+  Future<void> _releaseGameAudioResourcesInternal() async {
+    _audioSessionGeneration++;
+    _cancelTrackFade(AudioTrackType.sound);
+    _currentSound = null;
+    _soundPlayerIndex = 0;
+
+    final previousMainSound = _trackPlayers[AudioTrackType.sound]!;
+    final previousPool = List<AudioPlayer>.of(_soundPlayers);
+    _soundPlayers.clear();
+
+    final replacementMainSound = AudioPlayer();
+    await replacementMainSound.setLoopMode(LoopMode.off);
+    _attachPlayerDiagnostics(replacementMainSound, 'sound-main');
+    _trackPlayers[AudioTrackType.sound] = replacementMainSound;
+    await _updateTrackVolume(AudioTrackType.sound);
+
+    final playersToRelease = <AudioPlayer>[previousMainSound, ...previousPool];
+    if (_memoryLifecycleDiagnostics) {
+      print(
+        '[SAKI_MEMORY][AUDIO] releasing '
+        '${playersToRelease.length} gameplay sound players',
+      );
+    }
+    await Future.wait<void>(
+      playersToRelease.map((player) async {
+        try {
+          await player.stop();
+        } catch (_) {}
+        try {
+          await player.dispose();
+        } catch (_) {}
+      }),
+      eagerError: false,
+    );
+    if (_memoryLifecycleDiagnostics) {
+      print('[SAKI_MEMORY][AUDIO] gameplay sound players released');
+    }
+  }
+
+  /// 在 Flutter/Dart 运行时销毁前等待所有 mpv 后台线程退出。
+  Future<void> shutdown() async {
+    final activeShutdown = _shutdownFuture;
+    if (activeShutdown != null) {
+      await activeShutdown;
+      return;
+    }
+
+    final shutdown = _shutdownInternal();
+    _shutdownFuture = shutdown;
+    await shutdown;
+  }
+
+  Future<void> _shutdownInternal() async {
+    _audioSessionGeneration++;
+    _initialized = false;
+    _queuedMusicRequest = null;
+    _cancelAllFades();
+
+    final players = <AudioPlayer>[
+      ..._trackPlayers.values,
+      ..._soundPlayers,
+    ];
+    _trackPlayers.clear();
+    _soundPlayers.clear();
+    _currentBackgroundMusic = null;
+    _currentSound = null;
+
+    await Future.wait<void>(
+      players.map((player) async {
+        try {
+          await player.stop();
+        } catch (_) {}
+        try {
+          await player.dispose();
+        } catch (_) {}
+      }),
+      eagerError: false,
+    );
+    // 给 media_kit 的事件端口一个事件循环周期来完成注销。
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+
   @override
   void dispose() {
-    _cancelAllFades(); // 取消任何正在进行的淡化
-
-    // 释放主轨道播放器
-    for (final player in _trackPlayers.values) {
-      player.dispose();
-    }
-
-    // 释放音效播放器
-    for (final player in _soundPlayers) {
-      player.dispose();
-    }
-
+    unawaited(shutdown());
     super.dispose();
   }
 }

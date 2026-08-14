@@ -147,10 +147,11 @@ Future<void> _openShowcaseResourceDirectoryIfNeeded() async {
       opened = await _startDetachedProcess('open', <String>[path]);
     } else if (Platform.isWindows) {
       opened = await _startDetachedProcess(
-        'explorer',
-        <String>[path],
-        runInShell: true,
-      );
+          'explorer',
+          <String>[
+            path,
+          ],
+          runInShell: true);
     } else if (Platform.isLinux) {
       opened = await _startDetachedProcess('xdg-open', <String>[path]);
       if (!opened) {
@@ -217,12 +218,7 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
     }
 
     _isClosingWindow = true;
-    try {
-      await PlatformWindowManager.setPreventClose(false);
-      await PlatformWindowManager.close();
-    } catch (_) {
-      SystemNavigator.pop();
-    }
+    await ExitConfirmationDialog.closeApplication();
   }
 
   Future<bool> _showExitConfirmation() async {
@@ -264,12 +260,8 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
 
     _menuWarmupModule = gameModule;
     _menuWarmupExtraPages = <Widget>[
-      gameModule.createSettingsScreen(
-        onClose: () {},
-      ),
-      gameModule.createAboutScreen(
-        onClose: () {},
-      ),
+      gameModule.createSettingsScreen(onClose: () {}),
+      gameModule.createAboutScreen(onClose: () {}),
     ];
     _menuWarmupPageIndex = 0;
   }
@@ -312,15 +304,9 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
       });
     }
 
-    final warmupPages = <Widget>[
-      mainMenuScreen,
-      ...warmupExtraPages,
-    ];
+    final warmupPages = <Widget>[mainMenuScreen, ...warmupExtraPages];
     final index = _menuWarmupPageIndex.clamp(0, warmupPages.length - 1);
-    return IndexedStack(
-      index: index,
-      children: warmupPages,
-    );
+    return IndexedStack(index: index, children: warmupPages);
   }
 
   Future<void> _startMenuWarmupSequence() async {
@@ -344,10 +330,7 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
 
     try {
       final lastIndex = warmupExtraPages.length;
-      final warmupOrder = <int>[
-        for (int i = 0; i <= lastIndex; i++) i,
-        0,
-      ];
+      final warmupOrder = <int>[for (int i = 0; i <= lastIndex; i++) i, 0];
 
       for (final pageIndex in warmupOrder) {
         if (!mounted || _currentState != AppState.mainMenu) {
@@ -425,9 +408,7 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
       builder: (builderContext, snapshot) {
         if (!snapshot.hasData) {
           return const Scaffold(
-            body: Center(
-              child: ColoredBox(color: Color.fromARGB(0, 0, 0, 0)),
-            ),
+            body: Center(child: ColoredBox(color: Color.fromARGB(0, 0, 0, 0))),
           );
         }
 
@@ -512,8 +493,9 @@ Future<void> runSakiEngine({
         final steamworksManager = SteamworksManager.instance;
         if (steamworksManager.isSupportedPlatform) {
           final steamOptions = SteamworksInitOptions(appId: steamAppId);
-          final steamInitialized =
-              await steamworksManager.initialize(options: steamOptions);
+          final steamInitialized = await steamworksManager.initialize(
+            options: steamOptions,
+          );
           debugPrint('Seamworks: 游戏Appid：${steamOptions.appId}');
           if (!steamInitialized && kEngineDebugMode) {
             debugPrint('Steamworks 初始化未成功，可能需要用户先启动 Steam 客户端。');
@@ -637,9 +619,7 @@ class _SakiEngineAppState extends State<SakiEngineApp> {
                   GlobalCupertinoLocalizations.delegate,
                 ],
                 home: const Scaffold(
-                  body: Center(
-                    child: ColoredBox(color: Colors.black),
-                  ),
+                  body: Center(child: ColoredBox(color: Colors.black)),
                 ),
               );
             }
@@ -725,12 +705,7 @@ class _StartupMaskWrapperState extends State<StartupMaskWrapper>
     _fadeAnimation = Tween<double>(
       begin: 1.0,
       end: 0.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _fadeController,
-        curve: Curves.easeOut,
-      ),
-    );
+    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeOut));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startMaskAndPrewarm();
@@ -776,9 +751,7 @@ class _StartupMaskWrapperState extends State<StartupMaskWrapper>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        GameContainer(
-          onMenuWarmupFinished: _onMenuWarmupFinished,
-        ),
+        GameContainer(onMenuWarmupFinished: _onMenuWarmupFinished),
         AnimatedBuilder(
           animation: SettingsManager(),
           builder: (context, child) {
@@ -794,7 +767,8 @@ class _StartupMaskWrapperState extends State<StartupMaskWrapper>
             if (!_prewarmingComplete || _fadeAnimation.value > 0) {
               return Material(
                 color: Colors.black.withOpacity(
-                    _prewarmingComplete ? _fadeAnimation.value : 1.0),
+                  _prewarmingComplete ? _fadeAnimation.value : 1.0,
+                ),
                 child: const SizedBox(
                   width: double.infinity,
                   height: double.infinity,

@@ -37,8 +37,10 @@ class GamePathResolver {
       return runtimePath!.trim();
     }
 
-    const fromDefine =
-        String.fromEnvironment('SAKI_GAME_PATH', defaultValue: '');
+    const fromDefine = String.fromEnvironment(
+      'SAKI_GAME_PATH',
+      defaultValue: '',
+    );
     if (fromDefine.isNotEmpty) {
       return fromDefine;
     }
@@ -74,6 +76,15 @@ class GamePathResolver {
     addCandidate(_basenameSafe(const String.fromEnvironment('SAKI_GAME_PATH')));
     addCandidate(_basenameSafe(_readEnvironment('SAKI_GAME_PATH')));
 
+    // Explicit runtime configuration always has higher priority than discovery.
+    // Returning here avoids probing the filesystem and loading bundled assets
+    // every time a cold subsystem (for example the save browser) asks for the
+    // project-specific data directory.
+    if (candidates.isNotEmpty) {
+      _cachedProjectName = candidates.first;
+      return _cachedProjectName;
+    }
+
     final localDefault = await _resolveLocalDefaultGameName();
     addCandidate(localDefault);
 
@@ -106,8 +117,9 @@ class GamePathResolver {
       projectCandidates.add(projectName!);
     }
 
-    final showcasePackagedPath =
-        await _resolveShowcasePackagedGamePath(projectCandidates);
+    final showcasePackagedPath = await _resolveShowcasePackagedGamePath(
+      projectCandidates,
+    );
     if (showcasePackagedPath != null) {
       _cachedGamePath = showcasePackagedPath;
       if (_isNotEmpty(_cachedProjectName) == false) {
@@ -225,9 +237,7 @@ class GamePathResolver {
       addCandidate(p.join(seedDir, 'Game', project));
       addCandidate(p.join(seedDir, project));
       addCandidate(p.join(seedDir, 'Resources', 'Game', project));
-      addCandidate(
-        p.join(seedDir, 'Contents', 'Resources', 'Game', project),
-      );
+      addCandidate(p.join(seedDir, 'Contents', 'Resources', 'Game', project));
     }
 
     for (final candidate in candidatePaths) {
@@ -247,8 +257,10 @@ class GamePathResolver {
     }
 
     for (final discoveryRoot in discoveryRoots) {
-      final discovered =
-          await _findGameRootInDirectory(discoveryRoot, projectCandidates);
+      final discovered = await _findGameRootInDirectory(
+        discoveryRoot,
+        projectCandidates,
+      );
       if (discovered != null) {
         return discovered;
       }
@@ -274,8 +286,9 @@ class GamePathResolver {
     }
 
     for (final project in projectCandidates) {
-      final candidate =
-          await _normalizeGameRoot(p.join(directoryPath, project));
+      final candidate = await _normalizeGameRoot(
+        p.join(directoryPath, project),
+      );
       if (candidate != null) {
         return candidate;
       }
@@ -451,10 +464,7 @@ class GamePathResolver {
   }
 
   static Future<String?> _resolveBundledDefaultGameName() async {
-    final candidates = <String>[
-      'assets/default_game.txt',
-      'default_game.txt',
-    ];
+    final candidates = <String>['assets/default_game.txt', 'default_game.txt'];
     for (final assetPath in candidates) {
       try {
         final content = (await EngineAssetLoader.loadString(assetPath)).trim();

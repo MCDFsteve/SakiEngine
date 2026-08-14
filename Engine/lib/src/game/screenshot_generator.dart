@@ -11,7 +11,7 @@ import 'package:sakiengine/src/config/config_models.dart';
 /// 可选启用实时游戏画面捕获（含UI）作为优先来源。
 class ScreenshotGenerator {
   static const double targetWidth = 640.0;
-  static const double targetHeight = 360.0;  // 16:9 比例
+  static const double targetHeight = 360.0; // 16:9 比例
   static bool _captureGameUiInSaveThumbnail = false;
   static Future<Uint8List?> Function()? _liveGameViewCaptureProvider;
   static Object? _liveGameViewCaptureOwner;
@@ -43,7 +43,8 @@ class ScreenshotGenerator {
   }
 
   static Future<Uint8List?> _tryCaptureLiveGameView() async {
-    if (!_captureGameUiInSaveThumbnail || _liveGameViewCaptureProvider == null) {
+    if (!_captureGameUiInSaveThumbnail ||
+        _liveGameViewCaptureProvider == null) {
       return null;
     }
 
@@ -64,7 +65,7 @@ class ScreenshotGenerator {
   /// 生成当前游戏状态的截图数据
   /// 返回WebP格式的截图字节数据，如果失败返回null
   static Future<Uint8List?> generateScreenshotData(
-    GameState gameState, 
+    GameState gameState,
     Map<String, PoseConfig> poseConfigs,
   ) async {
     try {
@@ -75,44 +76,71 @@ class ScreenshotGenerator {
 
       // 创建画布
       final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, targetWidth, targetHeight));
+      final canvas = Canvas(
+        recorder,
+        const Rect.fromLTWH(0, 0, targetWidth, targetHeight),
+      );
       const canvasSize = Size(targetWidth, targetHeight);
-      
+
       // 使用统一的渲染器绘制背景
-      await GameRenderer.drawBackground(canvas, gameState.background, canvasSize);
-      
+      await GameRenderer.drawBackground(
+        canvas,
+        gameState.background,
+        canvasSize,
+      );
+
       // 如果有CG角色，优先渲染CG角色（铺满屏幕，类似背景）
       if (gameState.cgCharacters.isNotEmpty) {
-        await GameRenderer.drawCgCharacters(canvas, gameState.cgCharacters, poseConfigs, canvasSize);
+        await GameRenderer.drawCgCharacters(
+          canvas,
+          gameState.cgCharacters,
+          poseConfigs,
+          canvasSize,
+        );
       } else {
         // 没有CG时才绘制普通角色
-        await GameRenderer.drawCharacters(canvas, gameState.characters, poseConfigs, canvasSize);
+        await GameRenderer.drawCharacters(
+          canvas,
+          gameState.characters,
+          poseConfigs,
+          canvasSize,
+        );
       }
-      
+
       // 完成绘制
       final picture = recorder.endRecording();
-      final image = await picture.toImage(targetWidth.toInt(), targetHeight.toInt());
-      
-      // 尝试使用WebP格式，如果不支持则使用PNG
-      ui.ImageByteFormat format;
       try {
-        // 先尝试WebP格式
-        final webpData = await image.toByteData(format: ui.ImageByteFormat.png);
-        if (webpData != null) {
-          // Flutter的ImageByteFormat没有直接的WebP支持，我们使用PNG
-          // PNG提供了较好的压缩率，虽然不如WebP，但兼容性更好
-          format = ui.ImageByteFormat.png;
-        } else {
-          format = ui.ImageByteFormat.png;
+        final image = await picture.toImage(
+          targetWidth.toInt(),
+          targetHeight.toInt(),
+        );
+        try {
+          // 尝试使用WebP格式，如果不支持则使用PNG
+          ui.ImageByteFormat format;
+          try {
+            // Flutter的ImageByteFormat没有直接的WebP支持，当前使用PNG。
+            final pngData = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            if (pngData != null) {
+              format = ui.ImageByteFormat.png;
+            } else {
+              format = ui.ImageByteFormat.png;
+            }
+          } catch (e) {
+            format = ui.ImageByteFormat.png;
+          }
+
+          final byteData = await image.toByteData(format: format);
+          if (byteData == null) return null;
+
+          return byteData.buffer.asUint8List();
+        } finally {
+          image.dispose();
         }
-      } catch (e) {
-        format = ui.ImageByteFormat.png;
+      } finally {
+        picture.dispose();
       }
-      
-      final byteData = await image.toByteData(format: format);
-      if (byteData == null) return null;
-      
-      return byteData.buffer.asUint8List();
     } catch (e) {
       print('生成截图失败: $e');
       return null;

@@ -14,6 +14,10 @@ class WebPPreloadCache {
   static final WebPPreloadCache _instance = WebPPreloadCache._internal();
   factory WebPPreloadCache() => _instance;
   WebPPreloadCache._internal();
+  static const bool _memoryLifecycleDiagnostics = bool.fromEnvironment(
+    'SAKI_MEMORY_DIAG',
+    defaultValue: false,
+  );
 
   final LinkedHashMap<String, _WebPCacheEntry> _entries = LinkedHashMap();
   final Map<String, Duration> _durationCache = {};
@@ -24,9 +28,14 @@ class WebPPreloadCache {
   );
   static const int _maxDecodedBytes =
       int.fromEnvironment('SAKI_WEBP_CACHE_MB', defaultValue: 128) *
-      1024 *
-      1024;
+          1024 *
+          1024;
+  static const int _maxSingleAssetDecodedBytes =
+      int.fromEnvironment('SAKI_WEBP_CACHE_ASSET_MB', defaultValue: 64) *
+          1024 *
+          1024;
   int _decodedBytes = 0;
+  int _cacheGeneration = 0;
 
   Future<void> preloadWebP(String assetName) async {
     if (_entries.containsKey(assetName) ||
@@ -36,6 +45,7 @@ class WebPPreloadCache {
 
     final completer = Completer<void>();
     _loadingCompleters[assetName] = completer;
+    final generation = _cacheGeneration;
 
     try {
       final assetPath = await AssetManager().findAsset(assetName);
@@ -60,23 +70,55 @@ class WebPPreloadCache {
 
       final codec = await ui.instantiateImageCodec(bytes);
       final frameCount = codec.frameCount;
+      final frames = <ui.Image>[];
+      var cacheOwnsFrames = false;
+      try {
+        final firstFrame = await codec.getNextFrame();
+        frames.add(firstFrame.image);
+        var totalDuration = firstFrame.duration;
+        final estimatedAssetBytes =
+            firstFrame.image.width * firstFrame.image.height * 4 * frameCount;
 
-      if (frameCount > 1) {
-        final frames = <ui.Image>[];
-        Duration totalDuration = Duration.zero;
+        // 大型动画应由显示控件按需持有，不能在进入游戏时把所有帧
+        // 永久塞进全局缓存。以 1920x1080 为例，26 帧约 206 MiB。
+        if (estimatedAssetBytes > _maxSingleAssetDecodedBytes ||
+            estimatedAssetBytes > _maxDecodedBytes ||
+            generation != _cacheGeneration) {
+          if (_memoryLifecycleDiagnostics &&
+              generation == _cacheGeneration) {
+            print(
+              '[SAKI_MEMORY][WEBP] skip oversized preload '
+              'asset=$assetName frames=$frameCount '
+              'decodedEstimate=${estimatedAssetBytes}B',
+            );
+          }
+          return;
+        }
 
-        for (int i = 0; i < frameCount; i++) {
+        for (int i = 1; i < frameCount; i++) {
+          if (generation != _cacheGeneration) {
+            return;
+          }
           final frame = await codec.getNextFrame();
           frames.add(frame.image);
           totalDuration += frame.duration;
         }
 
-        _store(assetName, frames, totalDuration);
-      } else {
-        final frame = await codec.getNextFrame();
-        _store(assetName, [frame.image], const Duration(milliseconds: 100));
+        if (generation != _cacheGeneration) {
+          return;
+        }
+        _store(
+          assetName,
+          frames,
+          frameCount > 1 ? totalDuration : const Duration(milliseconds: 100),
+        );
+        cacheOwnsFrames = true;
+      } finally {
+        codec.dispose();
+        if (!cacheOwnsFrames) {
+          _disposeFrames(frames);
+        }
       }
-      codec.dispose();
 
       completer.complete();
     } catch (e) {
@@ -85,6 +127,9 @@ class WebPPreloadCache {
       }
       completer.completeError(e);
     } finally {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
       _loadingCompleters.remove(assetName);
     }
   }
@@ -122,6 +167,7 @@ class WebPPreloadCache {
       }
       _durationCache.remove(assetName);
     } else {
+      _cacheGeneration++;
       for (final entry in _entries.values) {
         _disposeEntry(entry);
       }
@@ -145,10 +191,11 @@ class WebPPreloadCache {
   }
 
   Map<String, int> get stats => {
-    'assets': _entries.length,
-    'decodedBytes': _decodedBytes,
-    'maxDecodedBytes': _maxDecodedBytes,
-  };
+        'assets': _entries.length,
+        'decodedBytes': _decodedBytes,
+        'maxDecodedBytes': _maxDecodedBytes,
+        'maxSingleAssetDecodedBytes': _maxSingleAssetDecodedBytes,
+      };
 
   _WebPCacheEntry? _touch(String assetName) {
     final entry = _entries.remove(assetName);
@@ -267,10 +314,10 @@ class WebPFrameLease {
 
 class _WebPCacheEntry {
   _WebPCacheEntry(this.frames, this.duration)
-    : decodedBytes = frames.fold<int>(
-        0,
-        (sum, image) => sum + image.width * image.height * 4,
-      );
+      : decodedBytes = frames.fold<int>(
+          0,
+          (sum, image) => sum + image.width * image.height * 4,
+        );
 
   final List<ui.Image> frames;
   final Duration duration;

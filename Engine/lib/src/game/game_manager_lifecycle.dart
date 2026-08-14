@@ -2,12 +2,14 @@ part of 'game_manager.dart';
 
 extension _GameManagerLifecycle on GameManager {
   Future<void> _loadConfigs() async {
-    final charactersContent = await AssetManager()
-        .loadString('assets/GameScript/configs/characters.sks');
+    final charactersContent = await AssetManager().loadString(
+      'assets/GameScript/configs/characters.sks',
+    );
     _characterConfigs = ConfigParser().parseCharacters(charactersContent);
 
-    final posesContent =
-        await AssetManager().loadString('assets/GameScript/configs/poses.sks');
+    final posesContent = await AssetManager().loadString(
+      'assets/GameScript/configs/poses.sks',
+    );
     _poseConfigs = ConfigParser().parsePoses(posesContent);
 
     // 初始化差分偏移管理器
@@ -42,15 +44,6 @@ extension _GameManagerLifecycle on GameManager {
     // 启动CG预热管理器
     CgPreWarmManager().start();
 
-    // 预加载anime资源（同步执行，确保能看到错误）
-    try {
-      await _analyzeAndPreloadAnimeResources();
-    } catch (e) {
-      if (kEngineDebugMode) {
-        ////print('[GameManager] 预加载anime资源失败: $e');
-      }
-    }
-
     _currentState = GameState.initial();
     _dialogueHistory = [];
     _activeNvlContext = _NvlContextMode.none;
@@ -64,6 +57,15 @@ extension _GameManagerLifecycle on GameManager {
       }
     }
 
+    // 只预加载实际起始位置附近的短动画。
+    try {
+      await _analyzeAndPreloadAnimeResources();
+    } catch (e) {
+      if (kEngineDebugMode) {
+        ////print('[GameManager] 预加载anime资源失败: $e');
+      }
+    }
+
     // 检查初始位置的音乐区间
     await _checkMusicRegionAtCurrentIndex(forceCheck: true);
 
@@ -71,8 +73,10 @@ extension _GameManagerLifecycle on GameManager {
   }
 
   Future<void> _restoreFromSnapshotLifecycle(
-      String scriptName, GameStateSnapshot snapshot,
-      {bool shouldReExecute = true}) async {
+    String scriptName,
+    GameStateSnapshot snapshot, {
+    bool shouldReExecute = true,
+  }) async {
     //print('📚 restoreFromSnapshot: scriptName = $scriptName');
     //print('📚 restoreFromSnapshot: snapshot.scriptIndex = ${snapshot.scriptIndex}');
     //print('📚 restoreFromSnapshot: isNvlMode = ${snapshot.isNvlMode}');
@@ -84,6 +88,7 @@ extension _GameManagerLifecycle on GameManager {
     _script = await _scriptMerger.getMergedScript();
     _buildLabelIndexMap();
     _buildMusicRegions(); // 构建音乐区间
+    _cgPreAnalyzer.initialize();
 
     //print('📚 加载合并脚本后: _script.children.length = ${_script.children.length}');
 
@@ -365,7 +370,8 @@ extension _GameManagerLifecycle on GameManager {
             );
             if (kEngineDebugMode) {
               print(
-                  '[GameManager] HotReload: narration replay detected, rollback characters from previous dialogue snapshot.');
+                '[GameManager] HotReload: narration replay detected, rollback characters from previous dialogue snapshot.',
+              );
             }
           } else {
             // 历史不足时兜底：尝试移除旧的说话人立绘。
@@ -385,7 +391,8 @@ extension _GameManagerLifecycle on GameManager {
               rollbackCharacters = fallbackCharacters;
               if (kEngineDebugMode) {
                 print(
-                    '[GameManager] HotReload: narration replay fallback, removed previous speaker render key=$speakerRenderKey.');
+                  '[GameManager] HotReload: narration replay fallback, removed previous speaker render key=$speakerRenderKey.',
+                );
               }
             }
           }

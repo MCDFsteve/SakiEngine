@@ -6,6 +6,7 @@
 import 'api/assets.dart';
 import 'api/history_codec.dart';
 import 'api/images.dart';
+import 'api/memory.dart';
 import 'api/read_state.dart';
 import 'api/runtime_index.dart';
 import 'api/save_codec.dart';

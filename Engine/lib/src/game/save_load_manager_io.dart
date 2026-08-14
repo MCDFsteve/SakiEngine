@@ -31,6 +31,12 @@ class SaveLoadManager {
   static Future<Map<String, CharacterConfig>>? _characterConfigsLoadFuture;
   static bool _nativeSaveIndexUnavailable = false;
   static bool _nativeSaveCodecLogged = false;
+  static String? _cachedApplicationDocumentsPath;
+  static Future<String>? _applicationDocumentsPathFuture;
+  static final Map<String, String> _cachedSavesDirectories = <String, String>{};
+  static List<SaveSlot>? _cachedManualSaveHeaders;
+  static Future<List<SaveSlot>>? _manualSaveHeadersFuture;
+  static int _manualSaveHeadersGeneration = 0;
 
   static Future<void> _ensureScriptLoaded() async {
     if (_cachedScript != null) {
@@ -156,6 +162,13 @@ class SaveLoadManager {
     _cachedCharacterConfigs = null;
     _scriptLoadFuture = null;
     _characterConfigsLoadFuture = null;
+    _invalidateManualSaveHeaders();
+  }
+
+  static void _invalidateManualSaveHeaders() {
+    _manualSaveHeadersGeneration++;
+    _cachedManualSaveHeaders = null;
+    _manualSaveHeadersFuture = null;
   }
 
   // 获取当前游戏项目名称
@@ -174,16 +187,78 @@ class SaveLoadManager {
     return 'DefaultProject';
   }
 
+  static Future<String> _getApplicationDocumentsPath() async {
+    final cached = _cachedApplicationDocumentsPath;
+    if (cached != null) {
+      return cached;
+    }
+
+    final activeResolution = _applicationDocumentsPathFuture;
+    if (activeResolution != null) {
+      return activeResolution;
+    }
+
+    final stopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][DIR] documents-resolve-start');
+    final resolution = () async {
+      final directory = await getApplicationDocumentsDirectory();
+      return directory.path;
+    }();
+    _applicationDocumentsPathFuture = resolution;
+    try {
+      final path = await resolution;
+      _cachedApplicationDocumentsPath = path;
+      stopwatch.stop();
+      print(
+        '[SAKI_SAVE][DIR] documents-resolve-done '
+        'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0}',
+      );
+      return path;
+    } finally {
+      if (identical(_applicationDocumentsPathFuture, resolution)) {
+        _applicationDocumentsPathFuture = null;
+      }
+    }
+  }
+
   Future<String> getSavesDirectory() async {
-    final directory = await getApplicationDocumentsDirectory();
+    final requestStopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][DIR] request-start');
+    final projectStopwatch = Stopwatch()..start();
     final projectName = await _getCurrentProjectName();
-    final savesDir = Directory(
-      '${directory.path}/SakiEngine/Saves/$projectName',
+    projectStopwatch.stop();
+    print(
+      '[SAKI_SAVE][DIR] project-resolve-done project=$projectName '
+      'elapsedMs=${projectStopwatch.elapsedMicroseconds / 1000.0}',
     );
+    final cached = _cachedSavesDirectories[projectName];
+    if (cached != null) {
+      requestStopwatch.stop();
+      print(
+        '[SAKI_SAVE][DIR] cache-hit project=$projectName '
+        'totalMs=${requestStopwatch.elapsedMicroseconds / 1000.0}',
+      );
+      return cached;
+    }
+
+    print('[SAKI_SAVE][DIR] documents-request-start project=$projectName');
+    final documentsPath = await _getApplicationDocumentsPath();
+    print('[SAKI_SAVE][DIR] documents-request-done project=$projectName');
+    final savesDir = Directory('$documentsPath/SakiEngine/Saves/$projectName');
+    final existsStopwatch = Stopwatch()..start();
     if (!await savesDir.exists()) {
       await savesDir.create(recursive: true);
     }
-    return savesDir.path;
+    existsStopwatch.stop();
+    final path = savesDir.path;
+    _cachedSavesDirectories[projectName] = path;
+    requestStopwatch.stop();
+    print(
+      '[SAKI_SAVE][DIR] cache-store project=$projectName path=$path '
+      'existsMs=${existsStopwatch.elapsedMicroseconds / 1000.0} '
+      'totalMs=${requestStopwatch.elapsedMicroseconds / 1000.0}',
+    );
+    return path;
   }
 
   String _quickSaveFileName(String? namespace) {
@@ -242,6 +317,7 @@ class SaveLoadManager {
 
     final binaryData = saveSlot.toBinary();
     await writeBinaryFileAtomically(file, binaryData);
+    _invalidateManualSaveHeaders();
   }
 
   /// 快速存档功能
@@ -399,26 +475,90 @@ class SaveLoadManager {
   }
 
   Future<SaveSlot?> loadGame(int slotId) async {
+    final stopwatch = Stopwatch()..start();
     try {
       final directory = await getSavesDirectory();
       final file = File('$directory/save_$slotId.sakisav');
       if (await file.exists()) {
-        return await _readSaveSlotFile(file);
+        final slot = await _readSaveSlotFile(file);
+        stopwatch.stop();
+        final bytes = await file.length();
+        print(
+          '[SAKI_SAVE][LOAD] slot=$slotId bytes=$bytes '
+          'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0} '
+          'success=${slot != null}',
+        );
+        return slot;
       }
     } catch (e) {
       print('Error loading game from slot $slotId: $e');
     }
+    stopwatch.stop();
+    print(
+      '[SAKI_SAVE][LOAD] slot=$slotId elapsedMs='
+      '${stopwatch.elapsedMicroseconds / 1000.0} success=false',
+    );
     return null;
   }
 
   Future<List<SaveSlot>> listSaveSlots() async {
+    final cached = _cachedManualSaveHeaders;
+    if (cached != null) {
+      print('[SAKI_SAVE][LIST] backend=memory slots=${cached.length}');
+      return List<SaveSlot>.of(cached);
+    }
+
+    final activeLoad = _manualSaveHeadersFuture;
+    if (activeLoad != null) {
+      print('[SAKI_SAVE][LIST] backend=in-flight');
+      return List<SaveSlot>.of(await activeLoad);
+    }
+
+    print(
+      '[SAKI_SAVE][LIST] cache-miss generation=$_manualSaveHeadersGeneration',
+    );
+    final generation = _manualSaveHeadersGeneration;
+    final load = _listSaveSlotsUncached();
+    _manualSaveHeadersFuture = load;
+    try {
+      final slots = await load;
+      if (_manualSaveHeadersGeneration == generation) {
+        _cachedManualSaveHeaders = List<SaveSlot>.unmodifiable(slots);
+      }
+      return List<SaveSlot>.of(slots);
+    } finally {
+      if (identical(_manualSaveHeadersFuture, load)) {
+        _manualSaveHeadersFuture = null;
+      }
+    }
+  }
+
+  Future<List<SaveSlot>> _listSaveSlotsUncached() async {
+    final totalStopwatch = Stopwatch()..start();
+    final directoryStopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][LIST] directory-start');
     final directory = await getSavesDirectory();
+    directoryStopwatch.stop();
+    print(
+      '[SAKI_SAVE][LIST] directory-done '
+      'elapsedMs=${directoryStopwatch.elapsedMicroseconds / 1000.0}',
+    );
     final nativeSlots = await _tryListSaveSlotsWithNativeIndex(directory);
     if (nativeSlots != null) {
+      totalStopwatch.stop();
+      print(
+        '[SAKI_SAVE][LIST] backend=rust slots=${nativeSlots.length} '
+        'directoryMs=${directoryStopwatch.elapsedMicroseconds / 1000.0} '
+        'totalMs=${totalStopwatch.elapsedMicroseconds / 1000.0}',
+      );
       return nativeSlots;
     }
 
     final files = await Directory(directory).list().toList();
+    print(
+      '[SAKI_SAVE][LIST] dart-fallback-enumerated files=${files.length} '
+      'elapsedMs=${totalStopwatch.elapsedMilliseconds}',
+    );
     //print('DEBUG: 找到 ${files.length} 个文件');
 
     final saveSlots = <SaveSlot>[];
@@ -432,7 +572,19 @@ class SaveLoadManager {
           ).hasMatch(p.basename(fileEntity.path))) {
         //print('DEBUG: 尝试读取存档文件: ${fileEntity.path}');
         try {
+          final fileStopwatch = Stopwatch()..start();
+          print(
+            '[SAKI_SAVE][LIST] dart-file-start '
+            'file=${p.basename(fileEntity.path)}',
+          );
           final saveSlot = await _readSaveSlotFile(fileEntity);
+          fileStopwatch.stop();
+          print(
+            '[SAKI_SAVE][LIST] dart-file-done '
+            'file=${p.basename(fileEntity.path)} '
+            'success=${saveSlot != null} '
+            'elapsedMs=${fileStopwatch.elapsedMicroseconds / 1000.0}',
+          );
           if (saveSlot == null) {
             continue;
           }
@@ -451,6 +603,13 @@ class SaveLoadManager {
 
     //print('DEBUG: 最终解析出 ${saveSlots.length} 个有效存档');
     saveSlots.sort((a, b) => a.id.compareTo(b.id));
+    totalStopwatch.stop();
+    print(
+      '[SAKI_SAVE][LIST] backend=dart slots=${saveSlots.length} '
+      'files=${files.length} '
+      'directoryMs=${directoryStopwatch.elapsedMicroseconds / 1000.0} '
+      'totalMs=${totalStopwatch.elapsedMicroseconds / 1000.0}',
+    );
     return saveSlots;
   }
 
@@ -494,40 +653,72 @@ class SaveLoadManager {
     int startSlotId = 1,
     int endSlotId = 0x7fffffff,
   }) async {
-    if (_nativeSaveIndexUnavailable ||
-        !await SakiNativeRuntime.ensureInitialized()) {
+    if (_nativeSaveIndexUnavailable) {
+      print('[SAKI_SAVE][INDEX] skip reason=previously-unavailable');
       return null;
     }
 
-    final stopwatch = Stopwatch()..start();
+    final totalStopwatch = Stopwatch()..start();
+    final initStopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][INDEX] native-init-start');
+    final nativeAvailable = await SakiNativeRuntime.ensureInitialized();
+    initStopwatch.stop();
+    print(
+      '[SAKI_SAVE][INDEX] native-init-done available=$nativeAvailable '
+      'elapsedMs=${initStopwatch.elapsedMicroseconds / 1000.0}',
+    );
+    if (!nativeAvailable) {
+      return null;
+    }
+
     try {
+      final scanStopwatch = Stopwatch()..start();
+      print(
+        '[SAKI_SAVE][INDEX] rust-scan-start '
+        'range=$startSlotId..$endSlotId',
+      );
       final result = await scanSaveHeaders(
         directory: directory,
         startSlotId: startSlotId,
         endSlotId: endSlotId,
       );
+      scanStopwatch.stop();
+      print(
+        '[SAKI_SAVE][INDEX] rust-scan-return '
+        'slots=${result.slots.length} '
+        'nativeMs=${result.elapsedMicros.toDouble() / 1000.0} '
+        'awaitMs=${scanStopwatch.elapsedMicroseconds / 1000.0}',
+      );
       if (result.invalidFiles.isNotEmpty) {
-        throw FormatException(
-          'Rust save index could not parse ${result.invalidFiles.length} '
-          'save file(s): ${result.invalidFiles.first}',
-        );
-      }
-      final slots = result.slots.map(_saveSlotFromNativeHeader).toList();
-      stopwatch.stop();
-
-      if (kEngineDebugMode) {
         print(
-          '[SAVE_INDEX][Rust] slots=${slots.length} '
-          'native=${result.elapsedMicros.toDouble() / 1000.0}ms '
-          'total=${stopwatch.elapsedMicroseconds / 1000.0}ms '
-          'invalid=${result.invalidFiles.length}',
+          '[SAKI_SAVE][INDEX] ignored-invalid='
+          '${result.invalidFiles.length} first=${result.invalidFiles.first}',
         );
       }
+      final conversionStopwatch = Stopwatch()..start();
+      print('[SAKI_SAVE][INDEX] bridge-convert-start');
+      final slots = result.slots.map(_saveSlotFromNativeHeader).toList();
+      conversionStopwatch.stop();
+      totalStopwatch.stop();
+      print(
+        '[SAKI_SAVE][INDEX] bridge-convert-done '
+        'elapsedMs=${conversionStopwatch.elapsedMicroseconds / 1000.0}',
+      );
+
+      print(
+        '[SAKI_SAVE][INDEX] backend=rust slots=${slots.length} '
+        'nativeMs=${result.elapsedMicros.toDouble() / 1000.0} '
+        'totalMs=${totalStopwatch.elapsedMicroseconds / 1000.0} '
+        'invalid=${result.invalidFiles.length}',
+      );
       return slots;
     } catch (error, stackTrace) {
       _nativeSaveIndexUnavailable = true;
+      print(
+        '[SAKI_SAVE][INDEX] backend=rust unavailable; '
+        'using Dart fallback: $error',
+      );
       if (kEngineDebugMode) {
-        print('[SAVE_INDEX][Rust] unavailable, using Dart fallback: $error');
         print(stackTrace);
       }
       return null;
@@ -586,11 +777,15 @@ class SaveLoadManager {
     }
 
     RandomAccessFile? file;
+    final stopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][THUMBNAIL] start slot=${slot.id} bytes=$length');
+    var success = false;
     try {
       file = await File(path).open();
       await file.setPosition(offset);
       final data = await file.read(length);
-      return data.length == length ? data : null;
+      success = data.length == length;
+      return success ? data : null;
     } catch (error) {
       if (kEngineDebugMode) {
         print(
@@ -600,6 +795,12 @@ class SaveLoadManager {
       return null;
     } finally {
       await file?.close();
+      stopwatch.stop();
+      print(
+        '[SAKI_SAVE][THUMBNAIL] done slot=${slot.id} '
+        'bytes=$length success=$success '
+        'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0}',
+      );
     }
   }
 
@@ -656,6 +857,7 @@ class SaveLoadManager {
     final file = File('$directory/save_$slotId.sakisav');
     if (await file.exists()) {
       await file.delete();
+      _invalidateManualSaveHeaders();
     }
   }
 
@@ -694,6 +896,7 @@ class SaveLoadManager {
       final binaryData = updatedSaveSlot.toBinary();
       await writeBinaryFileAtomically(toFile, binaryData);
       await fromFile.delete();
+      _invalidateManualSaveHeaders();
 
       return true;
     } catch (e) {
@@ -758,6 +961,7 @@ class SaveLoadManager {
         await writeBinaryFileAtomically(file1, binaryData);
       }
 
+      _invalidateManualSaveHeaders();
       return true;
     } catch (e) {
       print('Error swapping saves between slot $slotId1 and $slotId2: $e');
@@ -784,6 +988,7 @@ class SaveLoadManager {
       final file = File('$directory/save_$slotId.sakisav');
       final binaryData = updatedSlot.toBinary();
       await writeBinaryFileAtomically(file, binaryData);
+      _invalidateManualSaveHeaders();
       return true;
     } catch (e) {
       print('Error toggling lock for slot $slotId: $e');

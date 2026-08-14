@@ -6,6 +6,7 @@
 import 'api/assets.dart';
 import 'api/history_codec.dart';
 import 'api/images.dart';
+import 'api/memory.dart';
 import 'api/read_state.dart';
 import 'api/runtime_index.dart';
 import 'api/save_codec.dart';
@@ -70,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -649551285;
+  int get rustContentHash => 1619407852;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -145,6 +146,8 @@ abstract class RustLibApi extends BaseApi {
     required Int64List stableHashes,
     required List<int> legacyHashes,
   });
+
+  BigInt crateApiMemoryReleaseUnusedNativeMemory();
 
   RustMenuSeekResult crateApiRuntimeIndexRuntimeSeekMenu({
     required BigInt handle,
@@ -731,6 +734,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  BigInt crateApiMemoryReleaseUnusedNativeMemory() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMemoryReleaseUnusedNativeMemoryConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMemoryReleaseUnusedNativeMemoryConstMeta =>
+      const TaskConstMeta(
+        debugName: "release_unused_native_memory",
+        argNames: [],
+      );
+
+  @override
   RustMenuSeekResult crateApiRuntimeIndexRuntimeSeekMenu({
     required BigInt handle,
     required int startIndex,
@@ -745,7 +773,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_32(startIndex, serializer);
           sse_encode_Map_String_bool_None(boolVariables, serializer);
           sse_encode_u_32(maxSteps, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_rust_menu_seek_result,
@@ -776,7 +804,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -810,7 +838,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -845,7 +873,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 23,
             port: port_,
           );
         },

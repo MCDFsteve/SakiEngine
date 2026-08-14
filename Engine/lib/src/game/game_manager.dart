@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/config/config_models.dart';
 import 'package:sakiengine/src/config/config_parser.dart';
@@ -38,6 +39,7 @@ import 'package:sakiengine/src/utils/history_snapshot_codec.dart';
 import 'package:sakiengine/src/game/nvl_state_manager.dart';
 import 'package:sakiengine/src/game/chapter_autosave_manager.dart';
 import 'package:sakiengine/src/game/script_sound_state_resolver.dart';
+import 'package:sakiengine/src/native/native_memory_pressure.dart';
 
 part 'game_manager_lifecycle.dart';
 
@@ -162,6 +164,13 @@ typedef ScriptApiExecutor =
     });
 
 class GameManager {
+  static int _latestResourceSessionId = 0;
+  static const int _trimmedGpuResourceCacheBytes = 8 * 1024 * 1024;
+  static const int _steadyGpuResourceCacheBytes = 64 * 1024 * 1024;
+  static const bool _memoryLifecycleDiagnostics = bool.fromEnvironment(
+    'SAKI_MEMORY_DIAG',
+    defaultValue: false,
+  );
   static const bool _musicRegionVerboseLogs = bool.fromEnvironment(
     'SAKI_MUSIC_REGION_LOG',
     defaultValue: false,
@@ -210,6 +219,8 @@ class GameManager {
   );
   static const Duration _dissCgTransitionDuration = Duration(milliseconds: 800);
   bool _disableRuntimeSideEffectsForTesting = false;
+  bool _disposed = false;
+  late final int _resourceSessionId;
   _NvlContextMode _activeNvlContext = _NvlContextMode.none;
   bool _showNvlOverlayOnNextDialogue = false;
   final Set<String> _activeLoopingSounds = <String>{};
@@ -866,14 +877,22 @@ class GameManager {
   Future<void> _analyzeAndPreloadAnimeResources() async {
     final animeResources = <String>{};
 
-    // 遍历整个脚本，收集所有anime命令
-    for (int i = 0; i < _script.children.length; i++) {
+    // 只查看当前位置附近。旧实现会在每次进入游戏时解码整部作品中的
+    // 所有非循环 WebP；一个 1920x1080、26 帧动画本身就约 206 MiB。
+    const lookAheadNodes = 240;
+    const maxPreloadedAnimeAssets = 2;
+    final start = _scriptIndex.clamp(0, _script.children.length);
+    final end = (start + lookAheadNodes).clamp(0, _script.children.length);
+    for (int i = start; i < end; i++) {
       final node = _script.children[i];
       // Looping overlays are decoded by Flutter's streaming image codec.
       // Pre-decoding every frame here would make long ambient animations
       // (for example, a full-screen smoke loop) consume several GB of RAM.
       if (node is AnimeNode && !node.loop) {
         animeResources.add(node.animeName);
+        if (animeResources.length >= maxPreloadedAnimeAssets) {
+          break;
+        }
       }
     }
 
@@ -1593,6 +1612,7 @@ class GameManager {
   }) : defaultSceneTransitionType = defaultSceneTransitionType.trim().isEmpty
            ? 'fade'
            : defaultSceneTransitionType.trim() {
+    _resourceSessionId = ++_latestResourceSessionId;
     _currentState = GameState.initial(); // 提前初始化，避免late变量访问错误
     _activeLanguage = LocalizationManager().currentLanguage;
     _languageListener = _handleLanguageChange;
@@ -2381,6 +2401,11 @@ class GameManager {
         isSkipping: _isFastForwardMode,
       );
 
+      // 分段预取附近的短动画，避免进入游戏时扫描和解码整部作品。
+      if (_scriptIndex % 120 == 0) {
+        unawaited(_analyzeAndPreloadAnimeResources());
+      }
+
       // 智能预测器：每10个节点更新一次预热范围
       if (_scriptIndex % 10 == 0) {
         // 获取当前标签
@@ -2853,6 +2878,7 @@ class GameManager {
               pose: newPose,
               expression: newExpression,
               gpuEntry: gpuEntry,
+              prepareFlattenedImage: true,
             );
           } else {
             final compositePath = await CgImageCompositor()
@@ -5293,6 +5319,11 @@ class GameManager {
   }
 
   void dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    final ownsGlobalResources = _resourceSessionId == _latestResourceSessionId;
     LocalizationManager().removeListener(_languageListener);
     _currentTimer?.cancel(); // 取消活跃的计时器
     _currentTimerCompletion = null;
@@ -5300,9 +5331,12 @@ class GameManager {
 
     // 清理CG预分析器
     _cgPreAnalyzer.dispose();
+    _smartPredictor.clearPrediction();
 
     // 停止CG预热管理器
-    CgPreWarmManager().stop();
+    if (ownsGlobalResources) {
+      CgPreWarmManager().stop();
+    }
 
     // 清理所有活跃的角色动画控制器
     for (final controller in _activeCharacterAnimations.values) {
@@ -5311,8 +5345,77 @@ class GameManager {
     }
     _activeCharacterAnimations.clear();
 
-    stopAllSounds(); // 停止所有音效
+    _activeLoopingSounds.clear();
+    if (ownsGlobalResources) {
+      if (_memoryLifecycleDiagnostics) {
+        print(
+          '[SAKI_MEMORY][SESSION] dispose begin '
+          'gpu=${GpuImageCompositor().getCacheStats()} '
+          'webp=${WebPPreloadCache().stats}',
+        );
+      }
+      unawaited(MusicManager().releaseGameAudioResources());
+    }
+
+    // 等当前游戏画面的最后一帧退出后释放纹理，避免 ui.Image 仍在绘制
+    // 时被销毁。合成器会让已开始但尚未结束的旧预热任务失效。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_resourceSessionId != _latestResourceSessionId) {
+        return;
+      }
+      CompositeCgRenderer.clearCache();
+      CharacterCompositeCache.instance.clear();
+      WebPPreloadCache().clearCache();
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
+      if (_memoryLifecycleDiagnostics) {
+        print(
+          '[SAKI_MEMORY][SESSION] dispose complete '
+          'gpu=${GpuImageCompositor().getCacheStats()} '
+          'webp=${WebPPreloadCache().stats}',
+        );
+      }
+      unawaited(_releaseUnusedSessionMemory());
+    });
     _gameStateController.close();
+  }
+
+  Future<void> _releaseUnusedSessionMemory() async {
+    var gpuTrimRequested = false;
+    try {
+      await SystemChannels.skia.invokeMethod<void>(
+        'Skia.setResourceCacheMaxBytes',
+        _trimmedGpuResourceCacheBytes,
+      );
+      gpuTrimRequested = true;
+    } catch (_) {
+      // Impeller and non-Skia embedders may not expose this service extension.
+    }
+
+    // Let texture deletion and the menu's first replacement frame reach the
+    // raster thread before asking malloc to release its now-unused pages.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final nativeReleasedBytes = await releaseUnusedNativeMemory();
+
+    if (gpuTrimRequested) {
+      try {
+        await SystemChannels.skia.invokeMethod<void>(
+          'Skia.setResourceCacheMaxBytes',
+          _steadyGpuResourceCacheBytes,
+        );
+      } catch (_) {
+        // The cache is already trimmed; failure to restore its limit is safe.
+      }
+    }
+
+    if (_memoryLifecycleDiagnostics) {
+      print(
+        '[SAKI_MEMORY][TRIM] '
+        'gpuRequested=$gpuTrimRequested '
+        'nativeReleasedBytes=$nativeReleasedBytes',
+      );
+    }
   }
 
   // 全局变量管理方法

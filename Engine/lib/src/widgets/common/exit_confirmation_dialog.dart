@@ -1,13 +1,28 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
+import 'package:sakiengine/src/utils/music_manager.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
+import 'package:sakiengine/src/utils/ui_sound_manager.dart';
 import 'package:sakiengine/src/widgets/confirm_dialog.dart';
 
 import '../../utils/platform_window_manager_io.dart'
     if (dart.library.html) '../../utils/platform_window_manager_web.dart';
 
 class ExitConfirmationDialog {
+  static Future<void> closeApplication() async {
+    try {
+      await Future.wait<void>([
+        MusicManager().shutdown(),
+        UISoundManager().shutdown(),
+      ]);
+      await PlatformWindowManager.setPreventClose(false);
+      await PlatformWindowManager.close();
+    } catch (_) {
+      SystemNavigator.pop();
+    }
+  }
+
   static Future<bool> showExitConfirmation(
     BuildContext context, {
     bool hasProgress = true,
@@ -48,12 +63,7 @@ class ExitConfirmationDialog {
     );
 
     if (shouldExit == true) {
-      try {
-        await PlatformWindowManager.setPreventClose(false);
-        await PlatformWindowManager.close();
-      } catch (_) {
-        SystemNavigator.pop();
-      }
+      await closeApplication();
     }
   }
 }

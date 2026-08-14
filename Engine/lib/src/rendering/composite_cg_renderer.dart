@@ -99,14 +99,22 @@ class CompositeCgRenderer {
   // 预加载完成的图像缓存（仅保留少量以支持首帧渐变）
   static final LinkedHashMap<String, ui.Image> _preloadedImages =
       LinkedHashMap();
-  static const int _maxPreloadedImages = 4;
+  static const int _maxPreloadedImages = 2;
+  static const int _maxPreloadedImageBytes =
+      int.fromEnvironment('SAKI_CG_FLATTENED_CACHE_MB', defaultValue: 24) *
+          1024 *
+          1024;
 
   // GPU 纹理缓存与状态
   static final Map<String, Future<GpuCompositeEntry?>> _gpuFutureCache = {};
   static final LinkedHashMap<String, GpuCompositeResult> _gpuResultCache =
       LinkedHashMap();
   static final Set<String> _gpuPreloadedKeys = <String>{};
-  static const int _maxGpuResultEntries = 12;
+  static const int _maxGpuResultEntries = 8;
+  static const int _maxGpuResultBytes =
+      int.fromEnvironment('SAKI_CG_GPU_CACHE_MB', defaultValue: 96) *
+          1024 *
+          1024;
   static final Map<String, String> _currentDisplayedGpuKeys = {};
 
   static final Map<String, Future<ui.Image?>> _gpuFlattenTasks = {};
@@ -195,6 +203,7 @@ class CompositeCgRenderer {
     required String expression,
     String? compositePath,
     GpuCompositeEntry? gpuEntry,
+    bool prepareFlattenedImage = false,
   }) async {
     final cacheKey = '${resourceId}_${pose}_${expression}';
 
@@ -206,7 +215,9 @@ class CompositeCgRenderer {
       _completedPaths[cacheKey] = virtualPath;
       _futureCache[cacheKey] = Future.value(virtualPath);
 
-      if (!kIsWeb) {
+      // 预测性预热只保留可直接绘制的分层纹理。全分辨率扁平图会让
+      // 每个 1920x1080 CG 再增加约 8 MiB，只在真正即将显示时生成。
+      if (!kIsWeb && prepareFlattenedImage) {
         final flattenTask = _gpuFlattenTasks[cacheKey] ??=
             _flattenGpuResultToImage(gpuEntry.result);
         final flattenedImage = await flattenTask;
@@ -607,7 +618,12 @@ class CompositeCgRenderer {
   }
 
   static void _evictPreloadedImages() {
-    if (_preloadedImages.length <= _maxPreloadedImages) {
+    var decodedBytes = _preloadedImages.values.fold<int>(
+      0,
+      (total, image) => total + image.width * image.height * 4,
+    );
+    if (_preloadedImages.length <= _maxPreloadedImages &&
+        decodedBytes <= _maxPreloadedImageBytes) {
       return;
     }
 
@@ -615,13 +631,18 @@ class CompositeCgRenderer {
     final keysToRemove = <String>[];
     for (final key in _preloadedImages.keys) {
       if (_preloadedImages.length - keysToRemove.length <=
-          _maxPreloadedImages) {
+              _maxPreloadedImages &&
+          decodedBytes <= _maxPreloadedImageBytes) {
         break;
       }
       if (protected.contains(key)) {
         continue;
       }
       keysToRemove.add(key);
+      final image = _preloadedImages[key];
+      if (image != null) {
+        decodedBytes -= image.width * image.height * 4;
+      }
     }
 
     if (keysToRemove.isEmpty) {
@@ -680,7 +701,12 @@ class CompositeCgRenderer {
   }
 
   static void _enforceGpuCacheLimit() {
-    if (_gpuResultCache.length <= _maxGpuResultEntries) {
+    var decodedBytes = _gpuResultCache.values.fold<int>(
+      0,
+      (total, result) => total + result.estimatedDecodedBytes,
+    );
+    if (_gpuResultCache.length <= _maxGpuResultEntries &&
+        decodedBytes <= _maxGpuResultBytes) {
       return;
     }
 
@@ -688,13 +714,15 @@ class CompositeCgRenderer {
     final keysToRemove = <String>[];
     for (final key in _gpuResultCache.keys) {
       if (_gpuResultCache.length - keysToRemove.length <=
-          _maxGpuResultEntries) {
+              _maxGpuResultEntries &&
+          decodedBytes <= _maxGpuResultBytes) {
         break;
       }
       if (protectedKeys.contains(key)) {
         continue;
       }
       keysToRemove.add(key);
+      decodedBytes -= _gpuResultCache[key]?.estimatedDecodedBytes ?? 0;
     }
 
     if (keysToRemove.isEmpty) {
@@ -702,14 +730,25 @@ class CompositeCgRenderer {
     }
 
     for (final key in keysToRemove) {
-      final removed = _gpuResultCache.remove(key);
-      if (removed != null) {
-        _gpuPreloadedKeys.remove(key);
-        try {
-          removed.dispose();
-        } catch (_) {}
-      }
+      _evictGpuCacheKey(key);
     }
+  }
+
+  static void _evictGpuCacheKey(String key) {
+    final removed = _gpuResultCache.remove(key);
+    if (removed == null) {
+      return;
+    }
+    _gpuPreloadedKeys.remove(key);
+    _gpuFutureCache.remove(key);
+    _gpuFlattenTasks.remove(key);
+    _futureCache.remove(key);
+    _completedPaths.remove(key);
+    final preloaded = _preloadedImages.remove(key);
+    try {
+      preloaded?.dispose();
+    } catch (_) {}
+    _gpuCompositor.removeEntry(key);
   }
 
   static Set<String> _collectActiveGpuKeys() {
@@ -830,11 +869,6 @@ class CompositeCgRenderer {
     _preDisplayedCgs.clear();
     _currentDisplayedImages.clear();
     _gpuFutureCache.clear();
-    for (final result in _gpuResultCache.values) {
-      try {
-        result.dispose();
-      } catch (_) {}
-    }
     _gpuResultCache.clear();
     _gpuPreloadedKeys.clear();
     _currentDisplayedGpuKeys.clear();
@@ -846,6 +880,9 @@ class CompositeCgRenderer {
       } catch (_) {}
     }
     _preloadedImages.clear();
+    // GpuImageCompositor 是分层纹理的唯一所有者；统一从这里释放，
+    // 避免渲染器与合成器分别 dispose 同一个 ui.Image。
+    unawaited(_gpuCompositor.clearCache());
 
     // 重置预热标志，允许重新预热
     _preWarmingStarted = false;
@@ -2427,11 +2464,7 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
 
     try {
       // 尝试从预合成缓存获取
-      final image = await _getCompositeImage(
-        resourceId,
-        pose,
-        expression,
-      );
+      final image = await _getCompositeImage(resourceId, pose, expression);
 
       if (!mounted) return;
       if (requestToken != _loadRequestToken) {

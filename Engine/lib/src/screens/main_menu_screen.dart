@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
@@ -50,13 +52,15 @@ class _HoverButtonState extends State<_HoverButton> {
           decoration: BoxDecoration(
             color: _isHovered
                 ? HSLColor.fromColor(widget.config.themeColors.background)
-                    .withLightness((HSLColor.fromColor(
-                                    widget.config.themeColors.background)
-                                .lightness -
-                            0.1)
-                        .clamp(0.0, 1.0))
-                    .toColor()
-                    .withOpacity(0.9)
+                      .withLightness(
+                        (HSLColor.fromColor(
+                                  widget.config.themeColors.background,
+                                ).lightness -
+                                0.1)
+                            .clamp(0.0, 1.0),
+                      )
+                      .toColor()
+                      .withOpacity(0.9)
                 : widget.config.themeColors.background.withOpacity(0.9),
             border: Border.all(
               color: widget.config.themeColors.primary.withOpacity(0.5),
@@ -116,6 +120,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     _loadAppTitle();
     _checkQuickSave(); // 新增：检查快速存档
     _loadGameModule();
+    unawaited(_prewarmSaveHeaders());
   }
 
   void _handleLocalizationChanged() {
@@ -163,6 +168,25 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       }
     } catch (e) {
       // 忽略错误
+    }
+  }
+
+  Future<void> _prewarmSaveHeaders() async {
+    final stopwatch = Stopwatch()..start();
+    print('[SAKI_SAVE][PREWARM] start');
+    try {
+      final slots = await SaveLoadManager().listSaveSlots();
+      stopwatch.stop();
+      print(
+        '[SAKI_SAVE][PREWARM] done slots=${slots.length} '
+        'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0}',
+      );
+    } catch (error) {
+      stopwatch.stop();
+      print(
+        '[SAKI_SAVE][PREWARM] failed '
+        'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0} error=$error',
+      );
     }
   }
 
@@ -321,10 +345,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           return Column(
             children: [
               if (index > 0) SizedBox(height: layoutConfig.spacing),
-              ConfigurableMenuButton(
-                config: buttonConfig,
-                scale: scale,
-              ),
+              ConfigurableMenuButton(config: buttonConfig, scale: scale),
             ],
           );
         }).toList(),
@@ -339,10 +360,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           return Row(
             children: [
               if (index > 0) SizedBox(width: layoutConfig.spacing),
-              ConfigurableMenuButton(
-                config: buttonConfig,
-                scale: scale,
-              ),
+              ConfigurableMenuButton(config: buttonConfig, scale: scale),
             ],
           );
         }).toList(),

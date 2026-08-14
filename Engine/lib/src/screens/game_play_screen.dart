@@ -32,6 +32,7 @@ import 'package:sakiengine/src/widgets/common/notification_overlay.dart';
 import 'package:sakiengine/src/widgets/nvl_screen.dart';
 import 'package:sakiengine/src/utils/scaling_manager.dart';
 import 'package:sakiengine/src/widgets/common/black_screen_transition.dart';
+import 'package:sakiengine/src/widgets/common/bottom_up_reveal.dart';
 import 'package:sakiengine/src/widgets/settings_screen.dart';
 import 'package:sakiengine/src/utils/dialogue_progression_manager.dart';
 import 'package:sakiengine/src/utils/smart_asset_image.dart';
@@ -69,23 +70,17 @@ import 'package:sakiengine/src/utils/music_manager.dart';
 
 part 'game_play_screen_interactions.dart';
 
-typedef InitialLoadingOverlayBuilder = Widget Function(
-  BuildContext context,
-  bool readyToComplete,
-  VoidCallback onCompleted,
-);
+typedef InitialLoadingOverlayBuilder =
+    Widget Function(
+      BuildContext context,
+      bool readyToComplete,
+      VoidCallback onCompleted,
+    );
 
-typedef SaveLoadTransitionOverlayBuilder = Widget Function(
-  BuildContext context,
-  VoidCallback onCompleted,
-);
+typedef SaveLoadTransitionOverlayBuilder =
+    Widget Function(BuildContext context, VoidCallback onCompleted);
 
-enum _CommandDebugMenuMode {
-  expression,
-  character,
-  background,
-  music,
-}
+enum _CommandDebugMenuMode { expression, character, background, music }
 
 class GamePlayScreen extends StatefulWidget {
   final SaveSlot? saveSlotToLoad;
@@ -106,8 +101,9 @@ class GamePlayScreen extends StatefulWidget {
     this.gameModule,
     this.initialLoadingOverlayBuilder,
     this.initialLoadingCompletionTransitionType,
-    this.initialLoadingCompletionTransitionDuration =
-        const Duration(milliseconds: 900),
+    this.initialLoadingCompletionTransitionDuration = const Duration(
+      milliseconds: 900,
+    ),
     this.fadeOutInitialLoadingOverlayOnCompletion = true,
     this.saveLoadTransitionOverlayBuilder,
   });
@@ -122,8 +118,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     'SAKI_FX_DIAG',
     defaultValue: true,
   );
-  late final GameManager _gameManager;
-  late final DialogueProgressionManager _dialogueProgressionManager;
+  GameManager? _gameManagerReference;
+  DialogueProgressionManager? _dialogueProgressionManagerReference;
+  GameManager get _gameManager => _gameManagerReference!;
+  DialogueProgressionManager get _dialogueProgressionManager =>
+      _dialogueProgressionManagerReference!;
   final _gameUILayerKey = GlobalKey<GameUILayerState>();
   final GlobalKey _saveThumbnailCaptureBoundaryKey = GlobalKey();
   final GlobalKey _sceneTransitionCaptureBoundaryKey = GlobalKey();
@@ -154,6 +153,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   ReadTextSkipManager? _readTextSkipManager; // 已读文本快进管理器
   late MouseWheelHandler _mouseWheelHandler; // 鼠标滚轮处理器
   final SettingsManager _settingsManager = SettingsManager();
+  late final VoidCallback _settingsChangedListener;
   String _mouseRollbackBehavior = SettingsManager.defaultMouseRollbackBehavior;
   DateTime? _reviewReopenSuppressedUntil;
   bool _reviewOpenedByMouseRollback = false;
@@ -248,11 +248,17 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         return null;
       }
 
-      final pixelRatio =
-          (ScreenshotGenerator.targetWidth / size.width).clamp(0.5, 2.0);
+      final pixelRatio = (ScreenshotGenerator.targetWidth / size.width).clamp(
+        0.5,
+        2.0,
+      );
       final image = await renderObject.toImage(pixelRatio: pixelRatio);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      return byteData?.buffer.asUint8List();
+      try {
+        final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        return byteData?.buffer.asUint8List();
+      } finally {
+        image.dispose();
+      }
     } catch (e) {
       if (kEngineDebugMode) {
         print('[GamePlayScreen] 捕获实时缩略图失败: $e');
@@ -355,17 +361,23 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   void initState() {
     super.initState();
 
-    final configuredInitialScript =
-        (widget.gameModule ?? DefaultGameModule()).initialScript.trim();
-    _currentScript =
-        configuredInitialScript.isEmpty ? 'start' : configuredInitialScript;
+    final configuredInitialScript = (widget.gameModule ?? DefaultGameModule())
+        .initialScript
+        .trim();
+    _currentScript = configuredInitialScript.isEmpty
+        ? 'start'
+        : configuredInitialScript;
 
     _isInitialLoading = widget.initialLoadingOverlayBuilder != null;
     if (_isInitialLoading) {
       debugPrint('[GamePlayScreen] initial loading overlay enabled');
     }
 
-    _settingsManager.addListener(_handleSettingsChanged);
+    // Extension method tear-offs are not guaranteed to recreate the same
+    // callback identity. Keep the exact callback registered with the global
+    // SettingsManager so dispose can sever the whole game screen tree.
+    _settingsChangedListener = _handleSettingsChanged;
+    _settingsManager.addListener(_settingsChangedListener);
     _loadMouseRollbackBehavior();
 
     // 初始化加载淡出动画
@@ -377,22 +389,23 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       CurvedAnimation(parent: _loadingFadeController, curve: Curves.easeOut),
     );
 
-    _gameManager = GameManager(
+    _gameManagerReference = GameManager(
       onReturn: _returnToMainMenu,
-      onScriptApiExecute: ({
-        required String apiName,
-        required Map<String, String> params,
-        required GameState gameState,
-        required int scriptIndex,
-      }) async {
-        final module = widget.gameModule ?? DefaultGameModule();
-        return module.handleScriptApiCall(
-          apiName: apiName,
-          params: params,
-          gameState: gameState,
-          scriptIndex: scriptIndex,
-        );
-      },
+      onScriptApiExecute:
+          ({
+            required String apiName,
+            required Map<String, String> params,
+            required GameState gameState,
+            required int scriptIndex,
+          }) async {
+            final module = widget.gameModule ?? DefaultGameModule();
+            return module.handleScriptApiCall(
+              apiName: apiName,
+              params: params,
+              gameState: gameState,
+              scriptIndex: scriptIndex,
+            );
+          },
       defaultSceneTransitionType:
           (widget.gameModule ?? DefaultGameModule()).defaultSceneTransitionType,
     );
@@ -402,7 +415,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     );
 
     // 初始化对话推进管理器
-    _dialogueProgressionManager = DialogueProgressionManager(
+    _dialogueProgressionManagerReference = DialogueProgressionManager(
       gameManager: _gameManager,
       onManualProgress: () {
         _autoPlayManager?.onManualProgress();
@@ -516,20 +529,24 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   }
 
   bool _hasVisibleStartupText(GameState gameState) {
-    final hasNormalDialogue = !gameState.isNvlMode &&
+    final hasNormalDialogue =
+        !gameState.isNvlMode &&
         (gameState.dialogue?.trim().isNotEmpty ?? false);
-    final hasNvlDialogue = gameState.isNvlMode &&
+    final hasNvlDialogue =
+        gameState.isNvlMode &&
         gameState.nvlDialogues.any(
           (dialogue) => dialogue.dialogue.trim().isNotEmpty,
         );
-    final hasMenuLeadingDialogue = gameState.currentNode is MenuNode &&
+    final hasMenuLeadingDialogue =
+        gameState.currentNode is MenuNode &&
         _gameManager.getDialogueHistory().any(
-              (entry) => entry.dialogue.trim().isNotEmpty,
-            );
-    final hasChoiceText = gameState.currentNode is MenuNode &&
+          (entry) => entry.dialogue.trim().isNotEmpty,
+        );
+    final hasChoiceText =
+        gameState.currentNode is MenuNode &&
         (gameState.currentNode as MenuNode).choices.any(
-              (choice) => choice.text.trim().isNotEmpty,
-            );
+          (choice) => choice.text.trim().isNotEmpty,
+        );
     final hasScriptOverlayText =
         gameState.scriptOverlayText?.trim().isNotEmpty ?? false;
 
@@ -620,8 +637,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   }
 
   void _startInitialLoadingCompletion() {
-    final transitionType =
-        widget.initialLoadingCompletionTransitionType?.trim();
+    final transitionType = widget.initialLoadingCompletionTransitionType
+        ?.trim();
     if (transitionType == null || transitionType.isEmpty) {
       if (widget.fadeOutInitialLoadingOverlayOnCompletion) {
         _startInitialLoadingFadeOut();
@@ -657,8 +674,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       }
       await SceneTransitionEffectManager.instance.transition(
         context: context,
-        transitionType:
-            TransitionTypeParser.parseTransitionType(transitionType),
+        transitionType: TransitionTypeParser.parseTransitionType(
+          transitionType,
+        ),
         duration: widget.initialLoadingCompletionTransitionDuration,
         captureFrame: _captureCurrentGameFrameForTransition,
         onMidTransition: () {
@@ -731,7 +749,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
   @override
   void dispose() {
-    _settingsManager.removeListener(_handleSettingsChanged);
+    _settingsManager.removeListener(_settingsChangedListener);
 
     // 取消注册系统热键（只在桌面平台）
     if (_isDesktopPlatform()) {
@@ -752,18 +770,24 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     _consoleSequenceDetector?.dispose();
     // 清理快进管理器
     _fastForwardManager?.dispose();
+    _fastForwardManager = null;
 
     // 清理自动播放管理器
     _autoPlayManager?.dispose();
+    _autoPlayManager = null;
 
     // 清理已读文本快进管理器
     _readTextSkipManager?.dispose();
+    _readTextSkipManager = null;
     _expressionWheelOpenTimer?.cancel();
 
     // 清理加载淡出动画控制器
     _loadingFadeController.dispose();
 
-    _gameManager.dispose();
+    _dialogueProgressionManagerReference?.registerTypewriter(null);
+    _dialogueProgressionManagerReference = null;
+    _gameManagerReference?.dispose();
+    _gameManagerReference = null;
     ScreenshotGenerator.registerLiveGameViewCaptureProvider(
       owner: this,
       provider: null,
@@ -820,7 +844,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
             // 处理回车和空格键推进剧情
             if (event is KeyDownEvent) {
-              final hasOverlayOpen = _isShowingMenu ||
+              final hasOverlayOpen =
+                  _isShowingMenu ||
                   _showSaveOverlay ||
                   _showLoadOverlay ||
                   _showReviewOverlay ||
@@ -830,7 +855,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   _showExpressionSelector ||
                   _isAnyCommandMenuOpen;
               // 选项界面允许“回滚->观看记录”，但仍视为推进输入的阻断态。
-              final hasOverlayOpenExceptMenu = _showSaveOverlay ||
+              final hasOverlayOpenExceptMenu =
+                  _showSaveOverlay ||
                   _showLoadOverlay ||
                   _showReviewOverlay ||
                   _showSettings ||
@@ -887,11 +913,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) {
                       final module = widget.gameModule ?? DefaultGameModule();
-                      final fallbackSceneBaseLayer =
-                          module.createSceneBaseLayer(
-                        context: context,
-                        gameState: GameState.initial(),
-                      );
+                      final fallbackSceneBaseLayer = module
+                          .createSceneBaseLayer(
+                            context: context,
+                            gameState: GameState.initial(),
+                          );
                       return fallbackSceneBaseLayer ??
                           const ColoredBox(color: Colors.black);
                     }
@@ -948,7 +974,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
                     return MouseParallax(
                       maxOffset: const Offset(26, 16),
-                      enabled: _isParallaxEnabled &&
+                      enabled:
+                          _isParallaxEnabled &&
                           !_isHiddenUiSceneTransformActive,
                       child: RepaintBoundary(
                         key: _saveThumbnailCaptureBoundaryKey,
@@ -977,7 +1004,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                               // 左键点击回调 - 推进剧情
                               onLeftClick: () {
                                 // 检查是否有弹窗或菜单显示
-                                final hasOverlayOpen = _isShowingMenu ||
+                                final hasOverlayOpen =
+                                    _isShowingMenu ||
                                     _showSaveOverlay ||
                                     _showLoadOverlay ||
                                     _showReviewOverlay ||
@@ -1014,7 +1042,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                     showReviewOverlay: _showReviewOverlay,
                                     enableReviewOverscrollClose:
                                         _mouseRollbackBehavior == 'history' &&
-                                            _reviewOpenedByMouseRollback,
+                                        _reviewOpenedByMouseRollback,
                                     showSaveOverlay: _showSaveOverlay,
                                     showLoadOverlay: _showLoadOverlay,
                                     showSettings: _showSettings,
@@ -1051,7 +1079,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                         _handleSkipReadText, // 新增：跳过已读文本回调
                                     onAutoPlay: _handleAutoPlay, // 新增：自动播放回调
                                     onThemeToggle: () => setState(
-                                        () {}), // 新增：主题切换回调 - 触发重建以更新UI
+                                      () {},
+                                    ), // 新增：主题切换回调 - 触发重建以更新UI
                                     onFlowchart: () => setState(
                                       () => _showFlowchart = !_showFlowchart,
                                     ), // 新增：流程图回调
@@ -1078,7 +1107,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       expressions: _expressionWheelExpressions,
                                       expressionImagePaths:
                                           _expressionWheelImagePaths,
-                                      center: _expressionWheelCenter ??
+                                      center:
+                                          _expressionWheelCenter ??
                                           Offset(
                                             MediaQuery.of(context).size.width /
                                                 2,
@@ -1087,9 +1117,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                           ),
                                       onHighlightedExpressionChanged:
                                           (expression) {
-                                        _expressionWheelHighlightedExpression =
-                                            expression;
-                                      },
+                                            _expressionWheelHighlightedExpression =
+                                                expression;
+                                          },
                                     ),
                                   if (kEngineDebugMode &&
                                       _showCharacterWheel &&
@@ -1098,7 +1128,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       title: '切换角色',
                                       options: _characterWheelOptions,
                                       currentOptionId: _characterWheelCurrentId,
-                                      center: _expressionWheelCenter ??
+                                      center:
+                                          _expressionWheelCenter ??
                                           Offset(
                                             MediaQuery.of(context).size.width /
                                                 2,
@@ -1117,7 +1148,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       applyHint: 'Double Click To Apply',
                                       options: _backgroundGridOptions,
                                       currentOptionId: _backgroundGridCurrentId,
-                                      center: _expressionWheelCenter ??
+                                      center:
+                                          _expressionWheelCenter ??
                                           Offset(
                                             MediaQuery.of(context).size.width /
                                                 2,
@@ -1129,7 +1161,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       },
                                       onOptionDoubleTap: (_) {
                                         unawaited(
-                                            _applyBackgroundGridSelectionAndClose());
+                                          _applyBackgroundGridSelectionAndClose(),
+                                        );
                                       },
                                     ),
                                   if (kEngineDebugMode &&
@@ -1140,7 +1173,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       applyHint: 'Double Click To Apply',
                                       options: _musicGridOptions,
                                       currentOptionId: _musicGridCurrentId,
-                                      center: _expressionWheelCenter ??
+                                      center:
+                                          _expressionWheelCenter ??
                                           Offset(
                                             MediaQuery.of(context).size.width /
                                                 2,
@@ -1151,12 +1185,14 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                         _musicGridHighlightedId = optionId;
                                         unawaited(
                                           _previewMusicSelectionIfNeeded(
-                                              optionId),
+                                            optionId,
+                                          ),
                                         );
                                       },
                                       onOptionDoubleTap: (_) {
                                         unawaited(
-                                            _applyMusicGridSelectionAndClose());
+                                          _applyMusicGridSelectionAndClose(),
+                                        );
                                       },
                                     ),
                                   if (kEngineDebugMode &&
@@ -1177,7 +1213,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                             // 覆盖 UI + 背景，作为全屏后处理。
                             if (gameState.sceneFilter != null &&
                                 !gameModule.shouldRenderDefaultSceneBackground(
-                                    gameState))
+                                  gameState,
+                                ))
                               Positioned.fill(
                                 child: IgnorePointer(
                                   child: _FilteredBackground(
@@ -1225,8 +1262,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       gameState: gameState,
       scriptIndex: _gameManager.currentScriptIndex,
     );
-    final shouldRenderDefaultSceneBackground =
-        module.shouldRenderDefaultSceneBackground(gameState);
+    final shouldRenderDefaultSceneBackground = module
+        .shouldRenderDefaultSceneBackground(gameState);
     final characterLighting = module.resolveCharacterLighting(gameState);
     if (_fxDiagLogs) {
       final filter = gameState.sceneFilter;
@@ -1255,7 +1292,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     }
 
     return SimpleShakeWrapper(
-      trigger: gameState.isShaking &&
+      trigger:
+          gameState.isShaking &&
           (gameState.shakeTarget == 'background' ||
               gameState.shakeTarget == null),
       intensity: gameState.shakeIntensity ?? 8.0,
@@ -1522,31 +1560,34 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     _backgroundPathResolving.add(background);
     final assetName = 'backgrounds/${background.replaceAll(' ', '-')}';
 
-    AssetManager().findAsset(assetName).then((resolvedPath) {
-      _backgroundPathResolving.remove(background);
-      if (!mounted) {
-        _backgroundPathCache[background] = resolvedPath;
-        return;
-      }
-      if (_backgroundPathCache[background] == resolvedPath) {
-        return;
-      }
-      setState(() {
-        _backgroundPathCache[background] = resolvedPath;
-      });
-    }).catchError((_) {
-      _backgroundPathResolving.remove(background);
-      if (!mounted) {
-        _backgroundPathCache[background] = null;
-        return;
-      }
-      if (_backgroundPathCache.containsKey(background)) {
-        return;
-      }
-      setState(() {
-        _backgroundPathCache[background] = null;
-      });
-    });
+    AssetManager()
+        .findAsset(assetName)
+        .then((resolvedPath) {
+          _backgroundPathResolving.remove(background);
+          if (!mounted) {
+            _backgroundPathCache[background] = resolvedPath;
+            return;
+          }
+          if (_backgroundPathCache[background] == resolvedPath) {
+            return;
+          }
+          setState(() {
+            _backgroundPathCache[background] = resolvedPath;
+          });
+        })
+        .catchError((_) {
+          _backgroundPathResolving.remove(background);
+          if (!mounted) {
+            _backgroundPathCache[background] = null;
+            return;
+          }
+          if (_backgroundPathCache.containsKey(background)) {
+            return;
+          }
+          setState(() {
+            _backgroundPathCache[background] = null;
+          });
+        });
   }
 
   /// 预缓存背景图像到Flutter的ImageCache中
@@ -1580,10 +1621,10 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     final characterOrder = characters.keys.toList();
     final distributedPoseConfigs =
         CharacterAutoDistribution.calculateAutoDistribution(
-      characters,
-      poseConfigs,
-      characterOrder,
-    );
+          characters,
+          poseConfigs,
+          characterOrder,
+        );
 
     // 按resourceId分组，保留最新的角色状态
     final Map<String, MapEntry<String, CharacterState>> charactersByResourceId =
@@ -1600,7 +1641,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       final characterState = entry.value;
 
       final autoDistributedPoseId = '${characterId}_auto_distributed';
-      final poseConfig = distributedPoseConfigs[autoDistributedPoseId] ??
+      final poseConfig =
+          distributedPoseConfigs[autoDistributedPoseId] ??
           distributedPoseConfigs[characterState.positionId] ??
           PoseConfig(id: 'default');
 
@@ -1609,12 +1651,16 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       double finalYCenter = poseConfig.ycenter;
       double finalScale = poseConfig.scale;
       double alpha = 1.0;
+      double rotation = 0.0;
+      double reveal = 1.0;
 
       if (animProps != null) {
         finalXCenter = animProps['xcenter'] ?? finalXCenter;
         finalYCenter = animProps['ycenter'] ?? finalYCenter;
         finalScale = animProps['scale'] ?? finalScale;
         alpha = animProps['alpha'] ?? alpha;
+        rotation = animProps['rotation'] ?? rotation;
+        reveal = (animProps['reveal'] ?? reveal).clamp(0.0, 1.0).toDouble();
       }
 
       final characterWidget = _CompositeCharacterWidget(
@@ -1635,7 +1681,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
       final maskType = (characterState.maskType ?? '').trim().toLowerCase();
       if (maskType == 'silhouette') {
-        final parsedMaskColor = parseColor(characterState.maskColor?.trim()) ??
+        final parsedMaskColor =
+            parseColor(characterState.maskColor?.trim()) ??
             const Color(0xFFFFFFFF);
         finalWidget = ColorFiltered(
           colorFilter: ColorFilter.mode(parsedMaskColor, BlendMode.srcIn),
@@ -1652,6 +1699,18 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
       if (alpha < 1.0) {
         finalWidget = Opacity(opacity: alpha, child: finalWidget);
+      }
+
+      if (rotation != 0.0) {
+        finalWidget = Transform.rotate(
+          angle: rotation,
+          alignment: Alignment.center,
+          child: finalWidget,
+        );
+      }
+
+      if (reveal < 1.0) {
+        finalWidget = BottomUpReveal(progress: reveal, child: finalWidget);
       }
 
       finalWidget = _wrapWithParallax(finalWidget, 0.65);

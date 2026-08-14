@@ -116,19 +116,42 @@ class CharacterLayerParser {
   }
 
   static Future<List<CharacterLayerInfo>> _parseExpressionLayers(
-      String resourceId, String expression) async {
+    String resourceId,
+    String expression,
+  ) async {
     final layers = <CharacterLayerInfo>[];
 
-    // 新的解析逻辑：
+    // 单层解析逻辑：
     // "happy" -> level 1 (基础表情)
     // "-happy" -> level 1 (基础差分表情，与原逻辑兼容)
     // "--happy" -> level 2 (第二层图层)
     // "---happy" -> level 3 (第三层图层)
+    //
+    // 使用 "+" 可在一个 expression 中组合多个差分：
+    // "normal+--mask" -> normal(level 1) + mask(level 2)
 
     if (expression.isEmpty) {
       return layers;
     }
 
+    final expressions = expression
+        .split('+')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty);
+    for (final expressionPart in expressions) {
+      final layer = await _parseExpressionLayer(resourceId, expressionPart);
+      if (layer != null) {
+        layers.add(layer);
+      }
+    }
+
+    return layers;
+  }
+
+  static Future<CharacterLayerInfo?> _parseExpressionLayer(
+    String resourceId,
+    String expression,
+  ) async {
     // 计算开头连续"-"的数量
     int dashCount = 0;
     for (int i = 0; i < expression.length; i++) {
@@ -148,7 +171,7 @@ class CharacterLayerParser {
     }
 
     if (actualExpression.isEmpty) {
-      return layers;
+      return null;
     }
 
     // 确定图层级别
@@ -175,13 +198,11 @@ class CharacterLayerParser {
       }
     }
 
-    layers.add(CharacterLayerInfo(
+    return CharacterLayerInfo(
       assetName: 'characters/$resourceId-$finalExpression',
       layerLevel: layerLevel,
       layerType: 'expression_layer_$layerLevel',
-    ));
-
-    return layers;
+    );
   }
 
   /// 辅助方法：检查表情字符串的层级
