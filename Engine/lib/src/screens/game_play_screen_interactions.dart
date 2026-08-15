@@ -148,7 +148,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           final now = DateTime.now();
           if (_reviewReopenSuppressedUntil != null &&
               now.isBefore(_reviewReopenSuppressedUntil!)) {
-            if (kEngineDebugMode) {
+            if (kSakiDiagnosticLogs) {
               debugPrint(
                 '[MouseRollback] (menu) suppressed until $_reviewReopenSuppressedUntil',
               );
@@ -159,7 +159,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             _reviewOpenedByMouseRollback = true;
             _showReviewOverlay = true;
           });
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             debugPrint('[MouseRollback] (menu) opened review overlay');
           }
         }
@@ -169,7 +169,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       return;
     }
 
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       debugPrint(
         '[MouseRollback] action behavior=$behavior, '
         'showReview=$_showReviewOverlay, history=${_gameManager.getDialogueHistory().length}',
@@ -181,7 +181,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         final now = DateTime.now();
         if (_reviewReopenSuppressedUntil != null &&
             now.isBefore(_reviewReopenSuppressedUntil!)) {
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             debugPrint(
               '[MouseRollback] suppressed until $_reviewReopenSuppressedUntil',
             );
@@ -192,7 +192,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           _reviewOpenedByMouseRollback = true;
           _showReviewOverlay = true;
         });
-        if (kEngineDebugMode) {
+        if (kSakiDiagnosticLogs) {
           debugPrint('[MouseRollback] opened review overlay');
         }
       }
@@ -332,7 +332,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         await hotKeyManager.register(
           _floatingScriptEditorHotKey!,
           keyDownHandler: (hotKey) {
-            if (kEngineDebugMode) {
+            if (kSakiDiagnosticLogs) {
               print('悬浮脚本编辑器热键触发: ${hotKey.toJson()}');
             }
             _setStateIfMounted(() {
@@ -366,7 +366,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       setExpressionSelectorVisibility: (show) {
         if (mounted) {
           // 检查是否可以显示表情选择器
-          final canShow = show &&
+          final canShow =
+              show &&
               !_isAnyCommandMenuOpen &&
               _expressionSelectorManager!.canShowExpressionSelector(
                 showSaveOverlay: _showSaveOverlay,
@@ -392,7 +393,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
   bool _handleExpressionWheelKeyEvent(KeyEvent event) {
     final logicalKey = event.logicalKey;
-    final isMetaKey = logicalKey == LogicalKeyboardKey.metaLeft ||
+    final isMetaKey =
+        logicalKey == LogicalKeyboardKey.metaLeft ||
         logicalKey == LogicalKeyboardKey.metaRight ||
         logicalKey == LogicalKeyboardKey.meta;
     final isCommandA = logicalKey == LogicalKeyboardKey.keyA;
@@ -400,10 +402,11 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final isCommandB = logicalKey == LogicalKeyboardKey.keyB;
     final isCommand1 = logicalKey == LogicalKeyboardKey.digit1;
 
-    if (kEngineDebugMode &&
+    if (kSakiDiagnosticLogs &&
         (isMetaKey || isCommandA || isCommandC || isCommandB || isCommand1)) {
       print(
-          'ExpressionWheel: key event type=${event.runtimeType}, key=${logicalKey.debugName}, isMetaPressed=${HardwareKeyboard.instance.isMetaPressed}, internalPressed=$_isMetaKeyPressed, mode=$_activeCommandMenuMode, visible=$_isAnyCommandMenuOpen');
+        'ExpressionWheel: key event type=${event.runtimeType}, key=${logicalKey.debugName}, isMetaPressed=${HardwareKeyboard.instance.isMetaPressed}, internalPressed=$_isMetaKeyPressed, mode=$_activeCommandMenuMode, visible=$_isAnyCommandMenuOpen',
+      );
     }
 
     if (isMetaKey) {
@@ -418,27 +421,28 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       if (event is KeyUpEvent) {
         _isMetaKeyPressed = HardwareKeyboard.instance.isMetaPressed;
         if (_isMetaKeyPressed) {
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             print('ExpressionWheel: keyUp ignored, meta still pressed');
           }
           return true;
         }
         _expressionWheelOpenTimer?.cancel();
         if (_showExpressionWheel) {
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             print('ExpressionWheel: keyUp apply expression selection');
           }
           unawaited(_applyExpressionWheelSelectionAndClose());
         } else if (_showCharacterWheel) {
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             print('ExpressionWheel: keyUp apply character selection');
           }
           unawaited(_applyCharacterWheelSelectionAndClose());
         } else if (_showBackgroundGridMenu || _showMusicGridMenu) {
           // 背景/音乐改为“常驻+双击应用”，Meta松开不做自动应用。
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             print(
-                'ExpressionWheel: keyUp keep grid menu open (background/music persistent mode)');
+              'ExpressionWheel: keyUp keep grid menu open (background/music persistent mode)',
+            );
           }
         } else {
           _clearCommandMenuState();
@@ -511,7 +515,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
         if (_activeCommandMenuMode != requestedMode || !isTargetVisible) {
           _activeCommandMenuMode = requestedMode;
-          if (kEngineDebugMode) {
+          if (kSakiDiagnosticLogs) {
             final modeName = switch (requestedMode) {
               _CommandDebugMenuMode.expression => 'expression',
               _CommandDebugMenuMode.character => 'character',
@@ -554,7 +558,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   void _scheduleCommandMenuOpen(_CommandDebugMenuMode mode) {
     _expressionWheelOpenTimer?.cancel();
     _expressionWheelOpenTimer = Timer(_commandMenuOpenDelay, () {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: open timer fired mode=$mode');
       }
       switch (mode) {
@@ -585,19 +589,20 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         !_showDebugPanel &&
         !_showExpressionSelector &&
         !_isShowingMenu &&
-        _gameManager.currentState.movieFile == null;
+        !_isBlockingCinematicInput;
   }
 
   Future<void> _openCharacterWheelIfPossible() async {
     if (!_isMetaKeyPressed || !mounted) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: character open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)');
+          'ExpressionWheel: character open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)',
+        );
       }
       return;
     }
     if (!_canShowExpressionWheel()) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: character open blocked by overlays');
       }
       return;
@@ -630,21 +635,22 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _showCharacterWheel = true;
       _activeCommandMenuMode = _CommandDebugMenuMode.character;
     });
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: character wheel opened options=${options.length}, current=$_characterWheelCurrentId');
+        'ExpressionWheel: character wheel opened options=${options.length}, current=$_characterWheelCurrentId',
+      );
     }
   }
 
   Future<void> _openBackgroundGridIfPossible() async {
     if (!mounted) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: background open aborted (mounted=$mounted)');
       }
       return;
     }
     if (!_canShowExpressionWheel()) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: background open blocked by overlays');
       }
       return;
@@ -656,8 +662,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       return;
     }
     final currentBackground = _gameManager.currentState.background ?? '';
-    final current =
-        _resolveCurrentBackgroundOptionId(options, currentBackground);
+    final current = _resolveCurrentBackgroundOptionId(
+      options,
+      currentBackground,
+    );
 
     if (!mounted) {
       return;
@@ -679,21 +687,22 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _showBackgroundGridMenu = true;
       _activeCommandMenuMode = _CommandDebugMenuMode.background;
     });
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: background grid opened options=${options.length}, current=$_backgroundGridCurrentId');
+        'ExpressionWheel: background grid opened options=${options.length}, current=$_backgroundGridCurrentId',
+      );
     }
   }
 
   Future<void> _openMusicGridIfPossible() async {
     if (!mounted) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: music open aborted (mounted=$mounted)');
       }
       return;
     }
     if (!_canShowExpressionWheel()) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: music open blocked by overlays');
       }
       return;
@@ -730,32 +739,35 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _activeCommandMenuMode = _CommandDebugMenuMode.music;
     });
     await _previewMusicSelectionIfNeeded(_musicGridHighlightedId);
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: music grid opened options=${options.length}, current=$_musicGridCurrentId, original=$_musicGridOriginalAssetPath');
+        'ExpressionWheel: music grid opened options=${options.length}, current=$_musicGridCurrentId, original=$_musicGridOriginalAssetPath',
+      );
     }
   }
 
   Future<void> _openExpressionWheelIfPossible() async {
     if (!_isMetaKeyPressed || !mounted) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)');
+          'ExpressionWheel: open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)',
+        );
       }
       return;
     }
 
     if (!_canShowExpressionWheel()) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: open blocked overlays menu=$_isShowingMenu save=$_showSaveOverlay load=$_showLoadOverlay review=$_showReviewOverlay settings=$_showSettings flowchart=$_showFlowchart dev=$_showDeveloperPanel debug=$_showDebugPanel selector=$_showExpressionSelector wheel=$_showExpressionWheel movie=${_gameManager.currentState.movieFile != null}');
+          'ExpressionWheel: open blocked overlays menu=$_isShowingMenu save=$_showSaveOverlay load=$_showLoadOverlay review=$_showReviewOverlay settings=$_showSettings flowchart=$_showFlowchart dev=$_showDeveloperPanel debug=$_showDebugPanel selector=$_showExpressionSelector wheel=$_showExpressionWheel cinematic=$_isBlockingCinematicInput',
+        );
       }
       return;
     }
 
     final manager = _expressionSelectorManager;
     if (manager == null) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: manager is null');
       }
       return;
@@ -763,52 +775,57 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
     final speakerInfo = manager.getCurrentSpeakerInfo();
     if (speakerInfo == null) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         final state = _gameManager.currentState;
         print(
-            'ExpressionWheel: no target speaker (speaker=${state.speaker}, speakerAlias=${state.speakerAlias}, characters=${state.characters.keys.join(',')})');
+          'ExpressionWheel: no target speaker (speaker=${state.speaker}, speakerAlias=${state.speakerAlias}, characters=${state.characters.keys.join(',')})',
+        );
       }
       _showNotificationMessage('没有当前可操作立绘');
       return;
     }
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: speaker=${speakerInfo.speakerName}, characterId=${speakerInfo.characterId}, currentPose=${speakerInfo.currentPose}, currentExpression=${speakerInfo.currentExpression}, scriptCharacterKey=${speakerInfo.scriptCharacterKey}');
+        'ExpressionWheel: speaker=${speakerInfo.speakerName}, characterId=${speakerInfo.characterId}, currentPose=${speakerInfo.currentPose}, currentExpression=${speakerInfo.currentExpression}, scriptCharacterKey=${speakerInfo.scriptCharacterKey}',
+      );
     }
 
-    final expressions =
-        await _loadExpressionWheelExpressions(speakerInfo.characterId);
+    final expressions = await _loadExpressionWheelExpressions(
+      speakerInfo.characterId,
+    );
     final expressionImagePaths = await _buildExpressionImagePaths(
       speakerInfo.characterId,
       speakerInfo.currentPose,
       expressions,
     );
     if (expressions.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: no layers for ${speakerInfo.characterId}');
       }
       _showNotificationMessage('未找到可用差分');
       return;
     }
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: loaded ${expressions.length} layers, first=${expressions.first}, last=${expressions.last}');
+        'ExpressionWheel: loaded ${expressions.length} layers, first=${expressions.first}, last=${expressions.last}',
+      );
     }
 
     if (!mounted || !_isMetaKeyPressed) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: open cancelled after load (mounted=$mounted, metaPressed=$_isMetaKeyPressed)');
+          'ExpressionWheel: open cancelled after load (mounted=$mounted, metaPressed=$_isMetaKeyPressed)',
+        );
       }
       return;
     }
 
     final highlightedExpression =
         expressions.contains(speakerInfo.currentExpression)
-            ? speakerInfo.currentExpression
-            : expressions.contains(speakerInfo.currentPose)
-                ? speakerInfo.currentPose
-                : expressions.first;
+        ? speakerInfo.currentExpression
+        : expressions.contains(speakerInfo.currentPose)
+        ? speakerInfo.currentPose
+        : expressions.first;
 
     _setStateIfMounted(() {
       _expressionWheelSpeakerInfo = speakerInfo;
@@ -831,15 +848,17 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _showMusicGridMenu = false;
       _activeCommandMenuMode = _CommandDebugMenuMode.expression;
     });
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: opened highlight=$highlightedExpression');
     }
   }
 
   Future<List<String>> _loadExpressionWheelExpressions(
-      String characterId) async {
-    final layers =
-        await AssetManager.getAvailableCharacterLayersRecursive(characterId);
+    String characterId,
+  ) async {
+    final layers = await AssetManager.getAvailableCharacterLayersRecursive(
+      characterId,
+    );
     final expressions = <String>{};
 
     for (final layer in layers) {
@@ -957,10 +976,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
     options.sort((a, b) => a.label.compareTo(b.label));
     return <CommandWheelOption>[
-      const CommandWheelOption(
-        id: _narratorWheelId,
-        label: '旁白',
-      ),
+      const CommandWheelOption(id: _narratorWheelId, label: '旁白'),
       ...options,
     ];
   }
@@ -1061,11 +1077,12 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       '.jpeg',
       '.webp',
       '.avif',
-      '.bmp'
+      '.bmp',
     };
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: background scan files=${imageFiles.length}, samples=${imageFiles.take(6).join(',')}');
+        'ExpressionWheel: background scan files=${imageFiles.length}, samples=${imageFiles.take(6).join(',')}',
+      );
     }
     final options = <CommandWheelOption>[];
     for (final fileName in imageFiles) {
@@ -1074,20 +1091,18 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         continue;
       }
       final base = fileName.substring(
-          0, fileName.length - fileName.split('.').last.length - 1);
+        0,
+        fileName.length - fileName.split('.').last.length - 1,
+      );
       final resolved = await AssetManager().findAsset('backgrounds/$base');
       if (resolved == null || resolved.isEmpty) {
-        if (kEngineDebugMode) {
+        if (kSakiDiagnosticLogs) {
           print('ExpressionWheel: background preview missing for $base');
         }
         continue;
       }
       options.add(
-        CommandWheelOption(
-          id: base,
-          label: base,
-          imagePath: resolved,
-        ),
+        CommandWheelOption(id: base, label: base, imagePath: resolved),
       );
     }
     options.sort((a, b) => a.label.compareTo(b.label));
@@ -1110,9 +1125,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       ...await AssetManager().listAssets(legacyDir, '.m4a'),
     };
     final supported = <String>{'.mp3', '.ogg', '.wav', '.flac', '.m4a'};
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: music scan files=${audioFiles.length}, samples=${audioFiles.take(8).join(',')}');
+        'ExpressionWheel: music scan files=${audioFiles.length}, samples=${audioFiles.take(8).join(',')}',
+      );
     }
     final options = <CommandWheelOption>[];
     for (final fileName in audioFiles) {
@@ -1129,12 +1145,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       if (id.isEmpty || base.isEmpty) {
         continue;
       }
-      options.add(
-        CommandWheelOption(
-          id: id,
-          label: base,
-        ),
-      );
+      options.add(CommandWheelOption(id: id, label: base));
     }
     options.sort((a, b) => a.label.compareTo(b.label));
     return options;
@@ -1147,8 +1158,12 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     if (currentBackgroundRaw.isEmpty) {
       return options.isNotEmpty ? options.first.id : null;
     }
-    final normalized =
-        currentBackgroundRaw.split('/').last.split('.').first.trim();
+    final normalized = currentBackgroundRaw
+        .split('/')
+        .last
+        .split('.')
+        .first
+        .trim();
     for (final option in options) {
       if (option.id == normalized ||
           option.id == currentBackgroundRaw ||
@@ -1175,8 +1190,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     for (final option in options) {
       final optionFile = option.id.trim();
       final optionDot = optionFile.lastIndexOf('.');
-      final optionBase =
-          optionDot > 0 ? optionFile.substring(0, optionDot) : optionFile;
+      final optionBase = optionDot > 0
+          ? optionFile.substring(0, optionDot)
+          : optionFile;
       if (optionFile == fileName ||
           optionBase == normalized ||
           currentMusicAssetPath.contains(option.id)) {
@@ -1211,7 +1227,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     if (assetPath.isEmpty) {
       return;
     }
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: music preview -> $optionId ($assetPath)');
     }
     try {
@@ -1221,7 +1237,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       );
       _musicPreviewPlayingId = optionId;
     } catch (e) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: music preview failed: $e');
       }
     }
@@ -1242,13 +1258,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       return;
     }
     if (originalAssetPath == null || originalAssetPath.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: restore music preview -> stop');
       }
       await MusicManager().stopBackgroundMusic(fadeOut: false);
       return;
     }
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: restore music preview -> $originalAssetPath');
     }
     await MusicManager().playBackgroundMusic(
@@ -1261,24 +1277,26 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final speakerInfo = _expressionWheelSpeakerInfo;
     final selectedExpression = _expressionWheelHighlightedExpression;
     _clearCommandMenuState();
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: apply requested selected=$selectedExpression speaker=${speakerInfo?.speakerName}/${speakerInfo?.characterId}');
+        'ExpressionWheel: apply requested selected=$selectedExpression speaker=${speakerInfo?.speakerName}/${speakerInfo?.characterId}',
+      );
     }
 
     if (speakerInfo == null ||
         selectedExpression == null ||
         selectedExpression.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: apply skipped (missing speaker or selection)');
       }
       return;
     }
     if (selectedExpression == speakerInfo.currentExpression) {
       if (!selectedExpression.toLowerCase().startsWith('pose')) {
-        if (kEngineDebugMode) {
+        if (kSakiDiagnosticLogs) {
           print(
-              'ExpressionWheel: apply skipped (expression unchanged: $selectedExpression)');
+            'ExpressionWheel: apply skipped (expression unchanged: $selectedExpression)',
+          );
         }
         return;
       }
@@ -1286,21 +1304,25 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
     if (selectedExpression == speakerInfo.currentPose &&
         selectedExpression.toLowerCase().startsWith('pose')) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: apply skipped (pose unchanged: $selectedExpression)');
+          'ExpressionWheel: apply skipped (pose unchanged: $selectedExpression)',
+        );
       }
       return;
     }
 
     final selectedIsPose = selectedExpression.toLowerCase().startsWith('pose');
-    final nextPose =
-        selectedIsPose ? selectedExpression : speakerInfo.currentPose;
-    final nextExpression =
-        selectedIsPose ? speakerInfo.currentExpression : selectedExpression;
-    if (kEngineDebugMode) {
+    final nextPose = selectedIsPose
+        ? selectedExpression
+        : speakerInfo.currentPose;
+    final nextExpression = selectedIsPose
+        ? speakerInfo.currentExpression
+        : selectedExpression;
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: apply -> nextPose=$nextPose, nextExpression=$nextExpression');
+        'ExpressionWheel: apply -> nextPose=$nextPose, nextExpression=$nextExpression',
+      );
     }
 
     await _expressionSelectorManager?.handleExpressionSelectionChanged(
@@ -1324,20 +1346,22 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     }
     _clearCommandMenuState();
     if (selectedCharacterKey == null || selectedCharacterKey.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: apply character skipped (empty selection)');
       }
       return;
     }
     if (selectedCharacterKey == currentCharacterKey) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: apply character skipped (selection unchanged: $selectedCharacterKey)');
+          'ExpressionWheel: apply character skipped (selection unchanged: $selectedCharacterKey)',
+        );
       }
       return;
     }
-    final success =
-        await _applyCharacterChangeForCurrentDialogue(selectedCharacterKey);
+    final success = await _applyCharacterChangeForCurrentDialogue(
+      selectedCharacterKey,
+    );
     if (success) {
       _showNotificationMessage('已切换角色: $selectedLabel');
       await _handleHotReload();
@@ -1350,13 +1374,14 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final selectedBackground = _backgroundGridHighlightedId;
     _clearCommandMenuState();
     if (selectedBackground == null || selectedBackground.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: apply background skipped (empty selection)');
       }
       return;
     }
-    final success =
-        await _applyBackgroundChangeForCurrentDialogue(selectedBackground);
+    final success = await _applyBackgroundChangeForCurrentDialogue(
+      selectedBackground,
+    );
     if (success) {
       // 先即时更新当前画面，再触发脚本热重载，避免“改了但仍显示旧背景”的感知延迟。
       _gameManager.applyDebugBackgroundImmediately(selectedBackground);
@@ -1374,7 +1399,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final previewId = _musicPreviewPlayingId;
     _clearCommandMenuState();
     if (selectedMusic == null || selectedMusic.isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: apply music skipped (empty selection)');
       }
       await _restoreMusicToOriginal(
@@ -1384,9 +1409,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       return;
     }
     if (selectedMusic == currentMusic) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print(
-            'ExpressionWheel: apply music skipped (selection unchanged: $selectedMusic)');
+          'ExpressionWheel: apply music skipped (selection unchanged: $selectedMusic)',
+        );
       }
       await _restoreMusicToOriginal(
         originalAssetPath: originalAssetPath,
@@ -1400,9 +1426,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       await _handleHotReload();
       return;
     }
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: apply music failed, rollback preview to $originalAssetPath');
+        'ExpressionWheel: apply music failed, rollback preview to $originalAssetPath',
+      );
     }
     await _restoreMusicToOriginal(
       originalAssetPath: originalAssetPath,
@@ -1412,14 +1439,16 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   Future<bool> _applyCharacterChangeForCurrentDialogue(
-      String selectedCharacterKey) async {
+    String selectedCharacterKey,
+  ) async {
     final sourceScriptFile = _gameManager.currentDialogueSourceScriptFile;
     final scriptFileForWrite =
         (sourceScriptFile != null && sourceScriptFile.trim().isNotEmpty)
-            ? sourceScriptFile
-            : _gameManager.currentScriptFile;
+        ? sourceScriptFile
+        : _gameManager.currentScriptFile;
     final scriptPath = await ScriptContentModifier.getCurrentScriptFilePath(
-        scriptFileForWrite);
+      scriptFileForWrite,
+    );
     if (scriptPath == null) {
       return false;
     }
@@ -1427,7 +1456,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final targetDialogue = _gameManager.currentDialogueText;
     final targetLine = _gameManager.currentDialogueSourceLine;
     if (targetDialogue.trim().isEmpty) {
-      if (kEngineDebugMode) {
+      if (kSakiDiagnosticLogs) {
         print('ExpressionWheel: apply character aborted (empty dialogue)');
       }
       return false;
@@ -1436,11 +1465,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         ? ScriptContentModifier.narratorCharacterId
         : selectedCharacterKey;
     final currentSpeaker = _expressionSelectorManager?.getCurrentSpeakerInfo();
-    final fallbackCharacter = currentSpeaker?.scriptCharacterKey ??
+    final fallbackCharacter =
+        currentSpeaker?.scriptCharacterKey ??
         _gameManager.currentState.speakerAlias;
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: apply character -> sourceScript=$sourceScriptFile, line=$targetLine, oldCharacter=$fallbackCharacter, newCharacter=$writeCharacterId, dialogue="$targetDialogue"');
+        'ExpressionWheel: apply character -> sourceScript=$sourceScriptFile, line=$targetLine, oldCharacter=$fallbackCharacter, newCharacter=$writeCharacterId, dialogue="$targetDialogue"',
+      );
     }
 
     return ScriptContentModifier.modifyDialogueCharacterWithPose(
@@ -1453,14 +1484,16 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   Future<bool> _applyBackgroundChangeForCurrentDialogue(
-      String selectedBackground) async {
+    String selectedBackground,
+  ) async {
     final sourceScriptFile = _gameManager.currentDialogueSourceScriptFile;
     final scriptFileForWrite =
         (sourceScriptFile != null && sourceScriptFile.trim().isNotEmpty)
-            ? sourceScriptFile
-            : _gameManager.currentScriptFile;
+        ? sourceScriptFile
+        : _gameManager.currentScriptFile;
     final scriptPath = await ScriptContentModifier.getCurrentScriptFilePath(
-        scriptFileForWrite);
+      scriptFileForWrite,
+    );
     if (scriptPath == null) {
       return false;
     }
@@ -1476,8 +1509,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final sourceScriptFile = _gameManager.currentDialogueSourceScriptFile;
     final scriptFileForWrite =
         (sourceScriptFile != null && sourceScriptFile.trim().isNotEmpty)
-            ? sourceScriptFile
-            : _gameManager.currentScriptFile;
+        ? sourceScriptFile
+        : _gameManager.currentScriptFile;
     final scriptPath = await ScriptContentModifier.getCurrentScriptFilePath(
       scriptFileForWrite,
     );
@@ -1485,9 +1518,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       return false;
     }
     final targetLine = _gameManager.currentDialogueSourceLine;
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print(
-          'ExpressionWheel: apply music -> script=$sourceScriptFile, line=$targetLine, music=$selectedMusic');
+        'ExpressionWheel: apply music -> script=$sourceScriptFile, line=$targetLine, music=$selectedMusic',
+      );
     }
     return ScriptContentModifier.modifyMusicNearDialogue(
       scriptFilePath: scriptPath,
@@ -1521,7 +1555,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _musicPreviewPlayingId = null;
       _expressionWheelCenter = null;
     });
-    if (kEngineDebugMode) {
+    if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: state cleared');
     }
   }
@@ -1572,7 +1606,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       },
       canFastForward: () {
         // 检查是否有弹窗或菜单显示，如果有则不能快进
-        final hasOverlayOpen = _isShowingMenu ||
+        final hasOverlayOpen =
+            _isShowingMenu ||
             _showSaveOverlay ||
             _showLoadOverlay ||
             _showReviewOverlay ||
@@ -1580,10 +1615,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             _showDeveloperPanel ||
             _showDebugPanel ||
             _showExpressionSelector ||
+            _showFloatingScriptEditor ||
             _isAnyCommandMenuOpen;
-        // 禁用在视频播放时的快进功能
-        final isPlayingMovie = _gameManager.currentState.movieFile != null;
-        return !hasOverlayOpen && !isPlayingMovie;
+        return !hasOverlayOpen && !_isBlockingCinematicInput;
       },
       setGameManagerFastForward: (isFastForwarding) {
         // 通知GameManager快进状态变化
@@ -1615,7 +1649,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       },
       canSkip: () {
         // 检查是否有弹窗或菜单显示，如果有则不能快进
-        final hasOverlayOpen = _isShowingMenu ||
+        final hasOverlayOpen =
+            _isShowingMenu ||
             _showSaveOverlay ||
             _showLoadOverlay ||
             _showReviewOverlay ||
@@ -1623,10 +1658,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             _showDeveloperPanel ||
             _showDebugPanel ||
             _showExpressionSelector ||
+            _showFloatingScriptEditor ||
             _isAnyCommandMenuOpen;
-        // 禁用在视频播放时的快进功能
-        final isPlayingMovie = _gameManager.currentState.movieFile != null;
-        return !hasOverlayOpen && !isPlayingMovie;
+        return !hasOverlayOpen && !_isBlockingCinematicInput;
       },
     );
 
@@ -1639,7 +1673,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       onScrollForward: () {
         // 选项界面允许滚轮事件进入以支持“回滚->观看记录”，
         // 但前滚推进剧情在选项界面仍需禁用。
-        final hasOverlayOpen = _isShowingMenu ||
+        final hasOverlayOpen =
+            _isShowingMenu ||
             _showSaveOverlay ||
             _showLoadOverlay ||
             _showReviewOverlay ||
@@ -1647,9 +1682,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             _showDeveloperPanel ||
             _showDebugPanel ||
             _showExpressionSelector ||
+            _showFloatingScriptEditor ||
             _isAnyCommandMenuOpen;
-        final isPlayingMovie = _gameManager.currentState.movieFile != null;
-        if (hasOverlayOpen || isPlayingMovie) {
+        if (hasOverlayOpen || _isBlockingCinematicInput) {
           return;
         }
         // 向前滚动: 推进对话
@@ -1663,21 +1698,21 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       shouldHandleScroll: () {
         // 选项界面不再阻止滚轮回滚，以便唤起观看记录。
         // 这里仍阻止其他弹窗，避免误触。
-        final hasOverlayOpen = _showSaveOverlay ||
+        final hasOverlayOpen =
+            _showSaveOverlay ||
             _showLoadOverlay ||
             _showReviewOverlay ||
             _showSettings ||
             _showDeveloperPanel ||
             _showDebugPanel ||
             _showExpressionSelector ||
+            _showFloatingScriptEditor ||
             _isAnyCommandMenuOpen;
 
-        // 检查是否正在播放视频
-        final isPlayingMovie = _gameManager.currentState.movieFile != null;
         final isUIHidden = GlobalRightClickUIManager().isUIHidden;
 
         // 隐藏 UI 后滚轮与触控板手势专用于查看画面，不得推进或回滚剧情。
-        return !hasOverlayOpen && !isPlayingMovie && !isUIHidden;
+        return !hasOverlayOpen && !_isBlockingCinematicInput && !isUIHidden;
       },
     );
   }
@@ -1698,7 +1733,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       },
       canAutoPlay: () {
         // 检查是否有弹窗或菜单显示，如果有则不能自动播放
-        final hasOverlayOpen = _isShowingMenu ||
+        final hasOverlayOpen =
+            _isShowingMenu ||
             _showSaveOverlay ||
             _showLoadOverlay ||
             _showReviewOverlay ||
@@ -1708,9 +1744,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             _showExpressionSelector ||
             _isAnyCommandMenuOpen ||
             _isFastForwarding; // 快进时不能自动播放
-        // 禁用在视频播放时的自动播放功能
-        final isPlayingMovie = _gameManager.currentState.movieFile != null;
-        return !hasOverlayOpen && !isPlayingMovie;
+        return !hasOverlayOpen && !_isBlockingCinematicInput;
       },
     );
 

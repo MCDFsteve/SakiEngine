@@ -61,6 +61,27 @@ class MusicManager extends ChangeNotifier {
   static final MusicManager _instance = MusicManager._internal();
   factory MusicManager() => _instance;
   MusicManager._internal();
+
+  static String buildVoiceAssetPath(String rawVoiceFile) {
+    var voiceFile = rawVoiceFile.trim();
+    if ((voiceFile.startsWith('"') && voiceFile.endsWith('"')) ||
+        (voiceFile.startsWith("'") && voiceFile.endsWith("'"))) {
+      if (voiceFile.length >= 2) {
+        voiceFile = voiceFile.substring(1, voiceFile.length - 1).trim();
+      }
+    }
+    if (voiceFile.isEmpty) {
+      return '';
+    }
+    if (!voiceFile.contains('.')) {
+      voiceFile = '$voiceFile.mp3';
+    }
+    if (voiceFile.startsWith('Assets/voice/')) {
+      return voiceFile;
+    }
+    return 'Assets/voice/$voiceFile';
+  }
+
   static const bool _musicSourceDiagnostics = bool.fromEnvironment(
     'SAKI_MUSIC_SOURCE_DIAG',
     defaultValue: false,
@@ -79,6 +100,7 @@ class MusicManager extends ChangeNotifier {
     AudioTrackType.music: AudioPlayer(),
     AudioTrackType.sound: AudioPlayer(),
   };
+  AudioPlayer _voicePlayer = AudioPlayer();
 
   // 音效可能需要多个播放器来支持重叠播放
   final List<AudioPlayer> _soundPlayers = [];
@@ -130,6 +152,7 @@ class MusicManager extends ChangeNotifier {
     if (_initialized) {
       await _updateTrackVolume(AudioTrackType.music);
       await _updateTrackVolume(AudioTrackType.sound);
+      await _updateVoiceVolume();
       return;
     }
     final activeInitialization = _initializeFuture;
@@ -175,10 +198,14 @@ class MusicManager extends ChangeNotifier {
       'sound-main',
     );
 
+    await _voicePlayer.setLoopMode(LoopMode.off);
+    _attachPlayerDiagnostics(_voicePlayer, 'voice-main');
+
     await _ensureSoundPlayerPool();
 
     await _updateTrackVolume(AudioTrackType.music);
     await _updateTrackVolume(AudioTrackType.sound);
+    await _updateVoiceVolume();
   }
 
   Future<void> _ensureSoundPlayerPool() async {
@@ -255,6 +282,7 @@ class MusicManager extends ChangeNotifier {
       for (final player in _soundPlayers) {
         await player.pause();
       }
+      await _voicePlayer.pause();
     }
 
     notifyListeners();
@@ -273,6 +301,7 @@ class MusicManager extends ChangeNotifier {
     _previewSoundVolume = null;
     await _dataManager.setSoundVolume(normalizedVolume, _projectName!);
     await _updateTrackVolume(AudioTrackType.sound);
+    await _updateVoiceVolume();
     notifyListeners();
   }
 
@@ -285,7 +314,13 @@ class MusicManager extends ChangeNotifier {
   Future<void> previewSoundVolume(double volume) async {
     _previewSoundVolume = volume.clamp(0.0, 1.0).toDouble();
     await _updateTrackVolume(AudioTrackType.sound);
+    await _updateVoiceVolume();
     notifyListeners();
+  }
+
+  Future<void> _updateVoiceVolume() async {
+    final volume = _dataManager.isSoundEnabled ? soundVolume : 0.0;
+    await _voicePlayer.setVolume(volume);
   }
 
   /// 统一的轨道音量更新方法
@@ -726,6 +761,47 @@ class MusicManager extends ChangeNotifier {
     } else {
       // 直接设置音量
       await _updateTrackVolume(AudioTrackType.sound);
+    }
+  }
+
+  /// Loads and starts a one-shot dialogue voice cue without waiting for it to end.
+  /// A new cue always interrupts the previous one on this dedicated channel.
+  Future<void> playVoice(String assetPath) async {
+    final activeRelease = _gameAudioReleaseFuture;
+    if (activeRelease != null) {
+      await activeRelease;
+    }
+
+    if (!_dataManager.isSoundEnabled) {
+      return;
+    }
+
+    final sessionGeneration = _audioSessionGeneration;
+    await _voicePlayer.stop();
+    await _voicePlayer.setLoopMode(LoopMode.off);
+    await _setPlayerSource(_voicePlayer, assetPath, sourceLabel: 'voice');
+    if (sessionGeneration != _audioSessionGeneration) {
+      return;
+    }
+    await _updateVoiceVolume();
+    final playFuture = _voicePlayer.play();
+    unawaited(
+      playFuture.catchError((Object error, StackTrace stackTrace) {
+        if (kEngineDebugMode) {
+          print('[MusicManager] voice.play failed: $assetPath, error=$error');
+          print(stackTrace);
+        }
+      }),
+    );
+  }
+
+  Future<void> stopVoice() async {
+    try {
+      await _voicePlayer.stop();
+    } catch (error) {
+      if (kEngineDebugMode) {
+        print('[MusicManager] stopVoice failed: $error');
+      }
     }
   }
 
@@ -1217,6 +1293,7 @@ class MusicManager extends ChangeNotifier {
     _soundPlayerIndex = 0;
 
     final previousMainSound = _trackPlayers[AudioTrackType.sound]!;
+    final previousVoice = _voicePlayer;
     final previousPool = List<AudioPlayer>.of(_soundPlayers);
     _soundPlayers.clear();
 
@@ -1226,7 +1303,16 @@ class MusicManager extends ChangeNotifier {
     _trackPlayers[AudioTrackType.sound] = replacementMainSound;
     await _updateTrackVolume(AudioTrackType.sound);
 
-    final playersToRelease = <AudioPlayer>[previousMainSound, ...previousPool];
+    _voicePlayer = AudioPlayer();
+    await _voicePlayer.setLoopMode(LoopMode.off);
+    _attachPlayerDiagnostics(_voicePlayer, 'voice-main');
+    await _updateVoiceVolume();
+
+    final playersToRelease = <AudioPlayer>[
+      previousMainSound,
+      previousVoice,
+      ...previousPool,
+    ];
     if (_memoryLifecycleDiagnostics) {
       print(
         '[SAKI_MEMORY][AUDIO] releasing '
@@ -1270,6 +1356,7 @@ class MusicManager extends ChangeNotifier {
 
     final players = <AudioPlayer>[
       ..._trackPlayers.values,
+      _voicePlayer,
       ..._soundPlayers,
     ];
     _trackPlayers.clear();

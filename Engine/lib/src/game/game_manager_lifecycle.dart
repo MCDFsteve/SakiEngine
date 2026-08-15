@@ -76,13 +76,21 @@ extension _GameManagerLifecycle on GameManager {
     String scriptName,
     GameStateSnapshot snapshot, {
     bool shouldReExecute = true,
+    bool reloadCharacterConfigs = true,
+    bool restoreDialogueVoice = true,
   }) async {
     //print('📚 restoreFromSnapshot: scriptName = $scriptName');
     //print('📚 restoreFromSnapshot: snapshot.scriptIndex = ${snapshot.scriptIndex}');
     //print('📚 restoreFromSnapshot: isNvlMode = ${snapshot.isNvlMode}');
     //print('📚 restoreFromSnapshot: nvlDialogues count = ${snapshot.nvlDialogues.length}');
 
-    await _loadConfigs();
+    // External loads may come from another session/content revision and must
+    // refresh character configuration. History rollback stays in this active
+    // session and deliberately keeps the warm composite cache so the restored
+    // sprite remains continuously paintable.
+    if (reloadCharacterConfigs) {
+      await _loadConfigs();
+    }
     await GlobalVariableManager().init(); // 初始化全局变量管理器
     await AnimationManager.loadAnimations(); // 加载动画
     _script = await _scriptMerger.getMergedScript();
@@ -258,6 +266,12 @@ extension _GameManagerLifecycle on GameManager {
         }
       }
       _gameStateController.add(_currentState);
+    }
+
+    // 读档恢复的是“对白显示完成后的快照”，不会重新执行该句之前的 voice。
+    // 历史回退会在场景转场结束后自行恢复语音，因此通过参数避免重复播放。
+    if (restoreDialogueVoice && !shouldReExecute) {
+      await _restoreVoiceForDialogue(displayedDialogueScriptIndex);
     }
   }
 

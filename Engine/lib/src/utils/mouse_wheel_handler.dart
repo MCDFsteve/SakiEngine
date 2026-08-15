@@ -23,9 +23,7 @@ class MouseWheelHandler {
   });
 
   void _log(String message) {
-    if (kEngineDebugMode) {
-      debugPrint('[MouseWheelHandler] $message');
-    }
+    sakiDiagnosticLog('[MouseWheelHandler] $message');
   }
 
   /// 处理指针信号事件

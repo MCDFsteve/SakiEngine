@@ -570,7 +570,7 @@ class SakiPerformanceMonitor extends ChangeNotifier {
     }
   }
 
-  static bool get _shouldWriteTerminalLogs => kEngineDebugMode || kProfileMode;
+  static bool get _shouldWriteTerminalLogs => kSakiDiagnosticLogs;
 
   static double _average(List<double> values) {
     if (values.isEmpty) {

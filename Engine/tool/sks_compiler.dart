@@ -386,6 +386,12 @@ class _SksCompiler {
     if (node is StopSoundNode) {
       return 'StopSoundNode()';
     }
+    if (node is VoiceNode) {
+      return 'VoiceNode(${_str(node.voiceFile)})';
+    }
+    if (node is StopVoiceNode) {
+      return 'StopVoiceNode()';
+    }
     if (node is ApiCallNode) {
       return 'ApiCallNode(${_str(node.apiName)}, parameters: ${_stringMap(node.parameters)})';
     }

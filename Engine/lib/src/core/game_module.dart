@@ -5,6 +5,7 @@ import 'package:sakiengine/src/screens/game_play_screen.dart';
 import 'package:sakiengine/src/screens/save_load_screen.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/config/project_info_manager.dart';
+import 'package:sakiengine/src/core/script_canvas.dart';
 import 'package:sakiengine/src/game/game_manager.dart';
 import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 import 'package:sakiengine/src/utils/binary_serializer.dart';
@@ -31,10 +32,8 @@ class CharacterLighting {
   final Color multiplyColor;
   final double strength;
 
-  const CharacterLighting({
-    required this.multiplyColor,
-    this.strength = 1.0,
-  }) : assert(strength >= 0.0 && strength <= 1.0);
+  const CharacterLighting({required this.multiplyColor, this.strength = 1.0})
+    : assert(strength >= 0.0 && strength <= 1.0);
 
   ColorFilter get colorFilter {
     final argb = multiplyColor.toARGB32();
@@ -211,6 +210,19 @@ abstract class GameModule {
     return null;
   }
 
+  /// Resolves artwork for an active `api canvas.play` performance.
+  ///
+  /// The engine supplies a full-screen [Canvas], its exact [Size], and a
+  /// normalized 0–1 timeline through [ScriptCanvasDefinition]. Projects only
+  /// register named artwork here; timing and input blocking stay in Engine.
+  ScriptCanvasDefinition? resolveScriptCanvas({
+    required String canvasId,
+    required GameState gameState,
+    required int scriptIndex,
+  }) {
+    return null;
+  }
+
   /// 创建自定义状态指示器层（如快进/自动播放/暂停）。
   /// 返回 `null` 时使用引擎默认处理。
   Widget? createStatusIndicatorLayer({
@@ -229,6 +241,15 @@ abstract class GameModule {
     required GameState gameState,
     required int scriptIndex,
   }) async {
+    final canvasResult = _handleScriptCanvasApi(
+      apiName: apiName,
+      params: params,
+      gameState: gameState,
+    );
+    if (canvasResult != null) {
+      return canvasResult;
+    }
+
     final normalizedApiName = apiName.trim().toLowerCase();
     if (normalizedApiName.startsWith('steam.achievement.')) {
       final service = SteamAchievementService.instance;
@@ -354,13 +375,7 @@ abstract class GameModule {
 }
 
 String? resolveSteamAchievementId(Map<String, String> params) {
-  const keys = <String>[
-    'id',
-    'achievement',
-    'achievement_id',
-    'key',
-    'name',
-  ];
+  const keys = <String>['id', 'achievement', 'achievement_id', 'key', 'name'];
   for (final key in keys) {
     final value = params[key];
     if (value != null && value.trim().isNotEmpty) {
@@ -368,6 +383,76 @@ String? resolveSteamAchievementId(Map<String, String> params) {
     }
   }
   return null;
+}
+
+ScriptApiExecutionResult? _handleScriptCanvasApi({
+  required String apiName,
+  required Map<String, String> params,
+  required GameState gameState,
+}) {
+  final normalizedApiName = apiName.trim().toLowerCase();
+  if (normalizedApiName == 'canvas.clear' ||
+      normalizedApiName == 'canvas.stop') {
+    return ScriptApiExecutionResult.handled(
+      nextState: gameState.copyWith(clearScriptCanvas: true),
+    );
+  }
+  if (normalizedApiName != 'canvas.play') {
+    return null;
+  }
+
+  final canvasId = (params['id'] ?? params['name'])?.trim();
+  if (canvasId == null || canvasId.isEmpty) {
+    if (kEngineDebugMode) {
+      debugPrint('[ScriptCanvas] canvas.play requires a non-empty id');
+    }
+    return ScriptApiExecutionResult.handled();
+  }
+
+  final parsedDuration = double.tryParse(params['duration']?.trim() ?? '');
+  final durationSeconds = parsedDuration != null && parsedDuration.isFinite
+      ? parsedDuration.clamp(0.0, 3600.0).toDouble()
+      : 0.0;
+  final shouldWait = _parseScriptApiBool(
+    params['wait'],
+    defaultValue: durationSeconds > 0,
+  );
+  final shouldClear = _parseScriptApiBool(
+    params['clear'],
+    defaultValue: shouldWait,
+  );
+  final duration = Duration(milliseconds: (durationSeconds * 1000).round());
+  final activeState = gameState.copyWith(
+    scriptCanvasId: canvasId,
+    scriptCanvasDurationSeconds: durationSeconds,
+    scriptCanvasRevision: gameState.scriptCanvasRevision + 1,
+    clearDialogueAndSpeaker: true,
+  );
+
+  return ScriptApiExecutionResult.handled(
+    nextState: activeState,
+    waitDuration: shouldWait ? duration : null,
+    stateAfterWait: shouldWait && shouldClear
+        ? activeState.copyWith(clearScriptCanvas: true)
+        : null,
+  );
+}
+
+bool _parseScriptApiBool(String? raw, {required bool defaultValue}) {
+  switch (raw?.trim().toLowerCase()) {
+    case 'true':
+    case '1':
+    case 'yes':
+    case 'on':
+      return true;
+    case 'false':
+    case '0':
+    case 'no':
+    case 'off':
+      return false;
+    default:
+      return defaultValue;
+  }
 }
 
 /// 默认游戏模块实现 - 使用src/下的默认组件
@@ -436,9 +521,7 @@ class DefaultGameModule implements GameModule {
     GameManager? gameManager,
     Function(SaveSlot)? onLoadSlot,
   }) {
-    return SettingsScreen(
-      onClose: onClose,
-    );
+    return SettingsScreen(onClose: onClose);
   }
 
   @override
@@ -550,6 +633,15 @@ class DefaultGameModule implements GameModule {
   }
 
   @override
+  ScriptCanvasDefinition? resolveScriptCanvas({
+    required String canvasId,
+    required GameState gameState,
+    required int scriptIndex,
+  }) {
+    return null;
+  }
+
+  @override
   Widget? createStatusIndicatorLayer({
     required BuildContext context,
     required GameState gameState,
@@ -565,6 +657,15 @@ class DefaultGameModule implements GameModule {
     required GameState gameState,
     required int scriptIndex,
   }) async {
+    final canvasResult = _handleScriptCanvasApi(
+      apiName: apiName,
+      params: params,
+      gameState: gameState,
+    );
+    if (canvasResult != null) {
+      return canvasResult;
+    }
+
     final normalizedApiName = apiName.trim().toLowerCase();
     if (normalizedApiName.startsWith('steam.achievement.')) {
       final service = SteamAchievementService.instance;

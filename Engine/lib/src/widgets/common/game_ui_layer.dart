@@ -70,16 +70,18 @@ class GameUILayer extends StatefulWidget {
   final ExpressionSelectorManager? expressionSelectorManager;
 
   // 对话框创建函数
-  final Widget Function(
-      {Key? key,
-      String? speaker,
-      String? speakerAlias,
-      String? dialogueTag,
-      required String dialogue,
-      required bool isFastForwarding,
-      required int scriptIndex,
-      VoidCallback? onToggleSettings,
-      VoidCallback? onToggleReview}) createDialogueBox;
+  final Widget Function({
+    Key? key,
+    String? speaker,
+    String? speakerAlias,
+    String? dialogueTag,
+    required String dialogue,
+    required bool isFastForwarding,
+    required int scriptIndex,
+    VoidCallback? onToggleSettings,
+    VoidCallback? onToggleReview,
+  })
+  createDialogueBox;
 
   const GameUILayer({
     super.key,
@@ -139,7 +141,8 @@ class GameUILayerState extends State<GameUILayer> {
         widget.showDebugPanel ||
         widget.showExpressionSelector ||
         // 轮盘由外层 GamePlayScreen 控制并阻断输入，UI层无需额外状态字段。
-        widget.gameState.movieFile != null; // 添加视频播放状态检查
+        widget.gameState.movieFile != null ||
+        widget.gameState.scriptCanvasId != null;
   }
 
   @override
@@ -161,14 +164,16 @@ class GameUILayerState extends State<GameUILayer> {
       _isChoiceSelectionPending = true;
     });
 
-    unawaited(widget.gameManager.jumpToLabel(targetLabel).whenComplete(() {
-      if (!mounted || widget.gameState.currentNode is! MenuNode) {
-        return;
-      }
-      setState(() {
-        _isChoiceSelectionPending = false;
-      });
-    }));
+    unawaited(
+      widget.gameManager.jumpToLabel(targetLabel).whenComplete(() {
+        if (!mounted || widget.gameState.currentNode is! MenuNode) {
+          return;
+        }
+        setState(() {
+          _isChoiceSelectionPending = false;
+        });
+      }),
+    );
   }
 
   @override
@@ -176,8 +181,10 @@ class GameUILayerState extends State<GameUILayer> {
     final isMobile = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
     final uiScale = context.scaleFor(ComponentType.menu);
     final mediaPadding = MediaQuery.of(context).padding;
-    final shouldShowQuickMenu = widget.gameModule.showQuickMenu &&
+    final shouldShowQuickMenu =
+        widget.gameModule.showQuickMenu &&
         widget.gameState.movieFile == null &&
+        widget.gameState.scriptCanvasId == null &&
         !widget.gameManager.isCurrentSceneChapter;
     final quickMenuAreaWidth = shouldShowQuickMenu
         ? 100.0 * uiScale + (isMobile ? mediaPadding.left : 0.0)
@@ -185,13 +192,15 @@ class GameUILayerState extends State<GameUILayer> {
     final dialogueHistory = widget.gameManager.getDialogueHistory();
     final isMenuNode =
         widget.gameState.currentNode is MenuNode && !_isChoiceSelectionPending;
-    final latestDialogueEntry =
-        dialogueHistory.isNotEmpty ? dialogueHistory.last : null;
+    final latestDialogueEntry = dialogueHistory.isNotEmpty
+        ? dialogueHistory.last
+        : null;
     final menuPreviousDialogueEntry = isMenuNode && dialogueHistory.length >= 2
         ? dialogueHistory[dialogueHistory.length - 2]
         : null;
-    final leadingDialogueBeforeMenu =
-        dialogueHistory.isNotEmpty ? dialogueHistory.last.dialogue : null;
+    final leadingDialogueBeforeMenu = dialogueHistory.isNotEmpty
+        ? dialogueHistory.last.dialogue
+        : null;
     final dialogueForDialogueBox =
         menuPreviousDialogueEntry?.dialogue ?? widget.gameState.dialogue;
     final speakerForDialogueBox =
@@ -199,23 +208,24 @@ class GameUILayerState extends State<GameUILayer> {
     final dialogueTagForDialogueBox =
         menuPreviousDialogueEntry?.dialogueTag ?? widget.gameState.dialogueTag;
     final speakerAliasForDialogueBox = widget.gameState.speakerAlias;
-    final scriptIndexForDialogueBox = menuPreviousDialogueEntry?.scriptIndex ??
+    final scriptIndexForDialogueBox =
+        menuPreviousDialogueEntry?.scriptIndex ??
         latestDialogueEntry?.scriptIndex ??
         widget.gameManager.currentScriptIndex;
     final shouldShowNormalDialogue =
         dialogueForDialogueBox != null && !widget.gameState.isNvlMode;
     final enableDialogueSwitcherAnimation =
         widget.gameModule.enableDialogueSwitcherAnimation &&
-            !widget.gameState.isFastForwarding;
+        !widget.gameState.isFastForwarding;
     final enableDialogueSwitcherSlideAnimation =
         enableDialogueSwitcherAnimation &&
-            widget.gameModule.enableDialogueSwitcherSlideAnimation;
-    final customStatusIndicatorLayer =
-        widget.gameModule.createStatusIndicatorLayer(
-      context: context,
-      gameState: widget.gameState,
-      gameManager: widget.gameManager,
-    );
+        widget.gameModule.enableDialogueSwitcherSlideAnimation;
+    final customStatusIndicatorLayer = widget.gameModule
+        .createStatusIndicatorLayer(
+          context: context,
+          gameState: widget.gameState,
+          gameManager: widget.gameManager,
+        );
 
     final stackContent = Stack(
       children: [
@@ -232,22 +242,22 @@ class GameUILayerState extends State<GameUILayer> {
               }
 
               if (!enableDialogueSwitcherSlideAnimation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: child,
-                );
+                return FadeTransition(opacity: animation, child: child);
               }
 
               return FadeTransition(
                 opacity: animation,
                 child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 0.1),
-                    end: Offset.zero,
-                  ).animate(CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOut,
-                  )),
+                  position:
+                      Tween<Offset>(
+                        begin: const Offset(0, 0.1),
+                        end: Offset.zero,
+                      ).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOut,
+                        ),
+                      ),
                   child: child,
                 ),
               );
@@ -293,7 +303,8 @@ class GameUILayerState extends State<GameUILayer> {
         HideableUI(
           child: AnimatedSwitcher(
             duration: widget.gameState.isFastForwarding
-                ? Duration.zero // 快进模式下跳过动画
+                ? Duration
+                      .zero // 快进模式下跳过动画
                 : const Duration(milliseconds: 400),
             transitionBuilder: (Widget child, Animation<double> animation) {
               // 快进模式下跳过淡入淡出动画，直接显示
@@ -301,10 +312,7 @@ class GameUILayerState extends State<GameUILayer> {
                 return child;
               }
 
-              return FadeTransition(
-                opacity: animation,
-                child: child,
-              );
+              return FadeTransition(opacity: animation, child: child);
             },
             child: widget.gameState.isNvlOverlayVisible
                 ? NvlScreen(
@@ -326,7 +334,8 @@ class GameUILayerState extends State<GameUILayer> {
           isMobile
               ? Positioned(
                   left: 10 * uiScale + mediaPadding.left, // 左边距 + 刘海安全区
-                  top: (MediaQuery.of(context).size.height -
+                  top:
+                      (MediaQuery.of(context).size.height -
                           MediaQuery.of(context).size.height * 0.9) /
                       2, // 垂直居中
                   child: HideableUI(
@@ -397,11 +406,7 @@ class GameUILayerState extends State<GameUILayer> {
           ),
 
         if (customStatusIndicatorLayer != null)
-          Positioned.fill(
-            child: HideableUI(
-              child: customStatusIndicatorLayer,
-            ),
-          ),
+          Positioned.fill(child: HideableUI(child: customStatusIndicatorLayer)),
 
         // 回顾界面
         if (widget.showReviewOverlay)
@@ -422,7 +427,8 @@ class GameUILayerState extends State<GameUILayer> {
               mode: SaveLoadMode.save,
               gameManager: widget.gameManager,
               onClose: widget.onToggleSave,
-              onLoadSlot: widget.onLoadGame ??
+              onLoadSlot:
+                  widget.onLoadGame ??
                   (saveSlot) {
                     // 如果没有回调，使用传统的导航方式（兼容性）
                     Navigator.of(context).pushAndRemoveUntil(
@@ -443,7 +449,8 @@ class GameUILayerState extends State<GameUILayer> {
               mode: SaveLoadMode.load,
               gameManager: widget.gameManager,
               onClose: widget.onToggleLoad,
-              onLoadSlot: widget.onLoadGame ??
+              onLoadSlot:
+                  widget.onLoadGame ??
                   (saveSlot) {
                     // 如果没有回调，使用传统的导航方式（兼容性）
                     Navigator.of(context).pushAndRemoveUntil(
@@ -463,7 +470,8 @@ class GameUILayerState extends State<GameUILayer> {
             child: widget.gameModule.createSettingsScreen(
               onClose: widget.onToggleSettings,
               gameManager: widget.gameManager,
-              onLoadSlot: widget.onLoadGame ??
+              onLoadSlot:
+                  widget.onLoadGame ??
                   (saveSlot) {
                     // 如果没有回调，使用传统的导航方式（兼容性）
                     Navigator.of(context).pushAndRemoveUntil(
@@ -505,9 +513,7 @@ class GameUILayerState extends State<GameUILayer> {
         // 调试面板 (发行版也可用，方便玩家复制日志)
         if (widget.showDebugPanel)
           HideableUI(
-            child: DebugPanelDialog(
-              onClose: widget.onToggleDebugPanel,
-            ),
+            child: DebugPanelDialog(onClose: widget.onToggleDebugPanel),
           ),
 
         // 表情选择器 (仅Debug模式)
@@ -515,8 +521,8 @@ class GameUILayerState extends State<GameUILayer> {
           HideableUI(
             child: Builder(
               builder: (context) {
-                final speakerInfo =
-                    widget.expressionSelectorManager?.getCurrentSpeakerInfo();
+                final speakerInfo = widget.expressionSelectorManager
+                    ?.getCurrentSpeakerInfo();
                 if (speakerInfo == null) {
                   return const SizedBox.shrink();
                 }
@@ -529,10 +535,10 @@ class GameUILayerState extends State<GameUILayer> {
                   onSelectionChanged: (pose, expression) {
                     widget.expressionSelectorManager
                         ?.handleExpressionSelectionChanged(
-                      speakerInfo.characterId,
-                      pose,
-                      expression,
-                    );
+                          speakerInfo.characterId,
+                          pose,
+                          expression,
+                        );
                   },
                   onClose: widget.onToggleExpressionSelector,
                 );

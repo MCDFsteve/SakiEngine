@@ -64,6 +64,7 @@ import 'package:sakiengine/src/utils/read_text_skip_manager.dart';
 import 'package:sakiengine/src/utils/settings_manager.dart';
 import 'package:sakiengine/src/effects/scene_transition_effects.dart';
 import 'package:sakiengine/src/widgets/movie_player.dart'; // 新增：视频播放器导入
+import 'package:sakiengine/src/widgets/script_canvas_layer.dart';
 import 'package:sakiengine/src/utils/dialogue_shake_effect.dart'; // 新增：震动效果导入
 import 'package:sakiengine/src/rendering/image_sampling.dart';
 import 'package:sakiengine/src/utils/music_manager.dart';
@@ -528,6 +529,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     setState(update);
   }
 
+  bool get _isBlockingCinematicInput {
+    final gameState = _gameManager.currentState;
+    return gameState.movieFile != null || gameState.scriptCanvasId != null;
+  }
+
   bool _hasVisibleStartupText(GameState gameState) {
     final hasNormalDialogue =
         !gameState.isNvlMode &&
@@ -549,12 +555,14 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         );
     final hasScriptOverlayText =
         gameState.scriptOverlayText?.trim().isNotEmpty ?? false;
+    final hasScriptCanvas = gameState.scriptCanvasId != null;
 
     return hasNormalDialogue ||
         hasNvlDialogue ||
         hasMenuLeadingDialogue ||
         hasChoiceText ||
-        hasScriptOverlayText;
+        hasScriptOverlayText ||
+        hasScriptCanvas;
   }
 
   Widget _buildStableInitialLoadingOverlay(BuildContext context) {
@@ -802,6 +810,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         if (signal is PointerScrollEvent) {
           _lastPointerPosition = signal.localPosition;
         }
+        if (_showFloatingScriptEditor) {
+          return;
+        }
         _mouseWheelHandler.handlePointerSignal(signal);
       },
       onPointerHover: (event) {
@@ -815,6 +826,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       },
       onPointerPanZoomUpdate: (event) {
         _lastPointerPosition = event.localPosition;
+        if (_showFloatingScriptEditor) {
+          return;
+        }
         _mouseWheelHandler.handlePanZoomUpdate(event);
       },
       child: PopScope(
@@ -853,6 +867,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   _showDeveloperPanel ||
                   _showDebugPanel ||
                   _showExpressionSelector ||
+                  _showFloatingScriptEditor ||
                   _isAnyCommandMenuOpen;
               // 选项界面允许“回滚->观看记录”，但仍视为推进输入的阻断态。
               final hasOverlayOpenExceptMenu =
@@ -863,11 +878,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   _showDeveloperPanel ||
                   _showDebugPanel ||
                   _showExpressionSelector ||
+                  _showFloatingScriptEditor ||
                   _isAnyCommandMenuOpen;
 
               if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                if (!hasOverlayOpen &&
-                    _gameManager.currentState.movieFile == null) {
+                if (!hasOverlayOpen && !_isBlockingCinematicInput) {
                   _dialogueProgressionManager.progressDialogue();
                   _autoPlayManager?.onManualProgress();
                 }
@@ -877,8 +892,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
               }
 
               if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                if (!hasOverlayOpenExceptMenu &&
-                    _gameManager.currentState.movieFile == null) {
+                if (!hasOverlayOpenExceptMenu && !_isBlockingCinematicInput) {
                   unawaited(_handleMouseRollbackAction());
                 }
                 return hasOverlayOpenExceptMenu
@@ -888,9 +902,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
               if (event.logicalKey == LogicalKeyboardKey.enter ||
                   event.logicalKey == LogicalKeyboardKey.space) {
-                // 检查是否正在播放视频，如果是则不推进剧情
-                if (!hasOverlayOpen &&
-                    _gameManager.currentState.movieFile == null) {
+                // 全屏视频或脚本画布播放时不接受剧情推进。
+                if (!hasOverlayOpen && !_isBlockingCinematicInput) {
                   _dialogueProgressionManager.progressDialogue();
                   // 通知自动播放管理器有手动推进
                   _autoPlayManager?.onManualProgress();
@@ -923,6 +936,14 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                     }
                     final gameState = snapshot.data!;
                     final gameModule = widget.gameModule ?? DefaultGameModule();
+                    final scriptCanvasId = gameState.scriptCanvasId;
+                    final scriptCanvasDefinition = scriptCanvasId == null
+                        ? null
+                        : gameModule.resolveScriptCanvas(
+                            canvasId: scriptCanvasId,
+                            gameState: gameState,
+                            scriptIndex: _gameManager.currentScriptIndex,
+                          );
 
                     _scheduleInitialLoadingReleaseIfReady(gameState);
 
@@ -972,260 +993,318 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                       });
                     }
 
-                    return MouseParallax(
-                      maxOffset: const Offset(26, 16),
-                      enabled:
-                          _isParallaxEnabled &&
-                          !_isHiddenUiSceneTransformActive,
-                      child: RepaintBoundary(
-                        key: _saveThumbnailCaptureBoundaryKey,
-                        child: Stack(
-                          children: [
-                            RightClickUIManager(
-                              // 背景层 - 不会被隐藏的内容（场景、角色等）
-                              backgroundChild: RepaintBoundary(
-                                key: _sceneTransitionCaptureBoundaryKey,
-                                child: _buildSceneWithFilter(gameState),
-                              ),
-                              enableHiddenUiSceneZoom:
-                                  gameModule.enableHiddenUiSceneZoom,
-                              hiddenUiSceneMaxZoom:
-                                  gameModule.hiddenUiSceneMaxZoom,
-                              onHiddenUiSceneTransformChanged: (isActive) {
-                                if (!mounted ||
-                                    _isHiddenUiSceneTransformActive ==
-                                        isActive) {
-                                  return;
-                                }
-                                setState(() {
-                                  _isHiddenUiSceneTransformActive = isActive;
-                                });
-                              },
-                              // 左键点击回调 - 推进剧情
-                              onLeftClick: () {
-                                // 检查是否有弹窗或菜单显示
-                                final hasOverlayOpen =
-                                    _isShowingMenu ||
-                                    _showSaveOverlay ||
-                                    _showLoadOverlay ||
-                                    _showReviewOverlay ||
-                                    _showSettings ||
-                                    _showDeveloperPanel ||
-                                    _showDebugPanel ||
-                                    _showExpressionSelector ||
-                                    _isAnyCommandMenuOpen;
-
-                                // 检查是否正在播放视频
-                                final isPlayingMovie =
-                                    gameState.movieFile != null;
-
-                                // 只有在没有弹窗且没有播放视频时才推进剧情
-                                if (!hasOverlayOpen && !isPlayingMovie) {
-                                  _dialogueProgressionManager
-                                      .progressDialogue();
-                                  // 通知自动播放管理器有手动推进
-                                  _autoPlayManager?.onManualProgress();
-                                }
-                              },
-                              // UI层 - 使用GameUILayer组件
-                              child: Stack(
-                                children: [
-                                  GameUILayer(
-                                    key: _gameUILayerKey,
-                                    gameState: gameState,
-                                    gameManager: _gameManager,
-                                    gameModule: gameModule,
-                                    dialogueProgressionManager:
-                                        _dialogueProgressionManager,
-                                    currentScript: _currentScript,
-                                    nvlScreenKey: _nvlScreenKey,
-                                    showReviewOverlay: _showReviewOverlay,
-                                    enableReviewOverscrollClose:
-                                        _mouseRollbackBehavior == 'history' &&
-                                        _reviewOpenedByMouseRollback,
-                                    showSaveOverlay: _showSaveOverlay,
-                                    showLoadOverlay: _showLoadOverlay,
-                                    showSettings: _showSettings,
-                                    showFlowchart: _showFlowchart,
-                                    showDeveloperPanel: _showDeveloperPanel,
-                                    showDebugPanel: _showDebugPanel,
-                                    showExpressionSelector:
-                                        _showExpressionSelector,
-                                    isShowingMenu: _isShowingMenu,
-                                    onToggleReview: _toggleReviewOverlay,
-                                    onToggleSave: _toggleSaveOverlayForCapture,
-                                    onToggleLoad: () {
-                                      _toggleLoadOverlayForCapture();
-                                    },
-                                    onQuickSave: _handleQuickSave, // 新增：快速存档回调
-                                    onToggleSettings: () {
-                                      _toggleSettingsOverlayForCapture();
-                                    },
-                                    onToggleDeveloperPanel: () => setState(
-                                      () => _showDeveloperPanel =
-                                          !_showDeveloperPanel,
-                                    ),
-                                    onToggleDebugPanel: () => setState(
-                                      () => _showDebugPanel = !_showDebugPanel,
-                                    ),
-                                    onToggleExpressionSelector: () => setState(
-                                      () => _showExpressionSelector =
-                                          !_showExpressionSelector,
-                                    ),
-                                    onHandleQuickMenuBack: _handleQuickMenuBack,
-                                    onHandlePreviousDialogue:
-                                        _handlePreviousDialogue,
-                                    onSkipRead:
-                                        _handleSkipReadText, // 新增：跳过已读文本回调
-                                    onAutoPlay: _handleAutoPlay, // 新增：自动播放回调
-                                    onThemeToggle: () => setState(
-                                      () {},
-                                    ), // 新增：主题切换回调 - 触发重建以更新UI
-                                    onFlowchart: () => setState(
-                                      () => _showFlowchart = !_showFlowchart,
-                                    ), // 新增：流程图回调
-                                    onJumpToHistoryEntry: _jumpToHistoryEntry,
-                                    onLoadGame: _handleLoadGame,
-                                    onProgressDialogue: () =>
-                                        _dialogueProgressionManager
-                                            .progressDialogue(),
-                                    expressionSelectorManager:
-                                        _expressionSelectorManager,
-                                    createDialogueBox: _createDialogueBox,
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MouseParallax(
+                          maxOffset: const Offset(26, 16),
+                          enabled:
+                              _isParallaxEnabled &&
+                              !_isHiddenUiSceneTransformActive,
+                          child: RepaintBoundary(
+                            key: _saveThumbnailCaptureBoundaryKey,
+                            child: Stack(
+                              children: [
+                                RightClickUIManager(
+                                  // 背景层 - 不会被隐藏的内容（场景、角色等）
+                                  backgroundChild: RepaintBoundary(
+                                    key: _sceneTransitionCaptureBoundaryKey,
+                                    child: _buildSceneWithFilter(gameState),
                                   ),
-                                  if (kEngineDebugMode &&
-                                      _showExpressionWheel &&
-                                      _expressionWheelSpeakerInfo != null &&
-                                      _expressionWheelExpressions.isNotEmpty)
-                                    ExpressionRadialWheel(
-                                      characterName:
-                                          _expressionWheelSpeakerInfo!
-                                              .speakerName,
-                                      currentExpression:
-                                          _expressionWheelSpeakerInfo!
-                                              .currentExpression,
-                                      expressions: _expressionWheelExpressions,
-                                      expressionImagePaths:
-                                          _expressionWheelImagePaths,
-                                      center:
-                                          _expressionWheelCenter ??
-                                          Offset(
-                                            MediaQuery.of(context).size.width /
-                                                2,
-                                            MediaQuery.of(context).size.height /
-                                                2,
-                                          ),
-                                      onHighlightedExpressionChanged:
-                                          (expression) {
-                                            _expressionWheelHighlightedExpression =
-                                                expression;
-                                          },
-                                    ),
-                                  if (kEngineDebugMode &&
-                                      _showCharacterWheel &&
-                                      _characterWheelOptions.isNotEmpty)
-                                    CommandRadialWheel(
-                                      title: '切换角色',
-                                      options: _characterWheelOptions,
-                                      currentOptionId: _characterWheelCurrentId,
-                                      center:
-                                          _expressionWheelCenter ??
-                                          Offset(
-                                            MediaQuery.of(context).size.width /
-                                                2,
-                                            MediaQuery.of(context).size.height /
-                                                2,
-                                          ),
-                                      onHighlightedOptionChanged: (optionId) {
-                                        _characterWheelHighlightedId = optionId;
-                                      },
-                                    ),
-                                  if (kEngineDebugMode &&
-                                      _showBackgroundGridMenu &&
-                                      _backgroundGridOptions.isNotEmpty)
-                                    CommandGridMenu(
-                                      title: '切换背景',
-                                      applyHint: 'Double Click To Apply',
-                                      options: _backgroundGridOptions,
-                                      currentOptionId: _backgroundGridCurrentId,
-                                      center:
-                                          _expressionWheelCenter ??
-                                          Offset(
-                                            MediaQuery.of(context).size.width /
-                                                2,
-                                            MediaQuery.of(context).size.height /
-                                                2,
-                                          ),
-                                      onHighlightedOptionChanged: (optionId) {
-                                        _backgroundGridHighlightedId = optionId;
-                                      },
-                                      onOptionDoubleTap: (_) {
-                                        unawaited(
-                                          _applyBackgroundGridSelectionAndClose(),
-                                        );
-                                      },
-                                    ),
-                                  if (kEngineDebugMode &&
-                                      _showMusicGridMenu &&
-                                      _musicGridOptions.isNotEmpty)
-                                    CommandGridMenu(
-                                      title: '切换音乐',
-                                      applyHint: 'Double Click To Apply',
-                                      options: _musicGridOptions,
-                                      currentOptionId: _musicGridCurrentId,
-                                      center:
-                                          _expressionWheelCenter ??
-                                          Offset(
-                                            MediaQuery.of(context).size.width /
-                                                2,
-                                            MediaQuery.of(context).size.height /
-                                                2,
-                                          ),
-                                      onHighlightedOptionChanged: (optionId) {
-                                        _musicGridHighlightedId = optionId;
-                                        unawaited(
-                                          _previewMusicSelectionIfNeeded(
-                                            optionId,
-                                          ),
-                                        );
-                                      },
-                                      onOptionDoubleTap: (_) {
-                                        unawaited(
-                                          _applyMusicGridSelectionAndClose(),
-                                        );
-                                      },
-                                    ),
-                                  if (kEngineDebugMode &&
-                                      _showFloatingScriptEditor)
-                                    FloatingScriptEditorOverlay(
-                                      gameManager: _gameManager,
-                                      currentScript: _currentScript,
-                                      onReload: _handleHotReload,
-                                      onNotify: _showNotificationMessage,
-                                      onClose: () => _setStateIfMounted(
-                                        () => _showFloatingScriptEditor = false,
+                                  enableHiddenUiSceneZoom:
+                                      gameModule.enableHiddenUiSceneZoom,
+                                  hiddenUiSceneMaxZoom:
+                                      gameModule.hiddenUiSceneMaxZoom,
+                                  onHiddenUiSceneTransformChanged: (isActive) {
+                                    if (!mounted ||
+                                        _isHiddenUiSceneTransformActive ==
+                                            isActive) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _isHiddenUiSceneTransformActive =
+                                          isActive;
+                                    });
+                                  },
+                                  // 左键点击回调 - 推进剧情
+                                  onLeftClick: () {
+                                    // 检查是否有弹窗或菜单显示
+                                    final hasOverlayOpen =
+                                        _isShowingMenu ||
+                                        _showSaveOverlay ||
+                                        _showLoadOverlay ||
+                                        _showReviewOverlay ||
+                                        _showSettings ||
+                                        _showDeveloperPanel ||
+                                        _showDebugPanel ||
+                                        _showExpressionSelector ||
+                                        _showFloatingScriptEditor ||
+                                        _isAnyCommandMenuOpen;
+
+                                    final isBlockingCinematic =
+                                        gameState.movieFile != null ||
+                                        gameState.scriptCanvasId != null;
+
+                                    // 只有在没有弹窗及阻断式演出时才推进剧情。
+                                    if (!hasOverlayOpen &&
+                                        !isBlockingCinematic) {
+                                      _dialogueProgressionManager
+                                          .progressDialogue();
+                                      // 通知自动播放管理器有手动推进
+                                      _autoPlayManager?.onManualProgress();
+                                    }
+                                  },
+                                  // UI层 - 使用GameUILayer组件
+                                  child: Stack(
+                                    children: [
+                                      GameUILayer(
+                                        key: _gameUILayerKey,
+                                        gameState: gameState,
+                                        gameManager: _gameManager,
+                                        gameModule: gameModule,
+                                        dialogueProgressionManager:
+                                            _dialogueProgressionManager,
+                                        currentScript: _currentScript,
+                                        nvlScreenKey: _nvlScreenKey,
+                                        showReviewOverlay: _showReviewOverlay,
+                                        enableReviewOverscrollClose:
+                                            _mouseRollbackBehavior ==
+                                                'history' &&
+                                            _reviewOpenedByMouseRollback,
+                                        showSaveOverlay: _showSaveOverlay,
+                                        showLoadOverlay: _showLoadOverlay,
+                                        showSettings: _showSettings,
+                                        showFlowchart: _showFlowchart,
+                                        showDeveloperPanel: _showDeveloperPanel,
+                                        showDebugPanel: _showDebugPanel,
+                                        showExpressionSelector:
+                                            _showExpressionSelector,
+                                        isShowingMenu: _isShowingMenu,
+                                        onToggleReview: _toggleReviewOverlay,
+                                        onToggleSave:
+                                            _toggleSaveOverlayForCapture,
+                                        onToggleLoad: () {
+                                          _toggleLoadOverlayForCapture();
+                                        },
+                                        onQuickSave:
+                                            _handleQuickSave, // 新增：快速存档回调
+                                        onToggleSettings: () {
+                                          _toggleSettingsOverlayForCapture();
+                                        },
+                                        onToggleDeveloperPanel: () => setState(
+                                          () => _showDeveloperPanel =
+                                              !_showDeveloperPanel,
+                                        ),
+                                        onToggleDebugPanel: () => setState(
+                                          () => _showDebugPanel =
+                                              !_showDebugPanel,
+                                        ),
+                                        onToggleExpressionSelector: () =>
+                                            setState(
+                                              () => _showExpressionSelector =
+                                                  !_showExpressionSelector,
+                                            ),
+                                        onHandleQuickMenuBack:
+                                            _handleQuickMenuBack,
+                                        onHandlePreviousDialogue:
+                                            _handlePreviousDialogue,
+                                        onSkipRead:
+                                            _handleSkipReadText, // 新增：跳过已读文本回调
+                                        onAutoPlay:
+                                            _handleAutoPlay, // 新增：自动播放回调
+                                        onThemeToggle: () => setState(
+                                          () {},
+                                        ), // 新增：主题切换回调 - 触发重建以更新UI
+                                        onFlowchart: () => setState(
+                                          () =>
+                                              _showFlowchart = !_showFlowchart,
+                                        ), // 新增：流程图回调
+                                        onJumpToHistoryEntry:
+                                            _jumpToHistoryEntry,
+                                        onLoadGame: _handleLoadGame,
+                                        onProgressDialogue: () =>
+                                            _dialogueProgressionManager
+                                                .progressDialogue(),
+                                        expressionSelectorManager:
+                                            _expressionSelectorManager,
+                                        createDialogueBox: _createDialogueBox,
                                       ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            // 全局 scene filter 覆盖层：当模块禁用默认背景时启用，
-                            // 覆盖 UI + 背景，作为全屏后处理。
-                            if (gameState.sceneFilter != null &&
-                                !gameModule.shouldRenderDefaultSceneBackground(
-                                  gameState,
-                                ))
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: _FilteredBackground(
-                                    filter: gameState.sceneFilter!,
-                                    child: const SizedBox.expand(),
+                                      if (kEngineDebugMode &&
+                                          _showExpressionWheel &&
+                                          _expressionWheelSpeakerInfo != null &&
+                                          _expressionWheelExpressions
+                                              .isNotEmpty)
+                                        ExpressionRadialWheel(
+                                          characterName:
+                                              _expressionWheelSpeakerInfo!
+                                                  .speakerName,
+                                          currentExpression:
+                                              _expressionWheelSpeakerInfo!
+                                                  .currentExpression,
+                                          expressions:
+                                              _expressionWheelExpressions,
+                                          expressionImagePaths:
+                                              _expressionWheelImagePaths,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              Offset(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width /
+                                                    2,
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.height /
+                                                    2,
+                                              ),
+                                          onHighlightedExpressionChanged:
+                                              (expression) {
+                                                _expressionWheelHighlightedExpression =
+                                                    expression;
+                                              },
+                                        ),
+                                      if (kEngineDebugMode &&
+                                          _showCharacterWheel &&
+                                          _characterWheelOptions.isNotEmpty)
+                                        CommandRadialWheel(
+                                          title: '切换角色',
+                                          options: _characterWheelOptions,
+                                          currentOptionId:
+                                              _characterWheelCurrentId,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              Offset(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width /
+                                                    2,
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.height /
+                                                    2,
+                                              ),
+                                          onHighlightedOptionChanged:
+                                              (optionId) {
+                                                _characterWheelHighlightedId =
+                                                    optionId;
+                                              },
+                                        ),
+                                      if (kEngineDebugMode &&
+                                          _showBackgroundGridMenu &&
+                                          _backgroundGridOptions.isNotEmpty)
+                                        CommandGridMenu(
+                                          title: '切换背景',
+                                          applyHint: 'Double Click To Apply',
+                                          options: _backgroundGridOptions,
+                                          currentOptionId:
+                                              _backgroundGridCurrentId,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              Offset(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width /
+                                                    2,
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.height /
+                                                    2,
+                                              ),
+                                          onHighlightedOptionChanged:
+                                              (optionId) {
+                                                _backgroundGridHighlightedId =
+                                                    optionId;
+                                              },
+                                          onOptionDoubleTap: (_) {
+                                            unawaited(
+                                              _applyBackgroundGridSelectionAndClose(),
+                                            );
+                                          },
+                                        ),
+                                      if (kEngineDebugMode &&
+                                          _showMusicGridMenu &&
+                                          _musicGridOptions.isNotEmpty)
+                                        CommandGridMenu(
+                                          title: '切换音乐',
+                                          applyHint: 'Double Click To Apply',
+                                          options: _musicGridOptions,
+                                          currentOptionId: _musicGridCurrentId,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              Offset(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width /
+                                                    2,
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.height /
+                                                    2,
+                                              ),
+                                          onHighlightedOptionChanged:
+                                              (optionId) {
+                                                _musicGridHighlightedId =
+                                                    optionId;
+                                                unawaited(
+                                                  _previewMusicSelectionIfNeeded(
+                                                    optionId,
+                                                  ),
+                                                );
+                                              },
+                                          onOptionDoubleTap: (_) {
+                                            unawaited(
+                                              _applyMusicGridSelectionAndClose(),
+                                            );
+                                          },
+                                        ),
+                                      if (kEngineDebugMode &&
+                                          _showFloatingScriptEditor)
+                                        FloatingScriptEditorOverlay(
+                                          gameManager: _gameManager,
+                                          currentScript: _currentScript,
+                                          onReload: _handleHotReload,
+                                          onNotify: _showNotificationMessage,
+                                          onClose: () => _setStateIfMounted(
+                                            () => _showFloatingScriptEditor =
+                                                false,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
-                              ),
-                          ],
+                                // 全局 scene filter 覆盖层：当模块禁用默认背景时启用，
+                                // 覆盖 UI + 背景，作为全屏后处理。
+                                if (gameState.sceneFilter != null &&
+                                    !gameModule
+                                        .shouldRenderDefaultSceneBackground(
+                                          gameState,
+                                        ))
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: _FilteredBackground(
+                                        filter: gameState.sceneFilter!,
+                                        child: const SizedBox.expand(),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                        if (scriptCanvasDefinition != null)
+                          ScriptCanvasLayer(
+                            key: ValueKey(
+                              '$scriptCanvasId-${gameState.scriptCanvasRevision}',
+                            ),
+                            definition: scriptCanvasDefinition,
+                            duration: Duration(
+                              milliseconds:
+                                  (gameState.scriptCanvasDurationSeconds * 1000)
+                                      .round(),
+                            ),
+                            revision: gameState.scriptCanvasRevision,
+                          ),
+                      ],
                     );
                   },
                 ),
@@ -1669,6 +1748,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         resourceId: characterState.resourceId,
         pose: characterState.pose ?? 'pose1',
         expression: characterState.expression ?? 'happy',
+        cacheRevision: CharacterCompositeCache.instance.revision,
         heightFactor: finalScale,
         isFadingOut: characterState.isFadingOut,
         skipAnimation: _isFastForwarding,
@@ -1791,6 +1871,7 @@ class _CompositeCharacterWidget extends StatefulWidget {
   final String resourceId;
   final String pose;
   final String expression;
+  final int cacheRevision;
   final double heightFactor;
   final bool isFadingOut;
   final bool skipAnimation;
@@ -1802,6 +1883,7 @@ class _CompositeCharacterWidget extends StatefulWidget {
     required this.resourceId,
     required this.pose,
     required this.expression,
+    required this.cacheRevision,
     required this.heightFactor,
     required this.isFadingOut,
     required this.skipAnimation,
@@ -1829,7 +1911,8 @@ class _CompositeCharacterWidgetState extends State<_CompositeCharacterWidget> {
 
     if (widget.resourceId != oldWidget.resourceId ||
         widget.pose != oldWidget.pose ||
-        widget.expression != oldWidget.expression) {
+        widget.expression != oldWidget.expression ||
+        widget.cacheRevision != oldWidget.cacheRevision) {
       _loadComposite();
     }
 

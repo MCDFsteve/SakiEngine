@@ -1024,11 +1024,19 @@ class SksParser {
             nodes.add(PlaySoundNode(soundFile, loop: loop));
           }
           break;
+        case 'voice':
+          final voiceFile = trimmedLine.substring('voice'.length).trim();
+          if (voiceFile.isNotEmpty) {
+            nodes.add(VoiceNode(voiceFile));
+          }
+          break;
         case 'stop':
           if (parts.length >= 2 && parts[1] == 'music') {
             nodes.add(StopMusicNode());
           } else if (parts.length >= 2 && parts[1] == 'sound') {
             nodes.add(StopSoundNode());
+          } else if (parts.length >= 2 && parts[1] == 'voice') {
+            nodes.add(StopVoiceNode());
           } else if (parts.length >= 2 && parts[1] == 'anime') {
             nodes.add(StopAnimeNode());
           }

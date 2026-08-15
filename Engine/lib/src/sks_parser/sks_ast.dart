@@ -225,6 +225,17 @@ class StopSoundNode implements SksNode {
   StopSoundNode();
 }
 
+/// Plays one non-looping dialogue voice cue on the dedicated voice channel.
+class VoiceNode implements SksNode {
+  final String voiceFile;
+  VoiceNode(this.voiceFile);
+}
+
+/// Stops the currently playing dialogue voice cue.
+class StopVoiceNode implements SksNode {
+  StopVoiceNode();
+}
+
 class ApiCallNode implements SksNode {
   final String apiName;
   final Map<String, String> parameters;

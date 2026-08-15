@@ -88,13 +88,16 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
   Future<void> _initializeSaveSlots() async {
     final openingStopwatch = Stopwatch()..start();
     var waitingStage = 'request-save-headers';
-    final waitingHeartbeat = Timer.periodic(const Duration(seconds: 1), (_) {
-      print(
-        '[SAKI_SAVE][SCREEN] waiting mode=${widget.mode.name} '
-        'stage=$waitingStage elapsedMs=${openingStopwatch.elapsedMilliseconds}',
-      );
-    });
-    print('[SAKI_SAVE][SCREEN] open mode=${widget.mode.name}');
+    final waitingHeartbeat = kSakiDiagnosticLogs
+        ? Timer.periodic(const Duration(seconds: 1), (_) {
+            sakiDiagnosticLog(
+              '[SAKI_SAVE][SCREEN] waiting mode=${widget.mode.name} '
+              'stage=$waitingStage '
+              'elapsedMs=${openingStopwatch.elapsedMilliseconds}',
+            );
+          })
+        : null;
+    sakiDiagnosticLog('[SAKI_SAVE][SCREEN] open mode=${widget.mode.name}');
     if (mounted) {
       setState(() {
         _isInitializing = true;
@@ -105,10 +108,12 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
     try {
       // Rust 索引器一次扫描并解析列表所需的轻量字段，避免先扫文件名、
       // 再逐个完整反序列化同一批存档。
-      print('[SAKI_SAVE][SCREEN] list-request-start mode=${widget.mode.name}');
+      sakiDiagnosticLog(
+        '[SAKI_SAVE][SCREEN] list-request-start mode=${widget.mode.name}',
+      );
       final slots = await _saveLoadManager.listSaveSlots();
       waitingStage = 'apply-save-headers';
-      print(
+      sakiDiagnosticLog(
         '[SAKI_SAVE][SCREEN] list-request-done mode=${widget.mode.name} '
         'slots=${slots.length} elapsedMs=${openingStopwatch.elapsedMilliseconds}',
       );
@@ -129,7 +134,7 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
       }
       _totalPages.value = initialPages;
       applyStopwatch.stop();
-      print(
+      sakiDiagnosticLog(
         '[SAKI_SAVE][SCREEN] index-ready '
         'slots=${slots.length} applyMs='
         '${applyStopwatch.elapsedMicroseconds / 1000.0} elapsedMs='
@@ -149,7 +154,7 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
         ),
       );
     } finally {
-      waitingHeartbeat.cancel();
+      waitingHeartbeat?.cancel();
       if (mounted) {
         waitingStage = 'build-first-grid-frame';
         setState(() {
@@ -157,7 +162,7 @@ class _SaveLoadScreenState extends State<SaveLoadScreen> {
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           openingStopwatch.stop();
-          print(
+          sakiDiagnosticLog(
             '[SAKI_SAVE][SCREEN] first-grid-frame '
             'slots=${_existingSlotIds?.length ?? 0} elapsedMs='
             '${openingStopwatch.elapsedMicroseconds / 1000.0}',

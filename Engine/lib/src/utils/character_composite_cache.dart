@@ -23,6 +23,10 @@ class CharacterCompositeCache {
       1024 *
       1024;
   int _decodedBytes = 0;
+  int _revision = 0;
+
+  /// Changes whenever cached composites become unsafe for existing consumers.
+  int get revision => _revision;
 
   String _buildKey(String resourceId, String pose, String expression) {
     return '$resourceId::$pose::$expression';
@@ -195,6 +199,7 @@ class CharacterCompositeCache {
   }
 
   void clear() {
+    _revision++;
     for (final image in _imageCache.values) {
       _disposeAfterCurrentFrame(image);
     }
@@ -204,6 +209,7 @@ class CharacterCompositeCache {
   }
 
   void invalidate(String resourceId, String pose) {
+    _revision++;
     final prefix = '$resourceId::$pose::';
     final keysToRemove = _imageCache.keys
         .where((key) => key.startsWith(prefix))

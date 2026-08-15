@@ -7,7 +7,7 @@ import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 
 /// 二进制序列化工具类，用于将游戏数据序列化为二进制格式
 class BinarySerializer {
-  static const int _version = 16; // 增加版本号以支持循环音效状态持久化
+  static const int _version = 17; // 增加版本号以支持全屏脚本画布状态
   static const String _magicNumber = 'SAKI';
 
   static Uint8List serializeGameStateSnapshot(GameStateSnapshot snapshot) =>
@@ -279,6 +279,9 @@ class BinarySerializer {
     buffer.add(state.scriptOverlayStretchEachLine ? 1 : 0);
     buffer.addAll(_writeInt32(state.scriptOverlayRevision));
     buffer.addAll(_writeNullableString(state.sceneTopRightStatusText));
+    buffer.addAll(_writeNullableString(state.scriptCanvasId));
+    buffer.addAll(_writeString(state.scriptCanvasDurationSeconds.toString()));
+    buffer.addAll(_writeInt32(state.scriptCanvasRevision));
 
     return Uint8List.fromList(buffer);
   }
@@ -356,6 +359,9 @@ class BinarySerializer {
     bool scriptOverlayStretchEachLine = false;
     int scriptOverlayRevision = 0;
     String? sceneTopRightStatusText;
+    String? scriptCanvasId;
+    double scriptCanvasDurationSeconds = 0;
+    int scriptCanvasRevision = 0;
     if (version != null && version >= 8) {
       scriptOverlayText = reader.readNullableString();
       scriptOverlayBackgroundColor = reader.readNullableString();
@@ -379,10 +385,18 @@ class BinarySerializer {
         sceneTopRightStatusText = reader.readNullableString();
       }
     }
+    if (version != null && version >= 17) {
+      scriptCanvasId = reader.readNullableString();
+      scriptCanvasDurationSeconds = double.tryParse(reader.readString()) ?? 0;
+      scriptCanvasRevision = reader.readInt32();
+    }
 
     return GameState(
       background: background,
       movieFile: movieFile, // 新增：视频文件参数
+      scriptCanvasId: scriptCanvasId,
+      scriptCanvasDurationSeconds: scriptCanvasDurationSeconds,
+      scriptCanvasRevision: scriptCanvasRevision,
       dialogue: dialogue,
       dialogueTag: dialogueTag,
       speaker: speaker,

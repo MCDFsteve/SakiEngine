@@ -941,6 +941,8 @@ class GameManager {
   String get currentScriptFile =>
       _scriptMerger.getFileNameByIndex(_scriptIndex) ?? 'start';
 
+  bool hasLabel(String label) => _labelIndexMap.containsKey(label);
+
   // 获取当前脚本执行索引（用于开发者面板定位）
   int get currentScriptIndex => _scriptIndex;
 
@@ -1491,6 +1493,9 @@ class GameManager {
 
   void setFastForwardMode(bool enabled) {
     _isFastForwardMode = enabled;
+    if (enabled && !_disableRuntimeSideEffectsForTesting) {
+      unawaited(MusicManager().stopVoice());
+    }
     // 更新GameState中的快进状态
     _currentState = _currentState.copyWith(
       isFastForwarding: enabled,
@@ -1654,12 +1659,16 @@ class GameManager {
     String scriptName,
     GameStateSnapshot snapshot, {
     bool shouldReExecute = true,
+    bool reloadCharacterConfigs = true,
+    bool restoreDialogueVoice = true,
   }) {
     _disableRuntimeSideEffectsForTesting = false;
     return _restoreFromSnapshotLifecycle(
       scriptName,
       snapshot,
       shouldReExecute: shouldReExecute,
+      reloadCharacterConfigs: reloadCharacterConfigs,
+      restoreDialogueVoice: restoreDialogueVoice,
     );
   }
 
@@ -1822,6 +1831,7 @@ class GameManager {
     if (_disableRuntimeSideEffectsForTesting) {
       return;
     }
+    await MusicManager().stopVoice();
     await MusicManager().stopAudio(AudioTrackConfig.sound, fadeOut: false);
   }
 
@@ -1874,6 +1884,52 @@ class GameManager {
     );
     await _stopSoundsForHistoryJump();
     await _restoreLoopingSoundsAfterHistoryJump(targetLoopingSounds);
+  }
+
+  String? _resolveVoiceFileForDialogue(int dialogueScriptIndex) {
+    if (dialogueScriptIndex < 0 ||
+        dialogueScriptIndex >= _script.children.length) {
+      return null;
+    }
+
+    final dialogueNode = _script.children[dialogueScriptIndex];
+    if (dialogueNode is! SayNode && dialogueNode is! ConditionalSayNode) {
+      return null;
+    }
+
+    for (var index = dialogueScriptIndex - 1; index >= 0; index--) {
+      final node = _script.children[index];
+      if (node is VoiceNode) {
+        return node.voiceFile;
+      }
+      if (node is StopVoiceNode ||
+          node is SayNode ||
+          node is ConditionalSayNode ||
+          node is MenuNode ||
+          node is LabelNode ||
+          node is JumpNode ||
+          node is ReturnNode) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _restoreVoiceForDialogue(int dialogueScriptIndex) async {
+    if (_disableRuntimeSideEffectsForTesting) {
+      return;
+    }
+
+    final rawVoiceFile = _resolveVoiceFileForDialogue(dialogueScriptIndex);
+    if (rawVoiceFile == null) {
+      return;
+    }
+
+    final voicePath = MusicManager.buildVoiceAssetPath(rawVoiceFile);
+    if (voicePath.isNotEmpty) {
+      await MusicManager().playVoice(voicePath);
+    }
   }
 
   /// 构建音乐区间列表
@@ -2293,6 +2349,9 @@ class GameManager {
   }
 
   Future<void> jumpToLabel(String label) async {
+    if (!_disableRuntimeSideEffectsForTesting) {
+      await MusicManager().stopVoice();
+    }
     // 在合并的脚本中查找标签
     if (_labelIndexMap.containsKey(label)) {
       _scriptIndex = _labelIndexMap[label]!;
@@ -2318,6 +2377,10 @@ class GameManager {
   void next() async {
     if (_isProcessing || _isWaitingForTimer) {
       return;
+    }
+
+    if (!_disableRuntimeSideEffectsForTesting) {
+      await MusicManager().stopVoice();
     }
 
     // 检查是否需要清除anime覆盖层（在用户交互时）
@@ -3969,6 +4032,25 @@ class GameManager {
         continue;
       }
 
+      if (node is VoiceNode) {
+        final voicePath = MusicManager.buildVoiceAssetPath(node.voiceFile);
+        if (!_disableRuntimeSideEffectsForTesting &&
+            !_isFastForwardMode &&
+            voicePath.isNotEmpty) {
+          await MusicManager().playVoice(voicePath);
+        }
+        _scriptIndex++;
+        continue;
+      }
+
+      if (node is StopVoiceNode) {
+        if (!_disableRuntimeSideEffectsForTesting) {
+          await MusicManager().stopVoice();
+        }
+        _scriptIndex++;
+        continue;
+      }
+
       if (node is StopSoundNode) {
         _activeLoopingSounds.clear();
         if (!_disableRuntimeSideEffectsForTesting) {
@@ -4403,7 +4485,17 @@ class GameManager {
     await _stopSoundsForHistoryJump();
 
     Future<void> restoreAndAlignHistoryJumpState() async {
-      await restoreFromSnapshot(scriptName, snapshot, shouldReExecute: false);
+      // History entries belong to the active GameManager session, so the
+      // character/pose configs are already current. Reloading them here clears
+      // CharacterCompositeCache and leaves normal sprites blank while they are
+      // asynchronously recomposed, producing a visible rollback flash.
+      await restoreFromSnapshot(
+        scriptName,
+        snapshot,
+        shouldReExecute: false,
+        reloadCharacterConfigs: false,
+        restoreDialogueVoice: false,
+      );
 
       // 兼容旧历史快照语义：确保跳转后立即显示选中句，并从下一句继续推进。
       if (!snapshot.isNvlMode) {
@@ -4446,6 +4538,10 @@ class GameManager {
       // 不需要场景转场，直接恢复并对齐状态
       await restoreAndAlignHistoryJumpState();
     }
+
+    // 历史快照只保存目标对白的画面状态，不会重新执行它前面的 voice 节点。
+    // 等目标对白（以及可能的场景转场）恢复完成后，重新播放该句关联语音。
+    await _restoreVoiceForDialogue(entry.scriptIndex);
   }
 
   /// 启动场景计时器
@@ -5442,6 +5538,9 @@ class GameState {
   final String? background;
   final String? movieFile; // 新增：当前视频文件
   final int? movieRepeatCount; // 新增：视频重复播放次数
+  final String? scriptCanvasId; // 当前全屏脚本画布 ID
+  final double scriptCanvasDurationSeconds; // 画布时间轴长度
+  final int scriptCanvasRevision; // 同一画布重播时刷新 Widget key
   final Map<String, CharacterState> characters;
   final String? dialogue;
   final String? dialogueTag; // 对话行尾扩展 token（项目层可自定义）
@@ -5488,6 +5587,9 @@ class GameState {
     this.background,
     this.movieFile, // 新增：视频文件参数
     this.movieRepeatCount, // 新增：视频重复播放次数参数
+    this.scriptCanvasId,
+    this.scriptCanvasDurationSeconds = 0,
+    this.scriptCanvasRevision = 0,
     this.characters = const {},
     this.dialogue,
     this.dialogueTag,
@@ -5541,6 +5643,10 @@ class GameState {
     String? movieFile, // 新增：视频文件参数
     int? movieRepeatCount, // 新增：视频重复播放次数参数
     bool clearMovieFile = false, // 新增：清理视频文件标志
+    String? scriptCanvasId,
+    double? scriptCanvasDurationSeconds,
+    int? scriptCanvasRevision,
+    bool clearScriptCanvas = false,
     Map<String, CharacterState>? characters,
     String? dialogue,
     String? dialogueTag,
@@ -5602,6 +5708,13 @@ class GameState {
       movieRepeatCount: clearMovieFile
           ? null
           : (movieRepeatCount ?? this.movieRepeatCount), // 新增：处理视频重复次数
+      scriptCanvasId: clearScriptCanvas
+          ? null
+          : (scriptCanvasId ?? this.scriptCanvasId),
+      scriptCanvasDurationSeconds: clearScriptCanvas
+          ? 0
+          : (scriptCanvasDurationSeconds ?? this.scriptCanvasDurationSeconds),
+      scriptCanvasRevision: scriptCanvasRevision ?? this.scriptCanvasRevision,
       characters: clearCharacters
           ? <String, CharacterState>{}
           : (characters ?? this.characters),
