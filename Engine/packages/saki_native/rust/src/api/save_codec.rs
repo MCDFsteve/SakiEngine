@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 const MAGIC: &[u8; 4] = b"SAKI";
-const MAX_VERSION: i32 = 16;
+const MAX_VERSION: i32 = 18;
 const MAX_FIELD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COLLECTION: usize = 100_000;
 const MAX_SNAPSHOT_DEPTH: usize = 256;
@@ -221,6 +221,24 @@ impl<R: Read + Seek> HeaderReader<R> {
             self.skip_nullable_string()?;
             self.skip_nullable_string()?;
         }
+        if version >= 18 {
+            let animation_property_count = self.i32()?;
+            if animation_property_count < -1 || animation_property_count > MAX_COLLECTION as i32 {
+                return Err(format!(
+                    "invalid animation property collection length: {animation_property_count}"
+                ));
+            }
+            if animation_property_count >= 0 {
+                for _ in 0..animation_property_count {
+                    self.skip_string()?;
+                    self.skip(8)?; // f64 animation property value
+                }
+            }
+            match self.u8()? {
+                0 | 1 => {}
+                value => return Err(format!("invalid boolean byte: {value}")),
+            }
+        }
         Ok(())
     }
 
@@ -423,6 +441,21 @@ impl<'a> Reader<'a> {
             self.nullable_string()?;
             self.nullable_string()?;
         }
+        if version >= 18 {
+            let animation_property_count = self.i32()?;
+            if animation_property_count < -1 || animation_property_count > MAX_COLLECTION as i32 {
+                return Err(format!(
+                    "invalid animation property collection length: {animation_property_count}"
+                ));
+            }
+            if animation_property_count >= 0 {
+                for _ in 0..animation_property_count {
+                    self.string()?;
+                    self.exact(8)?; // f64 animation property value
+                }
+            }
+            self.bool()?; // isFadingOut
+        }
         Ok(())
     }
 
@@ -507,6 +540,11 @@ impl<'a> Reader<'a> {
             if version >= 14 {
                 self.nullable_string()?;
             }
+        }
+        if version >= 17 {
+            self.nullable_string()?; // scriptCanvasId
+            self.string()?; // scriptCanvasDurationSeconds
+            self.i32()?; // scriptCanvasRevision
         }
         Ok(())
     }
@@ -743,7 +781,6 @@ pub fn scan_save_headers(
     end_slot_id: i64,
 ) -> Result<RustSaveHeaderScan, String> {
     let started = std::time::Instant::now();
-    eprintln!("[SAKI_SAVE][RUST] scan-start range={start_slot_id}..{end_slot_id}");
     let directory_path = Path::new(&directory);
     let use_persistent_cache = start_slot_id <= 1 && end_slot_id >= i32::MAX as i64;
     let mut cached_by_name = if use_persistent_cache {
@@ -786,11 +823,6 @@ pub fn scan_save_headers(
         }
     }
     paths.sort_unstable_by(|a, b| a.file_name.cmp(&b.file_name));
-    eprintln!(
-        "[SAKI_SAVE][RUST] enumerate-done files={} elapsedMs={:.3}",
-        paths.len(),
-        started.elapsed().as_secs_f64() * 1000.0
-    );
 
     let mut slots = Vec::with_capacity(paths.len());
     let mut invalid_files = Vec::new();
@@ -808,18 +840,12 @@ pub fn scan_save_headers(
         }
         uncached_indices.push(index);
     }
-    eprintln!(
-        "[SAKI_SAVE][RUST] cache-check hits={} misses={} elapsedMs={:.3}",
-        slots.len(),
-        uncached_indices.len(),
-        started.elapsed().as_secs_f64() * 1000.0
-    );
 
     let worker_count = uncached_indices.len().min(MAX_HEADER_SCAN_WORKERS).max(1);
     let next_work = AtomicUsize::new(0);
     let decoded = Mutex::new(Vec::with_capacity(uncached_indices.len()));
     std::thread::scope(|scope| {
-        for worker in 0..worker_count {
+        for _ in 0..worker_count {
             let paths = &paths;
             let uncached_indices = &uncached_indices;
             let next_work = &next_work;
@@ -831,23 +857,7 @@ pub fn scan_save_headers(
                 }
                 let path_index = uncached_indices[work_index];
                 let path = &paths[path_index];
-                let file_started = std::time::Instant::now();
-                eprintln!(
-                    "[SAKI_SAVE][RUST] file-start worker={} index={} file={}",
-                    worker + 1,
-                    path_index + 1,
-                    path.file_name
-                );
                 let result = decode_header_file(&path.path);
-                eprintln!(
-                    "[SAKI_SAVE][RUST] file-done worker={} index={} file={} \
-                     success={} elapsedMs={:.3}",
-                    worker + 1,
-                    path_index + 1,
-                    path.file_name,
-                    result.is_ok(),
-                    file_started.elapsed().as_secs_f64() * 1000.0
-                );
                 decoded
                     .lock()
                     .expect("save header result mutex poisoned")
@@ -879,20 +889,9 @@ pub fn scan_save_headers(
     if use_persistent_cache && invalid_files.is_empty() {
         if let Err(error) = write_cached_save_headers(directory_path, cache_entries) {
             eprintln!("[SAKI_SAVE][RUST] cache-write-failed error={error}");
-        } else {
-            eprintln!(
-                "[SAKI_SAVE][RUST] cache-write-done elapsedMs={:.3}",
-                started.elapsed().as_secs_f64() * 1000.0
-            );
         }
     }
     slots.sort_unstable_by_key(|slot| slot.id);
-    eprintln!(
-        "[SAKI_SAVE][RUST] scan-done slots={} invalid={} elapsedMs={:.3}",
-        slots.len(),
-        invalid_files.len(),
-        started.elapsed().as_secs_f64() * 1000.0
-    );
     Ok(RustSaveHeaderScan {
         slots,
         invalid_files,
@@ -914,10 +913,40 @@ mod tests {
         }
     }
 
-    fn minimal_v16() -> Vec<u8> {
+    fn character(bytes: &mut Vec<u8>, version: i32, has_animation_properties: bool) {
+        string(bytes, Some("noe"));
+        string(bytes, Some("pose1"));
+        string(bytes, Some("happy"));
+        string(bytes, Some("center"));
+        if version >= 15 {
+            string(bytes, None);
+            string(bytes, None);
+        }
+        if version >= 18 {
+            if has_animation_properties {
+                bytes.extend_from_slice(&2_i32.to_le_bytes());
+                string(bytes, Some("offsetX"));
+                bytes.extend_from_slice(&12.5_f64.to_le_bytes());
+                string(bytes, Some("opacity"));
+                bytes.extend_from_slice(&0.75_f64.to_le_bytes());
+            } else {
+                bytes.extend_from_slice(&(-1_i32).to_le_bytes());
+            }
+            bytes.push(1);
+        }
+    }
+
+    fn minimal_save(version: i32) -> Vec<u8> {
+        minimal_save_with_character_animation(version, true)
+    }
+
+    fn minimal_save_with_character_animation(
+        version: i32,
+        has_animation_properties: bool,
+    ) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&16_i32.to_le_bytes());
+        bytes.extend_from_slice(&version.to_le_bytes());
         bytes.extend_from_slice(&7_i64.to_le_bytes());
         bytes.extend_from_slice(&1234_i64.to_le_bytes());
         string(&mut bytes, Some("start"));
@@ -928,7 +957,9 @@ mod tests {
         for _ in 0..5 {
             string(&mut bytes, None);
         }
-        bytes.extend_from_slice(&0_i32.to_le_bytes());
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+        string(&mut bytes, Some("main"));
+        character(&mut bytes, version, has_animation_properties);
         bytes.extend_from_slice(&0_i32.to_le_bytes());
         bytes.extend_from_slice(&[0, 0, 0, 0]);
         bytes.extend_from_slice(&0_i32.to_le_bytes());
@@ -941,6 +972,11 @@ mod tests {
         bytes.push(0);
         bytes.extend_from_slice(&0_i32.to_le_bytes());
         string(&mut bytes, None);
+        if version >= 17 {
+            string(&mut bytes, Some("canvas-main"));
+            string(&mut bytes, Some("2.5"));
+            bytes.extend_from_slice(&9_i32.to_le_bytes());
+        }
         bytes.extend_from_slice(&0_i32.to_le_bytes());
         bytes.extend_from_slice(&[0, 0, 0, 0]);
         bytes.extend_from_slice(&0_i32.to_le_bytes());
@@ -950,14 +986,29 @@ mod tests {
 
     #[test]
     fn validates_current_format() {
-        let metadata = decode(&minimal_v16()).unwrap();
+        let metadata = decode(&minimal_save(18)).unwrap();
         assert_eq!(metadata.id, 7);
         assert_eq!(metadata.script_index, 3);
     }
 
     #[test]
+    fn validates_current_format_without_character_animation_properties() {
+        let bytes = minimal_save_with_character_animation(18, false);
+        let metadata = decode(&bytes).unwrap();
+        assert_eq!(metadata.version, 18);
+        assert_eq!(metadata.script_index, 3);
+    }
+
+    #[test]
+    fn preserves_previous_format_compatibility() {
+        let metadata = decode(&minimal_save(17)).unwrap();
+        assert_eq!(metadata.version, 17);
+        assert_eq!(metadata.script_index, 3);
+    }
+
+    #[test]
     fn rejects_trailing_bytes() {
-        let mut bytes = minimal_v16();
+        let mut bytes = minimal_save(18);
         bytes.push(1);
         assert!(decode(&bytes).unwrap_err().contains("trailing"));
     }
@@ -969,7 +1020,7 @@ mod tests {
             std::process::id(),
             NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed)
         ));
-        let bytes = minimal_v16();
+        let bytes = minimal_save(18);
         let metadata = write_save_file(path.to_string_lossy().to_string(), bytes.clone()).unwrap();
         assert_eq!(metadata.id, 7);
         let decoded = read_save_file(path.to_string_lossy().to_string()).unwrap();
@@ -986,7 +1037,7 @@ mod tests {
         ));
         fs::create_dir_all(&directory).unwrap();
         for id in 1_i64..=3 {
-            let mut bytes = minimal_v16();
+            let mut bytes = minimal_save(18);
             bytes[8..16].copy_from_slice(&id.to_le_bytes());
             fs::write(directory.join(format!("save_{id}.sakisav")), bytes).unwrap();
         }

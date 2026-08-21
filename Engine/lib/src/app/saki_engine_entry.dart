@@ -496,7 +496,7 @@ Future<void> runSakiEngine({
           final steamInitialized = await steamworksManager.initialize(
             options: steamOptions,
           );
-          debugPrint('Seamworks: 游戏Appid：${steamOptions.appId}');
+          sakiDiagnosticLog('Steamworks: appId=${steamOptions.appId}');
           if (!steamInitialized && kEngineDebugMode) {
             debugPrint('Steamworks 初始化未成功，可能需要用户先启动 Steam 客户端。');
           }
@@ -541,16 +541,18 @@ Future<void> runSakiEngine({
       await UISoundManager().initialize();
 
       await GlobalVariableManager().init();
-      final allVars = GlobalVariableManager().getAllVariables();
-      print('=== 应用启动 - 全局变量状态 ===');
-      if (allVars.isEmpty) {
-        print('暂无全局变量');
-      } else {
-        allVars.forEach((name, value) {
-          print('全局变量: $name = $value');
-        });
+      if (kSakiDiagnosticLogs) {
+        final allVars = GlobalVariableManager().getAllVariables();
+        sakiDiagnosticLog('=== 应用启动 - 全局变量状态 ===');
+        if (allVars.isEmpty) {
+          sakiDiagnosticLog('暂无全局变量');
+        } else {
+          allVars.forEach((name, value) {
+            sakiDiagnosticLog('全局变量: $name = $value');
+          });
+        }
+        sakiDiagnosticLog('=== 全局变量状态结束 ===');
       }
-      print('=== 全局变量状态结束 ===');
 
       SakiEngineConfig().updateThemeForDarkMode();
       ImageSamplingManager().configure(

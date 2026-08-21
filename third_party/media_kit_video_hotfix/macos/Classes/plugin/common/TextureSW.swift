@@ -78,7 +78,6 @@ public class TextureSW: NSObject, FlutterTexture, ResizableTextureProtocol {
       return
     }
 
-    NSLog("TextureSW: resize: \(size.width)x\(size.height)")
     createPixelBuffer(size)
   }
 

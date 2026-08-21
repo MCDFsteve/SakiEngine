@@ -155,6 +155,22 @@ class ScriptApiExecutionResult {
   }
 }
 
+/// The dialogue line currently on screen and its nearest script neighbours.
+///
+/// Non-dialogue directing nodes between the lines are intentionally omitted so
+/// debug tools can show the surrounding conversation rather than raw commands.
+class DialogueContextWindow {
+  final String? previousDialogue;
+  final String currentDialogue;
+  final String? nextDialogue;
+
+  const DialogueContextWindow({
+    required this.previousDialogue,
+    required this.currentDialogue,
+    required this.nextDialogue,
+  });
+}
+
 typedef ScriptApiExecutor =
     Future<ScriptApiExecutionResult> Function({
       required String apiName,
@@ -960,6 +976,94 @@ class GameManager {
       ? _dialogueHistory.last.sourceScriptFile
       : null;
 
+  /// 获取当前显示台词及其在同一脚本文件中的前后相邻台词。
+  ///
+  /// 当前句使用对话历史保存的精确节点索引作为锚点；查找相邻句时会跳过
+  /// `show`、`hide`、`api`、注释、标签等非对话演出节点。
+  DialogueContextWindow? get currentDialogueContext {
+    if (_dialogueHistory.isEmpty) return null;
+
+    final currentEntry = _dialogueHistory.last;
+    final currentIndex = currentEntry.scriptIndex;
+    if (currentIndex < 0 || currentIndex >= _script.children.length) {
+      return DialogueContextWindow(
+        previousDialogue: null,
+        currentDialogue: currentEntry.dialogue,
+        nextDialogue: null,
+      );
+    }
+
+    final sourceScriptFile =
+        currentEntry.sourceScriptFile ??
+        _dialogueSourceScriptFileAt(currentIndex);
+    return DialogueContextWindow(
+      previousDialogue: _findAdjacentDialogue(
+        startIndex: currentIndex - 1,
+        step: -1,
+        sourceScriptFile: sourceScriptFile,
+      ),
+      currentDialogue: currentEntry.dialogue,
+      nextDialogue: _findAdjacentDialogue(
+        startIndex: currentIndex + 1,
+        step: 1,
+        sourceScriptFile: sourceScriptFile,
+      ),
+    );
+  }
+
+  String? _findAdjacentDialogue({
+    required int startIndex,
+    required int step,
+    required String? sourceScriptFile,
+  }) {
+    for (
+      var index = startIndex;
+      index >= 0 && index < _script.children.length;
+      index += step
+    ) {
+      final node = _script.children[index];
+      final nodeDialogue = switch (node) {
+        SayNode() => node.dialogue,
+        ConditionalSayNode() => node.dialogue,
+        _ => null,
+      };
+      if (nodeDialogue == null) continue;
+
+      final candidateScriptFile = _dialogueSourceScriptFileAt(index);
+      if (sourceScriptFile != null &&
+          candidateScriptFile != null &&
+          candidateScriptFile != sourceScriptFile) {
+        return null;
+      }
+      return RichTextParser.cleanText(_resolveScriptText(nodeDialogue));
+    }
+    return null;
+  }
+
+  String? _dialogueSourceScriptFileAt(int index) {
+    if (index < 0 || index >= _script.children.length) return null;
+    final node = _script.children[index];
+    final nodeSourceFile = switch (node) {
+      SayNode() => node.sourceFile,
+      ConditionalSayNode() => node.sourceFile,
+      _ => null,
+    };
+    return nodeSourceFile ?? _scriptMerger.getFileNameByIndex(index);
+  }
+
+  /// 获取当前显示台词携带的角色动画。
+  ///
+  /// 差分选择器用它恢复脚本中的 `an` 选择；有限动画即使已经播放完毕，
+  /// 这里仍能从当前台词节点取得原始动画名。
+  String? get currentDialogueAnimation {
+    if (_dialogueHistory.isEmpty) return null;
+    final nodeIndex = _dialogueHistory.last.scriptIndex;
+    if (nodeIndex < 0 || nodeIndex >= _script.children.length) return null;
+    final node = _script.children[nodeIndex];
+    if (node is! SayNode) return null;
+    return node.animation ?? node.tailAnimation;
+  }
+
   /// 获取当前显示对话在当前脚本文件中的“同文案出现序号”（1-based）。
   /// 用于在脚本存在重复台词时，精准定位当前句而不是总命中第一句。
   int estimateCurrentDialogueOccurrenceInFile({
@@ -1524,6 +1628,12 @@ class GameManager {
 
   void _applyScriptApiStateAfterWait(GameState stateAfterWait) {
     _currentState = stateAfterWait.copyWith(
+      // `stateAfterWait` is created before the wait starts. During that wait a
+      // renderer may finish an asynchronous character/CG fade and remove the
+      // entry from the live state. Keep those renderer-owned collections so a
+      // stale API snapshot cannot resurrect an already hidden image.
+      characters: _currentState.characters,
+      cgCharacters: _currentState.cgCharacters,
       isFastForwarding: _isFastForwardMode,
       isAutoPlaying: _isAutoPlayMode,
       everShownCharacters: _everShownCharacters,
@@ -3102,8 +3212,17 @@ class GameManager {
         final character = newCharacters[hideKey];
 
         if (character != null) {
-          // 不立即移除角色，而是标记为正在淡出
-          newCharacters[hideKey] = character.copyWith(isFadingOut: true);
+          if (node.immediate) {
+            // 全屏遮罩等紧随其后的演出需要角色在同一脚本节点内消失，
+            // 不能等待渲染器完成异步淡出。
+            final activeAnimation = _activeCharacterAnimations.remove(hideKey);
+            activeAnimation?.stopInfiniteLoop();
+            activeAnimation?.dispose();
+            newCharacters.remove(hideKey);
+          } else {
+            // 默认行为保持兼容：标记为正在淡出，由渲染器完成后移除。
+            newCharacters[hideKey] = character.copyWith(isFadingOut: true);
+          }
 
           _currentState = _currentState.copyWith(
             characters: newCharacters,
@@ -3171,6 +3290,9 @@ class GameManager {
               resourceId: targetResourceId,
               pose: node.pose,
               expression: node.expression,
+              // Dialogue aliases auto-render their sprite. If a preceding
+              // hide is still fading, speaking again cancels that fade.
+              isFadingOut: false,
               positionId:
                   node.position ??
                   currentCharacterState.positionId, // 如果有新position则更新，否则保持原值
@@ -3492,6 +3614,9 @@ class GameManager {
                 resourceId: targetResourceId,
                 pose: node.pose,
                 expression: finalExpression,
+                // Dialogue aliases auto-render their sprite. If a preceding
+                // hide is still fading, speaking again cancels that fade.
+                isFadingOut: false,
                 positionId:
                     node.position ??
                     currentCharacterState.positionId, // 如果有新position则更新，否则保持原值
@@ -4295,6 +4420,85 @@ class GameManager {
     onReturn?.call();
   }
 
+  String _describeAnimationPropertiesForLog(GameState state) {
+    final values = <String>[];
+    for (final entry in state.characters.entries) {
+      final properties = entry.value.animationProperties;
+      if (properties != null) {
+        values.add('character:${entry.key}=$properties');
+      }
+    }
+    for (final entry in state.cgCharacters.entries) {
+      final properties = entry.value.animationProperties;
+      if (properties != null) {
+        values.add('cg:${entry.key}=$properties');
+      }
+    }
+    return values.isEmpty ? '<none>' : values.join(', ');
+  }
+
+  /// 生成对白历史使用的稳定画面状态。
+  ///
+  /// 角色动画是非阻塞的，对白出现时动画通常还在第一帧附近。历史记录代表
+  /// 这句对白最终停留的画面，因此有限动画要保存其确定末帧；实时状态仍由
+  /// 控制器正常补间，不会因为创建快照而跳帧。无限循环动画保持当前帧。
+  GameState _buildDialogueHistorySnapshotState() {
+    if (_activeCharacterAnimations.isEmpty) {
+      return _currentState;
+    }
+
+    Map<String, CharacterState>? snapshotCharacters;
+    Map<String, CharacterState>? snapshotCgCharacters;
+
+    for (final entry in _activeCharacterAnimations.entries) {
+      final finalProperties = entry.value.finiteFinalProperties;
+      if (kSakiDiagnosticLogs) {
+        final liveProperties =
+            _currentState.characters[entry.key]?.animationProperties ??
+            _currentState.cgCharacters[entry.key]?.animationProperties;
+        sakiDiagnosticLog(
+          '[SAKI_ANIMATION_HISTORY][SNAPSHOT_RESOLVE] '
+          'character=${entry.key} animation=${entry.value.animationName} '
+          'live=$liveProperties finiteFinal=$finalProperties',
+        );
+      }
+      if (finalProperties == null) {
+        continue;
+      }
+
+      final character = _currentState.characters[entry.key];
+      if (character != null) {
+        snapshotCharacters ??= Map<String, CharacterState>.from(
+          _currentState.characters,
+        );
+        snapshotCharacters[entry.key] = character.copyWith(
+          animationProperties: finalProperties,
+        );
+        continue;
+      }
+
+      final cgCharacter = _currentState.cgCharacters[entry.key];
+      if (cgCharacter != null) {
+        snapshotCgCharacters ??= Map<String, CharacterState>.from(
+          _currentState.cgCharacters,
+        );
+        snapshotCgCharacters[entry.key] = cgCharacter.copyWith(
+          animationProperties: finalProperties,
+        );
+      }
+    }
+
+    if (snapshotCharacters == null && snapshotCgCharacters == null) {
+      return _currentState;
+    }
+
+    return _currentState.copyWith(
+      characters: snapshotCharacters,
+      cgCharacters: snapshotCgCharacters,
+      everShownCharacters: _everShownCharacters,
+    );
+  }
+
   void _addToDialogueHistory({
     String? speaker,
     required String dialogue,
@@ -4323,9 +4527,19 @@ class GameManager {
           ]
         : List.from(_currentState.nvlDialogues);
 
+    final snapshotState = _buildDialogueHistorySnapshotState();
+    if (kSakiDiagnosticLogs) {
+      sakiDiagnosticLog(
+        '[SAKI_ANIMATION_HISTORY][SNAPSHOT_WRITE] '
+        'scriptIndex=$currentNodeIndex dialogue=${RichTextParser.cleanText(dialogue)} '
+        'live=${_describeAnimationPropertiesForLog(_currentState)} '
+        'snapshot=${_describeAnimationPropertiesForLog(snapshotState)}',
+      );
+    }
+
     final snapshot = GameStateSnapshot(
       scriptIndex: nextScriptIndex,
-      currentState: _currentState,
+      currentState: snapshotState,
       dialogueHistory: const [], // 避免循环引用
       isNvlMode: _currentState.isNvlMode,
       isNvlMovieMode: _currentState.isNvlMovieMode,
@@ -4475,6 +4689,13 @@ class GameManager {
 
     // 检查目标场景和当前场景是否不同，如果不同则使用场景转场
     final snapshot = entry.stateSnapshot;
+    if (kSakiDiagnosticLogs) {
+      sakiDiagnosticLog(
+        '[SAKI_ANIMATION_HISTORY][ROLLBACK_TARGET] '
+        'scriptIndex=${entry.scriptIndex} dialogue=${entry.dialogue} '
+        'snapshot=${_describeAnimationPropertiesForLog(snapshot.currentState)}',
+      );
+    }
     final currentBackground = _currentState.background;
     final targetBackground = snapshot.currentState.background;
     final nextScriptIndex = (entry.scriptIndex + 1)
@@ -4496,6 +4717,13 @@ class GameManager {
         reloadCharacterConfigs: false,
         restoreDialogueVoice: false,
       );
+      if (kSakiDiagnosticLogs) {
+        sakiDiagnosticLog(
+          '[SAKI_ANIMATION_HISTORY][ROLLBACK_RESTORED] '
+          'scriptIndex=${entry.scriptIndex} '
+          'current=${_describeAnimationPropertiesForLog(_currentState)}',
+        );
+      }
 
       // 兼容旧历史快照语义：确保跳转后立即显示选中句，并从下一句继续推进。
       if (!snapshot.isNvlMode) {
@@ -5026,11 +5254,11 @@ class GameManager {
   }
 
   /// 播放角色动画
-  Future<void> _playCharacterAnimation(
+  void _playCharacterAnimation(
     String characterId,
     String animationName, {
     int? repeatCount,
-  }) async {
+  }) {
     CharacterState? characterState = _currentState.characters[characterId];
     bool isCgCharacter = false;
 
@@ -5066,7 +5294,8 @@ class GameManager {
     if (baseProperties == null) return;
 
     // 创建动画控制器
-    final animController = CharacterAnimationController(
+    late final CharacterAnimationController animController;
+    animController = CharacterAnimationController(
       characterId: characterId,
       onAnimationUpdate: (properties) {
         if (isCgCharacter) {
@@ -5101,33 +5330,53 @@ class GameManager {
         //print('[GameManager] 角色 $characterId 动画 $animationName 播放完成');
         // 与 Ren'Py ATL 一致：有限动画结束后保留最后一帧。
         // 后续显式位置或动画命令负责接管/复位这些属性。
-        // 从活跃动画列表中移除
-        _activeCharacterAnimations.remove(characterId);
+        if (kSakiDiagnosticLogs) {
+          final completedProperties = isCgCharacter
+              ? _currentState.cgCharacters[characterId]?.animationProperties
+              : _currentState.characters[characterId]?.animationProperties;
+          sakiDiagnosticLog(
+            '[SAKI_ANIMATION_HISTORY][COMPLETE] '
+            'character=$characterId animation=$animationName '
+            'properties=$completedProperties',
+          );
+        }
+        // 仅清理仍属于本次播放的控制器，避免旧动画结束时误删新动画。
+        if (_activeCharacterAnimations[characterId] == animController) {
+          _activeCharacterAnimations.remove(characterId);
+          animController.dispose();
+        }
       },
     );
 
     // 添加到活跃动画列表
     _activeCharacterAnimations[characterId] = animController;
 
-    // 播放动画，传递repeatCount参数
-    if (_tickerProvider != null) {
-      await animController.playAnimation(
-        animationName,
-        _tickerProvider!,
-        baseProperties,
-        repeatCount: repeatCount,
-      );
-    } else {
+    // 播放动画，传递repeatCount参数。初始化必须同步完成，确保紧接着生成的
+    // 对白历史快照可以读取这段动画的确定末帧。
+    final tickerProvider = _tickerProvider;
+    if (tickerProvider == null) {
       ////print('[GameManager] 无TickerProvider，跳过动画播放');
       // 如果无法播放动画，从活跃列表中移除
       _activeCharacterAnimations.remove(characterId);
+      animController.dispose();
+      return;
     }
 
-    // 动画播放完成后自动清理（如果还在活跃列表中）
-    if (_activeCharacterAnimations[characterId] == animController) {
-      animController.dispose();
-      _activeCharacterAnimations.remove(characterId);
+    final playback = animController.playAnimation(
+      animationName,
+      tickerProvider,
+      baseProperties,
+      repeatCount: repeatCount,
+    );
+    if (kSakiDiagnosticLogs) {
+      sakiDiagnosticLog(
+        '[SAKI_ANIMATION_HISTORY][START] '
+        'character=$characterId animation=$animationName repeat=$repeatCount '
+        'base=$baseProperties '
+        'finiteFinal=${animController.finiteFinalProperties}',
+      );
     }
+    unawaited(playback);
   }
 
   /// 播放场景动画
@@ -5189,6 +5438,14 @@ class GameManager {
 
   /// 淡出动画完成后移除角色
   void removeCharacterAfterFadeOut(String characterId) {
+    final fadingCharacter = _currentState.characters[characterId];
+    if (fadingCharacter == null || !fadingCharacter.isFadingOut) {
+      // A character may have spoken again while the old fade completion
+      // callback was queued. Never let that stale callback remove the revived
+      // sprite.
+      return;
+    }
+
     final oldCharacters = Map.of(_currentState.characters);
     final newCharacters = Map.of(_currentState.characters);
     newCharacters.remove(characterId);

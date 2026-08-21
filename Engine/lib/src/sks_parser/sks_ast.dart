@@ -63,7 +63,8 @@ class CgNode implements SksNode {
 
 class HideNode implements SksNode {
   final String character;
-  HideNode(this.character);
+  final bool immediate;
+  HideNode(this.character, {this.immediate = false});
 }
 
 class MovieNode implements SksNode {

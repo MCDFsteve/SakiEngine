@@ -132,6 +132,23 @@ extension _GameManagerLifecycle on GameManager {
     _sceneAnimationController?.dispose();
     _sceneAnimationController = null;
 
+    // 回退/读档后旧时间线的角色动画不能继续写入新恢复的状态，否则即使
+    // 快照包含正确末帧，也会被旧控制器下一次 tick 覆盖。
+    if (kSakiDiagnosticLogs && _activeCharacterAnimations.isNotEmpty) {
+      sakiDiagnosticLog(
+        '[SAKI_ANIMATION_HISTORY][CANCEL_BEFORE_RESTORE] '
+        'active=${_activeCharacterAnimations.keys.toList()}',
+      );
+    }
+    final staleCharacterAnimations = _activeCharacterAnimations.values.toList(
+      growable: false,
+    );
+    _activeCharacterAnimations.clear();
+    for (final controller in staleCharacterAnimations) {
+      controller.stopInfiniteLoop();
+      controller.dispose();
+    }
+
     // 恢复 NVL 状态
     if (kEngineDebugMode) {
       //print('[GameManager] 存档恢复：cgCharacters数量 = ${snapshot.currentState.cgCharacters.length}');
@@ -202,10 +219,10 @@ extension _GameManagerLifecycle on GameManager {
     // 设置NVL上下文模式
     _activeNvlContext = snapshot.isNvlMode
         ? (snapshot.isNvlMovieMode
-            ? _NvlContextMode.movie
-            : (snapshot.isNvlnMode
-                ? _NvlContextMode.noMask
-                : _NvlContextMode.standard))
+              ? _NvlContextMode.movie
+              : (snapshot.isNvlnMode
+                    ? _NvlContextMode.noMask
+                    : _NvlContextMode.standard))
         : _NvlContextMode.none;
     _showNvlOverlayOnNextDialogue = false;
 
@@ -423,10 +440,10 @@ extension _GameManagerLifecycle on GameManager {
       // 设置NVL上下文模式
       _activeNvlContext = _savedSnapshot!.isNvlMode
           ? (_savedSnapshot!.isNvlMovieMode
-              ? _NvlContextMode.movie
-              : (_savedSnapshot!.isNvlnMode
-                  ? _NvlContextMode.noMask
-                  : _NvlContextMode.standard))
+                ? _NvlContextMode.movie
+                : (_savedSnapshot!.isNvlnMode
+                      ? _NvlContextMode.noMask
+                      : _NvlContextMode.standard))
           : _NvlContextMode.none;
       _showNvlOverlayOnNextDialogue = false;
 

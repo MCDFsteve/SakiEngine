@@ -117,7 +117,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     with TickerProviderStateMixin, GameFlowchartMixin {
   static const bool _fxDiagLogs = bool.fromEnvironment(
     'SAKI_FX_DIAG',
-    defaultValue: true,
+    defaultValue: false,
   );
   GameManager? _gameManagerReference;
   DialogueProgressionManager? _dialogueProgressionManagerReference;
@@ -142,7 +142,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _showBackgroundGridMenu = false; // 背景选择网格菜单显示状态（Debug）
   bool _showMusicGridMenu = false; // 音乐选择网格菜单显示状态（Debug）
   bool _showFloatingScriptEditor = false; // 悬浮脚本编辑器显示状态（Debug）
-  bool _isMetaKeyPressed = false; // Command/Meta按键按住状态（Debug）
+  bool _isShiftKeyPressed = false; // Shift按键按住状态（Debug）
   _CommandDebugMenuMode? _activeCommandMenuMode;
   HotKey? _reloadHotKey;
   HotKey? _developerPanelHotKey; // Shift+D快捷键
@@ -371,7 +371,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
     _isInitialLoading = widget.initialLoadingOverlayBuilder != null;
     if (_isInitialLoading) {
-      debugPrint('[GamePlayScreen] initial loading overlay enabled');
+      sakiDiagnosticLog('[GamePlayScreen] initial loading overlay enabled');
     }
 
     // Extension method tear-offs are not guaranteed to recreate the same
@@ -844,7 +844,12 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         child: Focus(
           autofocus: true, // 确保能接收键盘事件
           onKeyEvent: (node, event) {
-            if (kEngineDebugMode && _handleExpressionWheelKeyEvent(event)) {
+            if (_handleDebugEditorEscapeKey(event)) {
+              return KeyEventResult.handled;
+            }
+            if (kEngineDebugMode &&
+                !_showFloatingScriptEditor &&
+                _handleExpressionWheelKeyEvent(event)) {
               return KeyEventResult.handled;
             }
 
@@ -1162,6 +1167,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                                 _expressionWheelHighlightedExpression =
                                                     expression;
                                               },
+                                          onDismiss:
+                                              _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
                                           _showCharacterWheel &&
@@ -1188,6 +1195,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                                 _characterWheelHighlightedId =
                                                     optionId;
                                               },
+                                          onDismiss:
+                                              _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
                                           _showBackgroundGridMenu &&
@@ -1220,6 +1229,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                               _applyBackgroundGridSelectionAndClose(),
                                             );
                                           },
+                                          onDismiss:
+                                              _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
                                           _showMusicGridMenu &&
@@ -1256,6 +1267,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                               _applyMusicGridSelectionAndClose(),
                                             );
                                           },
+                                          onDismiss:
+                                              _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
                                           _showFloatingScriptEditor)
@@ -1344,6 +1357,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     final shouldRenderDefaultSceneBackground = module
         .shouldRenderDefaultSceneBackground(gameState);
     final characterLighting = module.resolveCharacterLighting(gameState);
+    final sceneShakeLayer = resolveSceneShakeLayer(
+      isShaking: gameState.isShaking,
+      target: gameState.shakeTarget,
+      hasCg: gameState.movieFile == null && gameState.cgCharacters.isNotEmpty,
+    );
     if (_fxDiagLogs) {
       final filter = gameState.sceneFilter;
       final signature =
@@ -1371,10 +1389,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     }
 
     return SimpleShakeWrapper(
-      trigger:
-          gameState.isShaking &&
-          (gameState.shakeTarget == 'background' ||
-              gameState.shakeTarget == null),
+      trigger: sceneShakeLayer == SceneShakeLayer.scene,
       intensity: gameState.shakeIntensity ?? 8.0,
       duration: Duration(
         milliseconds: ((gameState.shakeDuration ?? 1.0) * 1000).round(),
@@ -1421,7 +1436,18 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                   gameState.cgCharacters,
                   _gameManager,
                 )
-                .map((widget) => _wrapWithParallax(widget, 0.55)),
+                .map(
+                  (widget) => SimpleShakeWrapper(
+                    key: ValueKey('cg-shake-${widget.key}'),
+                    trigger: sceneShakeLayer == SceneShakeLayer.cg,
+                    intensity: gameState.shakeIntensity ?? 8.0,
+                    duration: Duration(
+                      milliseconds:
+                          ((gameState.shakeDuration ?? 1.0) * 1000).round(),
+                    ),
+                    child: _wrapWithParallax(widget, 0.55),
+                  ),
+                ),
           ],
 
           // 视频播放器 - 最高优先级，如果有视频则覆盖在背景之上

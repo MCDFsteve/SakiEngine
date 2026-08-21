@@ -305,7 +305,9 @@ class _SksCompiler {
           'animation: ${_nullableString(node.animation)}, repeatCount: ${_nullableInt(node.repeatCount)})';
     }
     if (node is HideNode) {
-      return 'HideNode(${_str(node.character)})';
+      return node.immediate
+          ? 'HideNode(${_str(node.character)}, immediate: true)'
+          : 'HideNode(${_str(node.character)})';
     }
     if (node is MovieNode) {
       return 'MovieNode(${_str(node.movieFile)}, timer: ${_nullableDouble(node.timer)}, '

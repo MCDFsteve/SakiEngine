@@ -35,8 +35,9 @@ class AnimationManager {
     if (_isLoaded) return;
 
     try {
-      final content = await AssetManager()
-          .loadString('assets/GameScript/configs/animation.sks');
+      final content = await AssetManager().loadString(
+        'assets/GameScript/configs/animation.sks',
+      );
       //print('[AnimationManager] 开始解析动画配置文件');
       _parseAnimations(content);
       _isLoaded = true;
@@ -212,6 +213,7 @@ class CharacterAnimationController {
   Map<String, double> _currentProperties = {};
   Map<String, double> _originalBaseProperties = {}; // 保存真正的初始基础位置，永不改变
   bool _shouldStop = false; // 用于控制无限循环的停止
+  bool _isInfiniteLoop = false;
 
   CharacterAnimationController({
     required this.characterId,
@@ -225,14 +227,14 @@ class CharacterAnimationController {
     TickerProvider vsync,
     Map<String, double> baseProperties, {
     int? repeatCount,
-  }) async {
+  }) {
     // 设置当前播放的动画名称
     this.animationName = animationName;
 
     final animDef = AnimationManager.getAnimation(animationName);
     if (animDef == null) {
       onComplete?.call();
-      return;
+      return Future<void>.value();
     }
 
     // 应用预设属性到基础属性上
@@ -250,22 +252,31 @@ class CharacterAnimationController {
     _currentProperties = Map.from(_baseProperties);
     _originalBaseProperties = Map.from(baseProperties); // 保存真正的初始位置（不包含预设属性）
     _shouldStop = false; // 重置停止标志
+    _isInfiniteLoop = repeatCount == 0;
     // Ren'Py ATL 会先应用 transform 的初始属性，再开始关键帧。
     // 立即发布预设状态，避免上一段动画的最终状态残留一帧。
     onAnimationUpdate?.call(Map.from(_currentProperties));
 
+    return _playConfiguredAnimation(animDef.keyframes, vsync, repeatCount);
+  }
+
+  Future<void> _playConfiguredAnimation(
+    List<AnimationKeyframe> keyframes,
+    TickerProvider vsync,
+    int? repeatCount,
+  ) async {
     // 根据repeatCount决定播放次数
     if (repeatCount == 0) {
       // repeat 0 表示无限循环播放
-      await _playInfiniteLoop(animDef.keyframes, vsync);
+      await _playInfiniteLoop(keyframes, vsync);
     } else if (repeatCount == null || repeatCount == 1) {
       // 不写repeat或repeat 1，播放一次
-      await _playKeyframes(animDef.keyframes, vsync);
+      await _playKeyframes(keyframes, vsync);
     } else if (repeatCount > 1) {
       // 循环播放指定次数
       // 每次循环都基于真正的初始基础位置计算偏移，避免累积
       for (int i = 0; i < repeatCount; i++) {
-        await _playKeyframes(animDef.keyframes, vsync);
+        await _playKeyframes(keyframes, vsync);
       }
     }
 
@@ -297,7 +308,9 @@ class CharacterAnimationController {
 
   /// 无限循环播放动画
   Future<void> _playInfiniteLoop(
-      List<AnimationKeyframe> keyframes, TickerProvider vsync) async {
+    List<AnimationKeyframe> keyframes,
+    TickerProvider vsync,
+  ) async {
     // 实现真正的无限循环播放
     // 每次循环都基于真正的初始基础位置计算偏移，避免累积
     while (!_shouldStop) {
@@ -341,8 +354,10 @@ class CharacterAnimationController {
       curve: Curves.easeInOut,
     );
 
-    final animation =
-        Tween<double>(begin: 0.0, end: 1.0).animate(curvedAnimation);
+    final animation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(curvedAnimation);
 
     animation.addListener(() {
       final progress = animation.value;
@@ -369,22 +384,28 @@ class CharacterAnimationController {
   }
 
   Future<void> _playKeyframes(
-      List<AnimationKeyframe> keyframes, TickerProvider vsync) async {
+    List<AnimationKeyframe> keyframes,
+    TickerProvider vsync,
+  ) async {
     for (final keyframe in keyframes) {
       await _playKeyframe(keyframe, vsync);
     }
   }
 
-  Future<void> _playKeyframe(AnimationKeyframe keyframe, TickerProvider vsync,
-      {bool isReturnAnimation = false}) async {
+  Future<void> _playKeyframe(
+    AnimationKeyframe keyframe,
+    TickerProvider vsync, {
+    bool isReturnAnimation = false,
+  }) async {
     _controller?.dispose();
     _controller = AnimationController(
       duration: Duration(milliseconds: (keyframe.duration * 1000).round()),
       vsync: vsync,
     );
 
-    final startProperties =
-        Map<String, double>.from(_currentProperties); // 从当前位置开始
+    final startProperties = Map<String, double>.from(
+      _currentProperties,
+    ); // 从当前位置开始
     final endProperties = Map<String, double>.from(_currentProperties);
 
     if (isReturnAnimation) {
@@ -458,6 +479,21 @@ class CharacterAnimationController {
   }
 
   Map<String, double> get currentProperties => Map.from(_currentProperties);
+
+  /// 返回有限动画应写入历史快照的确定末帧。
+  ///
+  /// 对话历史会在动画仍播放时立即生成。如果直接复制当前插值状态，回退后
+  /// 会恢复到动画开头或中途。无限循环没有确定末帧，因此保持实时快照语义。
+  Map<String, double>? get finiteFinalProperties {
+    final name = animationName;
+    if (_isInfiniteLoop || name == null || _originalBaseProperties.isEmpty) {
+      return null;
+    }
+    return AnimationManager.resolveFinalProperties(
+      name,
+      _originalBaseProperties,
+    );
+  }
 
   /// 停止无限循环动画
   void stopInfiniteLoop() {

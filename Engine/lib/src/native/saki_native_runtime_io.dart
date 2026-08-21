@@ -1,4 +1,5 @@
 import 'package:saki_native/saki_native.dart';
+import 'package:sakiengine/src/utils/foundation_compat.dart';
 
 /// Initializes the shared Rust library once and remembers an unavailable bridge.
 class SakiNativeRuntime {
@@ -7,10 +8,10 @@ class SakiNativeRuntime {
   static Future<bool> ensureInitialized() {
     final existing = _initialization;
     if (existing != null) {
-      print('[SAKI_NATIVE][INIT] reuse');
+      sakiDiagnosticLog('[SAKI_NATIVE][INIT] reuse');
       return existing;
     }
-    print('[SAKI_NATIVE][INIT] cold-start');
+    sakiDiagnosticLog('[SAKI_NATIVE][INIT] cold-start');
     return _initialization = _initialize();
   }
 
@@ -19,7 +20,7 @@ class SakiNativeRuntime {
     try {
       await RustLib.init();
       stopwatch.stop();
-      print(
+      sakiDiagnosticLog(
         '[SAKI_NATIVE][INIT] ready '
         'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0}',
       );

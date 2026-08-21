@@ -255,7 +255,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   Future<void> _setupHotkey() async {
     // hotkey_manager 只在桌面平台可用
     if (!_isDesktopPlatform()) {
-      print('跳过热键注册：当前平台不支持 hotkey_manager');
+      sakiDiagnosticLog('跳过热键注册：当前平台不支持 hotkey_manager');
       return;
     }
     _reloadHotKey = HotKey(
@@ -268,13 +268,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       await hotKeyManager.register(
         _reloadHotKey!,
         keyDownHandler: (hotKey) {
-          print('热键触发: ${hotKey.toJson()}');
+          sakiDiagnosticLog('热键触发: ${hotKey.toJson()}');
           if (mounted) {
             _handleHotReload();
           }
         },
       );
-      print('快捷键 Shift+R 注册成功');
+      sakiDiagnosticLog('快捷键 Shift+R 注册成功');
     } catch (e) {
       print('快捷键注册失败: $e');
       // 如果系统级热键失败，尝试应用内热键
@@ -287,13 +287,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         await hotKeyManager.register(
           _reloadHotKey!,
           keyDownHandler: (hotKey) {
-            print('应用内热键触发: ${hotKey.toJson()}');
+            sakiDiagnosticLog('应用内热键触发: ${hotKey.toJson()}');
             if (mounted) {
               _handleHotReload();
             }
           },
         );
-        print('应用内快捷键 Shift+R 注册成功');
+        sakiDiagnosticLog('应用内快捷键 Shift+R 注册成功');
       } catch (e2) {
         print('应用内快捷键注册也失败: $e2');
       }
@@ -317,7 +317,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             });
           },
         );
-        print('快捷键 Shift+D 注册成功 (开发者面板)');
+        sakiDiagnosticLog('快捷键 Shift+D 注册成功 (开发者面板)');
       } catch (e) {
         print('开发者面板快捷键注册失败: $e');
       }
@@ -337,20 +337,21 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             }
             _setStateIfMounted(() {
               _showFloatingScriptEditor = !_showFloatingScriptEditor;
+              _isShiftKeyPressed = false;
             });
             _showNotificationMessage(
               '脚本浮窗 ${_showFloatingScriptEditor ? '开启' : '关闭'}',
             );
           },
         );
-        print('快捷键 Shift+P 注册成功 (脚本浮窗)');
+        sakiDiagnosticLog('快捷键 Shift+P 注册成功 (脚本浮窗)');
       } catch (e) {
         print('脚本浮窗快捷键注册失败: $e');
       }
     }
 
     // 上下方向键改由 Focus.onKeyEvent 统一处理，避免平台热键差异。
-    print('箭头键输入由 Focus.onKeyEvent 处理');
+    sakiDiagnosticLog('箭头键输入由 Focus.onKeyEvent 处理');
   }
 
   // 设置表情选择器管理器（Debug模式下的表情选择功能）
@@ -363,6 +364,14 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         // 获取当前游戏状态
         return _gameManager.currentState;
       },
+      shouldIgnoreHotkey: () =>
+          _showFloatingScriptEditor ||
+          _showDeveloperPanel ||
+          _showDebugPanel ||
+          _showSettings ||
+          _showSaveOverlay ||
+          _showLoadOverlay ||
+          _showReviewOverlay,
       setExpressionSelectorVisibility: (show) {
         if (mounted) {
           // 检查是否可以显示表情选择器
@@ -376,6 +385,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
                 showSettings: _showSettings,
                 showDeveloperPanel: _showDeveloperPanel,
                 showDebugPanel: _showDebugPanel,
+                showFloatingScriptEditor: _showFloatingScriptEditor,
                 isShowingMenu: _isShowingMenu,
               );
 
@@ -391,38 +401,77 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     _expressionSelectorManager!.initialize();
   }
 
+  bool _handleDebugEditorEscapeKey(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape) {
+      return false;
+    }
+
+    final hadEditorOpen =
+        _showFloatingScriptEditor ||
+        _showDeveloperPanel ||
+        _showDebugPanel ||
+        _showExpressionSelector ||
+        _isAnyCommandMenuOpen;
+    if (!hadEditorOpen) {
+      return false;
+    }
+
+    _expressionWheelOpenTimer?.cancel();
+    if (_showMusicGridMenu) {
+      unawaited(_restoreMusicPreviewIfNeeded());
+    }
+    _setStateIfMounted(() {
+      _showFloatingScriptEditor = false;
+      _showDeveloperPanel = false;
+      _showDebugPanel = false;
+      _showExpressionSelector = false;
+      _isShiftKeyPressed = false;
+      _resetCommandMenuFields();
+    });
+    _expressionSelectorManager?.setExpressionSelectorVisible(false);
+    return true;
+  }
+
   bool _handleExpressionWheelKeyEvent(KeyEvent event) {
     final logicalKey = event.logicalKey;
-    final isMetaKey =
-        logicalKey == LogicalKeyboardKey.metaLeft ||
-        logicalKey == LogicalKeyboardKey.metaRight ||
-        logicalKey == LogicalKeyboardKey.meta;
-    final isCommandA = logicalKey == LogicalKeyboardKey.keyA;
-    final isCommandC = logicalKey == LogicalKeyboardKey.keyC;
-    final isCommandB = logicalKey == LogicalKeyboardKey.keyB;
-    final isCommand1 = logicalKey == LogicalKeyboardKey.digit1;
+    final isShiftKey =
+        logicalKey == LogicalKeyboardKey.shiftLeft ||
+        logicalKey == LogicalKeyboardKey.shiftRight ||
+        logicalKey == LogicalKeyboardKey.shift;
+    final isShortcutA = logicalKey == LogicalKeyboardKey.keyA;
+    final isShortcutC = logicalKey == LogicalKeyboardKey.keyC;
+    final isShortcutB = logicalKey == LogicalKeyboardKey.keyB;
+    final isShortcut1 =
+        logicalKey == LogicalKeyboardKey.digit1 ||
+        logicalKey == LogicalKeyboardKey.exclamation ||
+        event.physicalKey == PhysicalKeyboardKey.digit1;
 
     if (kSakiDiagnosticLogs &&
-        (isMetaKey || isCommandA || isCommandC || isCommandB || isCommand1)) {
+        (isShiftKey ||
+            isShortcutA ||
+            isShortcutC ||
+            isShortcutB ||
+            isShortcut1)) {
       print(
-        'ExpressionWheel: key event type=${event.runtimeType}, key=${logicalKey.debugName}, isMetaPressed=${HardwareKeyboard.instance.isMetaPressed}, internalPressed=$_isMetaKeyPressed, mode=$_activeCommandMenuMode, visible=$_isAnyCommandMenuOpen',
+        'ExpressionWheel: key event type=${event.runtimeType}, key=${logicalKey.debugName}, isShiftPressed=${HardwareKeyboard.instance.isShiftPressed}, internalPressed=$_isShiftKeyPressed, mode=$_activeCommandMenuMode, visible=$_isAnyCommandMenuOpen',
       );
     }
 
-    if (isMetaKey) {
+    if (isShiftKey) {
       if (event is KeyDownEvent || event is KeyRepeatEvent) {
-        if (_isMetaKeyPressed) {
+        if (_isShiftKeyPressed) {
           return true;
         }
-        _isMetaKeyPressed = true;
+        _isShiftKeyPressed = true;
         return true;
       }
 
       if (event is KeyUpEvent) {
-        _isMetaKeyPressed = HardwareKeyboard.instance.isMetaPressed;
-        if (_isMetaKeyPressed) {
+        _isShiftKeyPressed = HardwareKeyboard.instance.isShiftPressed;
+        if (_isShiftKeyPressed) {
           if (kSakiDiagnosticLogs) {
-            print('ExpressionWheel: keyUp ignored, meta still pressed');
+            print('ExpressionWheel: keyUp ignored, shift still pressed');
           }
           return true;
         }
@@ -438,7 +487,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           }
           unawaited(_applyCharacterWheelSelectionAndClose());
         } else if (_showBackgroundGridMenu || _showMusicGridMenu) {
-          // 背景/音乐改为“常驻+双击应用”，Meta松开不做自动应用。
+          // 背景/音乐改为“常驻+双击应用”，Shift松开不做自动应用。
           if (kSakiDiagnosticLogs) {
             print(
               'ExpressionWheel: keyUp keep grid menu open (background/music persistent mode)',
@@ -452,20 +501,20 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     }
 
     if (event is KeyRepeatEvent &&
-        _isMetaKeyPressed &&
-        (isCommandA || isCommandC || isCommandB || isCommand1)) {
+        _isShiftKeyPressed &&
+        (isShortcutA || isShortcutC || isShortcutB || isShortcut1)) {
       return true;
     }
 
-    if (event is KeyDownEvent && _isMetaKeyPressed) {
+    if (event is KeyDownEvent && _isShiftKeyPressed) {
       _CommandDebugMenuMode? requestedMode;
-      if (isCommandA) {
+      if (isShortcutA) {
         requestedMode = _CommandDebugMenuMode.expression;
-      } else if (isCommandC) {
+      } else if (isShortcutC) {
         requestedMode = _CommandDebugMenuMode.character;
-      } else if (isCommandB) {
+      } else if (isShortcutB) {
         requestedMode = _CommandDebugMenuMode.background;
-      } else if (isCommand1) {
+      } else if (isShortcut1) {
         requestedMode = _CommandDebugMenuMode.music;
       }
 
@@ -593,10 +642,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   Future<void> _openCharacterWheelIfPossible() async {
-    if (!_isMetaKeyPressed || !mounted) {
+    if (!_isShiftKeyPressed || !mounted) {
       if (kSakiDiagnosticLogs) {
         print(
-          'ExpressionWheel: character open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)',
+          'ExpressionWheel: character open aborted (shiftPressed=$_isShiftKeyPressed, mounted=$mounted)',
         );
       }
       return;
@@ -615,7 +664,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     }
 
     final current = _resolveCurrentCharacterWheelId(options);
-    if (!mounted || !_isMetaKeyPressed) {
+    if (!mounted || !_isShiftKeyPressed) {
       return;
     }
 
@@ -747,10 +796,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   Future<void> _openExpressionWheelIfPossible() async {
-    if (!_isMetaKeyPressed || !mounted) {
+    if (!_isShiftKeyPressed || !mounted) {
       if (kSakiDiagnosticLogs) {
         print(
-          'ExpressionWheel: open aborted (metaPressed=$_isMetaKeyPressed, mounted=$mounted)',
+          'ExpressionWheel: open aborted (shiftPressed=$_isShiftKeyPressed, mounted=$mounted)',
         );
       }
       return;
@@ -811,10 +860,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       );
     }
 
-    if (!mounted || !_isMetaKeyPressed) {
+    if (!mounted || !_isShiftKeyPressed) {
       if (kSakiDiagnosticLogs) {
         print(
-          'ExpressionWheel: open cancelled after load (mounted=$mounted, metaPressed=$_isMetaKeyPressed)',
+          'ExpressionWheel: open cancelled after load (mounted=$mounted, shiftPressed=$_isShiftKeyPressed)',
         );
       }
       return;
@@ -1085,6 +1134,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       );
     }
     final options = <CommandWheelOption>[];
+    final module = widget.gameModule ?? DefaultGameModule();
     for (final fileName in imageFiles) {
       final lower = fileName.toLowerCase();
       if (!supported.any((ext) => lower.endsWith(ext))) {
@@ -1101,8 +1151,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         }
         continue;
       }
+      final displayName = module.resolveBackgroundDisplayName(base);
       options.add(
-        CommandWheelOption(id: base, label: base, imagePath: resolved),
+        CommandWheelOption(
+          id: base,
+          label: displayName.isNotEmpty ? displayName : base,
+          imagePath: resolved,
+        ),
       );
     }
     options.sort((a, b) => a.label.compareTo(b.label));
@@ -1329,6 +1384,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       speakerInfo.characterId,
       nextPose,
       nextExpression,
+      speakerInfo.currentAnimation,
     );
   }
 
@@ -1532,32 +1588,41 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
   void _clearCommandMenuState() {
     _expressionWheelOpenTimer?.cancel();
-    _setStateIfMounted(() {
-      _showExpressionWheel = false;
-      _showCharacterWheel = false;
-      _showBackgroundGridMenu = false;
-      _showMusicGridMenu = false;
-      _activeCommandMenuMode = null;
-      _expressionWheelSpeakerInfo = null;
-      _expressionWheelExpressions = const [];
-      _expressionWheelImagePaths = const {};
-      _expressionWheelHighlightedExpression = null;
-      _characterWheelOptions = const [];
-      _characterWheelCurrentId = null;
-      _characterWheelHighlightedId = null;
-      _backgroundGridOptions = const [];
-      _backgroundGridCurrentId = null;
-      _backgroundGridHighlightedId = null;
-      _musicGridOptions = const [];
-      _musicGridCurrentId = null;
-      _musicGridHighlightedId = null;
-      _musicGridOriginalAssetPath = null;
-      _musicPreviewPlayingId = null;
-      _expressionWheelCenter = null;
-    });
+    _setStateIfMounted(_resetCommandMenuFields);
     if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: state cleared');
     }
+  }
+
+  void _dismissCommandMenuForEscape() {
+    if (_showMusicGridMenu) {
+      unawaited(_restoreMusicPreviewIfNeeded());
+    }
+    _clearCommandMenuState();
+  }
+
+  void _resetCommandMenuFields() {
+    _showExpressionWheel = false;
+    _showCharacterWheel = false;
+    _showBackgroundGridMenu = false;
+    _showMusicGridMenu = false;
+    _activeCommandMenuMode = null;
+    _expressionWheelSpeakerInfo = null;
+    _expressionWheelExpressions = const [];
+    _expressionWheelImagePaths = const {};
+    _expressionWheelHighlightedExpression = null;
+    _characterWheelOptions = const [];
+    _characterWheelCurrentId = null;
+    _characterWheelHighlightedId = null;
+    _backgroundGridOptions = const [];
+    _backgroundGridCurrentId = null;
+    _backgroundGridHighlightedId = null;
+    _musicGridOptions = const [];
+    _musicGridCurrentId = null;
+    _musicGridHighlightedId = null;
+    _musicGridOriginalAssetPath = null;
+    _musicPreviewPlayingId = null;
+    _expressionWheelCenter = null;
   }
 
   // 设置console按键序列检测器（发行版也可用，方便玩家复制日志）
@@ -1584,12 +1649,17 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         }
       },
       sequenceTimeout: const Duration(seconds: 3),
+      shouldIgnore: () =>
+          _showFloatingScriptEditor ||
+          _showDeveloperPanel ||
+          _showExpressionSelector ||
+          _showDebugPanel ||
+          _showSettings,
     );
 
     _consoleSequenceDetector!.startListening();
 
-    print('Console按键序列检测器已启动 (c-o-n-s-o-l-e)');
-    print('发行版用户可通过连续按下 c-o-n-s-o-l-e 来打开日志面板复制日志');
+    sakiDiagnosticLog('Console按键序列检测器已启动 (c-o-n-s-o-l-e)');
   }
 
   // 设置快进管理器
@@ -1626,7 +1696,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     );
 
     _fastForwardManager!.startListening();
-    print('快进管理器已初始化 - 按住Ctrl键可快进对话');
+    sakiDiagnosticLog('快进管理器已初始化 - 按住Command/Ctrl键可强制快进对话');
   }
 
   // 设置已读文本跟踪
@@ -1664,7 +1734,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       },
     );
 
-    print('已读文本跟踪器已初始化 - 快捷菜单中的快进按钮只会跳过已读文本');
+    sakiDiagnosticLog('已读文本跟踪器已初始化');
   }
 
   // 设置鼠标滚轮处理器
@@ -1748,7 +1818,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       },
     );
 
-    print('自动播放管理器已初始化');
+    sakiDiagnosticLog('自动播放管理器已初始化');
   }
 
   // 处理跳过已读文本

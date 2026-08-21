@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sakiengine/src/widgets/command_radial_wheel.dart';
 
-/// Debug差分快捷轮盘（按住Command弹出）
+/// Debug差分快捷轮盘（按住Shift弹出）
 class ExpressionRadialWheel extends StatelessWidget {
   final String characterName;
   final String currentExpression;
@@ -9,6 +9,7 @@ class ExpressionRadialWheel extends StatelessWidget {
   final Offset center;
   final ValueChanged<String> onHighlightedExpressionChanged;
   final Map<String, String>? expressionImagePaths;
+  final VoidCallback? onDismiss;
 
   const ExpressionRadialWheel({
     super.key,
@@ -18,6 +19,7 @@ class ExpressionRadialWheel extends StatelessWidget {
     required this.center,
     required this.onHighlightedExpressionChanged,
     this.expressionImagePaths,
+    this.onDismiss,
   });
 
   @override
@@ -42,7 +44,8 @@ class ExpressionRadialWheel extends StatelessWidget {
       options: options,
       center: center,
       onHighlightedOptionChanged: onHighlightedExpressionChanged,
-      applyHint: 'Release Command To Apply',
+      applyHint: 'Release Shift To Apply',
+      onDismiss: onDismiss,
     );
   }
 }

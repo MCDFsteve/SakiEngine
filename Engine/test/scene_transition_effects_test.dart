@@ -17,6 +17,58 @@ Future<ui.Image> _solidImage(Color color) async {
 
 void main() {
   testWidgets(
+    'pixel transition stays inside the captured game viewport',
+    (tester) async {
+      final gameViewportKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 60, child: ColoredBox(color: Colors.red)),
+              Expanded(
+                child: RepaintBoundary(
+                  key: gameViewportKey,
+                  child: const ColoredBox(color: Colors.black),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      final oldFrame = await _solidImage(Colors.black);
+      final newFrame = await _solidImage(Colors.blue);
+      var captureCount = 0;
+      final transition = SceneTransitionEffectManager.instance.transition(
+        context: gameViewportKey.currentContext!,
+        transitionType: TransitionType.pixel,
+        duration: const Duration(milliseconds: 240),
+        captureFrame: () async {
+          captureCount++;
+          return captureCount == 1 ? oldFrame : newFrame;
+        },
+        onMidTransition: () {},
+      );
+
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        tester.getRect(
+          find.byKey(
+            const ValueKey<String>('pixel_transition_overlay'),
+          ),
+        ),
+        const Rect.fromLTWH(0, 60, 800, 540),
+      );
+
+      await tester.pumpAndSettle();
+      await transition;
+    },
+  );
+
+  testWidgets(
     'diss keeps the captured old scene visible until the target frame is ready',
     (tester) async {
       late BuildContext overlayContext;

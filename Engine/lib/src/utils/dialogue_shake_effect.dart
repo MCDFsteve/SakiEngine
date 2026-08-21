@@ -2,6 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'dart:math' as math;
 
+/// 画面震动实际作用的渲染层。
+enum SceneShakeLayer { none, scene, cg }
+
+/// 将脚本的 shake target 路由到当前真正可见的画面层。
+///
+/// 原生 CG 会替代普通 scene 成为全屏画面，因此默认的 `shake` 和
+/// `target background` 在 CG 存在时都应震动 CG，而不是变换其外层场景树。
+SceneShakeLayer resolveSceneShakeLayer({
+  required bool isShaking,
+  required String? target,
+  required bool hasCg,
+}) {
+  if (!isShaking) return SceneShakeLayer.none;
+
+  final normalizedTarget = target?.trim().toLowerCase();
+  if (normalizedTarget == 'cg') {
+    return hasCg ? SceneShakeLayer.cg : SceneShakeLayer.none;
+  }
+  if (normalizedTarget == null ||
+      normalizedTarget.isEmpty ||
+      normalizedTarget == 'background') {
+    return hasCg ? SceneShakeLayer.cg : SceneShakeLayer.scene;
+  }
+  return SceneShakeLayer.none;
+}
+
 /// 对话框震动效果管理器
 /// 当打字机显示到感叹号时，触发GAL风格Q弹震动（快速左右震动带弹性衰减）
 class DialogueShakeEffect extends StatefulWidget {
@@ -272,11 +298,18 @@ class _SimpleShakeWrapperState extends State<SimpleShakeWrapper>
     });
 
     _lastTrigger = widget.trigger;
+    if (widget.trigger) {
+      _controller.forward();
+    }
   }
 
   @override
   void didUpdateWidget(SimpleShakeWrapper oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.duration != widget.duration) {
+      _controller.duration = widget.duration;
+    }
     
     // 检测trigger从false变为true时触发GAL震动
     if (!_lastTrigger && widget.trigger) {

@@ -102,8 +102,8 @@ class CompositeCgRenderer {
   static const int _maxPreloadedImages = 2;
   static const int _maxPreloadedImageBytes =
       int.fromEnvironment('SAKI_CG_FLATTENED_CACHE_MB', defaultValue: 24) *
-          1024 *
-          1024;
+      1024 *
+      1024;
 
   // GPU 纹理缓存与状态
   static final Map<String, Future<GpuCompositeEntry?>> _gpuFutureCache = {};
@@ -113,8 +113,8 @@ class CompositeCgRenderer {
   static const int _maxGpuResultEntries = 8;
   static const int _maxGpuResultBytes =
       int.fromEnvironment('SAKI_CG_GPU_CACHE_MB', defaultValue: 96) *
-          1024 *
-          1024;
+      1024 *
+      1024;
   static final Map<String, String> _currentDisplayedGpuKeys = {};
 
   static final Map<String, Future<ui.Image?>> _gpuFlattenTasks = {};
@@ -283,6 +283,7 @@ class CompositeCgRenderer {
         resourceId: characterState.resourceId,
         pose: characterState.pose ?? 'pose1',
         expression: characterState.expression ?? 'happy',
+        cacheRevision: CharacterCompositeCache.instance.revision,
         isFadingOut: characterState.isFadingOut,
         skipAnimation: skipAnimations,
         useGpuAcceleration: _useGpuAcceleration,
@@ -317,7 +318,8 @@ class CompositeCgRenderer {
     }
 
     final currentImagePath = _currentDisplayedImages[displayKey];
-    final bool isFirstAppearance = !skipAnimations &&
+    final bool isFirstAppearance =
+        !skipAnimations &&
         (currentImagePath == null || _isFreshFade(displayKey));
     if (isFirstAppearance) {
       _markFadeUsed(displayKey);
@@ -408,7 +410,8 @@ class CompositeCgRenderer {
 
     final currentKey = _currentDisplayedGpuKeys[displayKey];
     final currentResult = _peekGpuResult(currentKey);
-    final bool isFirstAppearance = !skipAnimations &&
+    final bool isFirstAppearance =
+        !skipAnimations &&
         (currentKey == null || _isFreshFade('gpu_$displayKey'));
     if (isFirstAppearance) {
       _markFadeUsed('gpu_$displayKey');
@@ -487,16 +490,16 @@ class CompositeCgRenderer {
     if (!_gpuFutureCache.containsKey(cacheKey)) {
       _gpuFutureCache[cacheKey] = _gpuCompositor
           .getCompositeEntry(
-        resourceId: characterState.resourceId,
-        pose: characterState.pose ?? 'pose1',
-        expression: characterState.expression ?? 'happy',
-      )
+            resourceId: characterState.resourceId,
+            pose: characterState.pose ?? 'pose1',
+            expression: characterState.expression ?? 'happy',
+          )
           .then((entry) {
-        if (entry != null) {
-          _cacheGpuResult(cacheKey, entry.result, markAsPreloaded: true);
-        }
-        return entry;
-      });
+            if (entry != null) {
+              _cacheGpuResult(cacheKey, entry.result, markAsPreloaded: true);
+            }
+            return entry;
+          });
     }
 
     return FutureBuilder<GpuCompositeEntry?>(
@@ -577,9 +580,11 @@ class CompositeCgRenderer {
           defaultQuality: ui.FilterQuality.none,
         );
 
-      for (var layerIndex = 0;
-          layerIndex < result.layers.length;
-          layerIndex++) {
+      for (
+        var layerIndex = 0;
+        layerIndex < result.layers.length;
+        layerIndex++
+      ) {
         final layer = result.layers[layerIndex];
         final srcRect = ui.Rect.fromLTWH(
           0,
@@ -587,8 +592,9 @@ class CompositeCgRenderer {
           layer.width.toDouble(),
           layer.height.toDouble(),
         );
-        paint.blendMode =
-            layerIndex == 0 ? ui.BlendMode.src : ui.BlendMode.srcOver;
+        paint.blendMode = layerIndex == 0
+            ? ui.BlendMode.src
+            : ui.BlendMode.srcOver;
         canvas.drawImageRect(layer, srcRect, targetRect, paint);
       }
 
@@ -822,9 +828,7 @@ class CompositeCgRenderer {
   }
 
   /// 全局预热 - 在游戏启动时预热所有常见CG组合
-  static void _startGlobalPreWarming() {
-    print('[CompositeCgRenderer] 🚀 全局预热已禁用，采用动态预热策略');
-  }
+  static void _startGlobalPreWarming() {}
 
   /// 检查CG组合是否存在
   static Future<bool> _checkCgCombinationExists(
@@ -1176,8 +1180,9 @@ class _GpuSeamlessCgDisplayState extends State<GpuSeamlessCgDisplay>
         final currentOpacity = _incomingResult != null
             ? (1.0 - transitionValue) * fadeValue
             : fadeValue;
-        final newOpacity =
-            _incomingResult != null ? transitionValue * fadeValue : 0.0;
+        final newOpacity = _incomingResult != null
+            ? transitionValue * fadeValue
+            : 0.0;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -1990,9 +1995,14 @@ class _DissolveShaderPainter extends CustomPainter {
       ..setFloat(8, targetRect.top)
       ..setFloat(9, opacity.clamp(0.0, 1.0));
 
+    // 让 shader 采样跟随引擎的最近邻配置（像素风立绘）。
+    // dissolve.frag 使用单点 texture() 采样，插值方式由 sampler 决定。
+    final samplerQuality = ImageSamplingManager().resolveCanvasFilterQuality(
+      defaultQuality: ui.FilterQuality.high,
+    );
     shader
-      ..setImageSampler(0, fromImage)
-      ..setImageSampler(1, toImage);
+      ..setImageSampler(0, fromImage, filterQuality: samplerQuality)
+      ..setImageSampler(1, toImage, filterQuality: samplerQuality);
 
     final paint = ui.Paint()..shader = shader;
 
@@ -2323,6 +2333,7 @@ class CgSlotWidget extends StatefulWidget {
   final String resourceId;
   final String pose;
   final String expression;
+  final int cacheRevision;
   final bool isFadingOut;
   final bool skipAnimation;
   final bool useGpuAcceleration;
@@ -2335,6 +2346,7 @@ class CgSlotWidget extends StatefulWidget {
     required this.resourceId,
     required this.pose,
     required this.expression,
+    required this.cacheRevision,
     required this.isFadingOut,
     required this.skipAnimation,
     required this.useGpuAcceleration,
@@ -2411,24 +2423,31 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
     final newContentId = _targetContentId();
     final oldRequestedContentId =
         '${oldWidget.resourceId}_${oldWidget.pose}_${oldWidget.expression}';
+    final contentChanged = oldRequestedContentId != newContentId;
+    final cacheInvalidated = oldWidget.cacheRevision != widget.cacheRevision;
 
-    // 检测内容是否改变（差分、pose或完全不同的CG）
-    if (oldRequestedContentId != newContentId) {
-      // 保存当前图像作为过渡源
-      _previousImage = _currentImage;
+    // 配置热重载会清空共享合成缓存。即使CG资源、pose和差分没有变化，
+    // 也必须重新取得新revision的图像，否则槽位会继续绘制已经释放的旧图像。
+    if (contentChanged || cacheInvalidated) {
+      // 缓存失效时旧图像即将被释放，不能再把它交给dissolve采样。
+      // 普通差分切换仍保留原有的前后图融合。
+      _previousImage = contentChanged && !cacheInvalidated
+          ? _currentImage
+          : null;
       CompositeCgRenderer._logCgTransition(
-        'content_changed old=$oldRequestedContentId -> new=$newContentId, '
+        'reload old=$oldRequestedContentId -> new=$newContentId, '
+        'contentChanged=$contentChanged, cacheInvalidated=$cacheInvalidated, '
         'hasCurrent=${_currentImage != null}, hasPrevious=${_previousImage != null}, '
         'skipAnimation=${widget.skipAnimation}, isFadingOut=${widget.isFadingOut}',
       );
 
-      // 加载新图像
       _loadCgImage(
         resourceId: widget.resourceId,
         pose: widget.pose,
         expression: widget.expression,
         contentId: newContentId,
-        trigger: 'update',
+        trigger: cacheInvalidated ? 'cache_revision' : 'update',
+        animateTransition: !cacheInvalidated,
       );
     }
 
@@ -2459,6 +2478,7 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
     required String expression,
     required String contentId,
     required String trigger,
+    bool animateTransition = true,
   }) async {
     final requestToken = ++_loadRequestToken;
 
@@ -2495,7 +2515,7 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
       }
 
       // 启动渐变动画
-      if (!widget.skipAnimation && !widget.isFadingOut) {
+      if (animateTransition && !widget.skipAnimation && !widget.isFadingOut) {
         // 对每次成功内容加载都强制触发过渡：
         // - 有_previousImage时走dissolve
         // - 无_previousImage时走透明淡入（防止异步竞态导致“无动画切换”）
@@ -2508,6 +2528,7 @@ class _CgSlotWidgetState extends State<CgSlotWidget>
       } else {
         CompositeCgRenderer._logCgTransition(
           'skip_transition trigger=$trigger, content=$contentId, '
+          'animateTransition=$animateTransition, '
           'skipAnimation=${widget.skipAnimation}, isFadingOut=${widget.isFadingOut}',
         );
         _transitionController.value = 1.0;

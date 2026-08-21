@@ -699,9 +699,18 @@ class SaveLoadManager {
       );
       if (result.invalidFiles.isNotEmpty) {
         print(
-          '[SAKI_SAVE][INDEX] ignored-invalid='
+          '[SAKI_SAVE][INDEX] native-invalid='
           '${result.invalidFiles.length} first=${result.invalidFiles.first}',
         );
+        // A native codec built against an older save format reports newer,
+        // otherwise valid saves as invalid. Returning its partial result here
+        // makes occupied slots appear empty. Let the Dart compatibility
+        // decoder inspect every file whenever the native scan is incomplete.
+        sakiDiagnosticLog(
+          '[SAKI_SAVE][INDEX] backend=rust incomplete; '
+          'using Dart fallback',
+        );
+        return null;
       }
       final conversionStopwatch = Stopwatch()..start();
       sakiDiagnosticLog('[SAKI_SAVE][INDEX] bridge-convert-start');

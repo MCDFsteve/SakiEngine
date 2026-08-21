@@ -9,6 +9,7 @@ import 'package:sakiengine/src/utils/async_initialization_gate.dart';
 import 'package:path/path.dart' as p;
 import 'package:saki_native/saki_native.dart';
 import 'package:sakiengine/src/native/saki_native_runtime.dart';
+import 'package:sakiengine/src/utils/foundation_compat.dart';
 
 class _PackEntry {
   final String path;
@@ -106,7 +107,7 @@ class SakiPackStore {
             );
           }
           _available = true;
-          print(
+          sakiDiagnosticLog(
             '[SAKI_NATIVE][PACK] opened=${catalog.entries.length} '
             'path=${catalog.path}',
           );

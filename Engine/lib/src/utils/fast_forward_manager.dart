@@ -7,7 +7,7 @@ import 'package:sakiengine/src/utils/dialogue_progression_manager.dart';
 /// 快进管理器
 /// 
 /// 负责处理视觉小说的快进功能：
-/// - 监听Ctrl键的按下和释放
+/// - 监听Command/Ctrl键的按下和释放
 /// - 在快进模式下自动推进对话
 /// - 管理快进速度和状态
 class FastForwardManager {
@@ -21,8 +21,9 @@ class FastForwardManager {
   static const Duration _fastForwardInterval = Duration(milliseconds: 50); // 快进间隔，50ms推进一次，非常快
   static const Duration _initialDelay = Duration(milliseconds: 50); // 初始延迟减少，更快响应
   
-  // Ctrl键状态监听
-  bool _isCtrlPressed = false;
+  // Command/Ctrl键状态监听
+  bool _isFastForwardKeyPressed = false;
+  bool _isListening = false;
   Timer? _keyHoldTimer;
   
   // 状态回调
@@ -42,49 +43,75 @@ class FastForwardManager {
   
   /// 开始监听键盘事件
   void startListening() {
-    // 在上级Widget中处理键盘监听，这里提供检查方法
+    if (_isListening) return;
+    HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
+    _isListening = true;
   }
   
   /// 停止监听键盘事件
   void stopListening() {
-    _stopFastForward();
+    if (_isListening) {
+      HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
+      _isListening = false;
+    }
+    _handleFastForwardKeyReleased();
+  }
+
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+        !_isFastForwardKey(event.logicalKey) &&
+        _isFastForwardKeyPressed) {
+      // Command/Ctrl与其他按键组成快捷键时，不应误触剧情快进。
+      _handleFastForwardKeyReleased();
+      return false;
+    }
+    handleKeyEvent(event);
+    // 这里只观察全局按键状态，仍让Focus/快捷键系统继续处理组合键。
+    return false;
+  }
+
+  bool _isFastForwardKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight ||
+        key == LogicalKeyboardKey.metaLeft ||
+        key == LogicalKeyboardKey.metaRight ||
+        key == LogicalKeyboardKey.meta;
   }
   
   /// 处理键盘按键事件
   bool handleKeyEvent(KeyEvent event) {
-    // 检查是否是Ctrl键
-    final isCtrlKey = event.logicalKey == LogicalKeyboardKey.controlLeft ||
-                      event.logicalKey == LogicalKeyboardKey.controlRight;
+    if (!_isFastForwardKey(event.logicalKey)) return false;
     
-    if (!isCtrlKey) return false;
-    
-    if (event is KeyDownEvent) {
-      _handleCtrlPressed();
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      _handleFastForwardKeyPressed();
     } else if (event is KeyUpEvent) {
-      _handleCtrlReleased();
+      final keyboard = HardwareKeyboard.instance;
+      if (!keyboard.isControlPressed && !keyboard.isMetaPressed) {
+        _handleFastForwardKeyReleased();
+      }
     }
     
     return true; // 表示已处理该键盘事件
   }
   
-  /// 处理Ctrl键按下
-  void _handleCtrlPressed() {
-    if (_isCtrlPressed) return; // 避免重复处理
+  /// 处理Command/Ctrl键按下
+  void _handleFastForwardKeyPressed() {
+    if (_isFastForwardKeyPressed) return; // 避免重复处理
     
-    _isCtrlPressed = true;
+    _isFastForwardKeyPressed = true;
     
     // 设置延迟，避免误触快进
     _keyHoldTimer?.cancel();
     _keyHoldTimer = Timer(_initialDelay, () {
-      if (_isCtrlPressed && !_isFastForwarding) {
+      if (_isFastForwardKeyPressed && !_isFastForwarding) {
         _startFastForward();
       }
     });
   }
   
-  /// 处理Ctrl键释放
-  void _handleCtrlReleased() {
-    _isCtrlPressed = false;
+  /// 处理Command/Ctrl键释放
+  void _handleFastForwardKeyReleased() {
+    _isFastForwardKeyPressed = false;
     _keyHoldTimer?.cancel();
     _keyHoldTimer = null;
     
@@ -152,13 +179,13 @@ class FastForwardManager {
   
   /// 手动开始快进（用于UI按钮等）
   void startFastForward() {
-    _isCtrlPressed = true; // 模拟Ctrl键按下
+    _isFastForwardKeyPressed = true; // 模拟快进键按下
     _startFastForward();
   }
   
   /// 手动停止快进（用于UI按钮等）
   void stopFastForward() {
-    _isCtrlPressed = false;
+    _isFastForwardKeyPressed = false;
     _stopFastForward();
   }
   
@@ -173,15 +200,13 @@ class FastForwardManager {
   
   /// 强制停止快进（由外部逻辑调用，如检测到章节场景）
   void forceStopFastForward() {
-    _isCtrlPressed = false;
+    _isFastForwardKeyPressed = false;
     _stopFastForward();
     print('[FastForward] 快进被强制停止（检测到重要场景）');
   }
   
   /// 清理资源
   void dispose() {
-    _stopFastForward();
-    _keyHoldTimer?.cancel();
-    _keyHoldTimer = null;
+    stopListening();
   }
 }

@@ -113,7 +113,6 @@ public class TextureHW: NSObject, FlutterTexture, ResizableTextureProtocol {
       return
     }
 
-    NSLog("TextureGL: resize: \(size.width)x\(size.height)")
     createPixelBuffer(size)
   }
 

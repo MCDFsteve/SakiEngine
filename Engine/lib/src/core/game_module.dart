@@ -182,6 +182,11 @@ abstract class GameModule {
   /// 当脚本没有显式指定 `with` 时使用。
   String get defaultSceneTransitionType => 'fade';
 
+  /// 返回开发用背景选择网格中显示的名称。
+  ///
+  /// 默认直接使用背景资源 ID；项目可返回与背景左上角一致的本地化名称。
+  String resolveBackgroundDisplayName(String backgroundId) => backgroundId;
+
   /// 是否继续使用引擎默认的 scene 背景绘制。
   /// 返回 `false` 可在模块中完全接管 scene 背景表现。
   bool shouldRenderDefaultSceneBackground(GameState gameState);
@@ -605,6 +610,9 @@ class DefaultGameModule implements GameModule {
 
   @override
   String get defaultSceneTransitionType => 'fade';
+
+  @override
+  String resolveBackgroundDisplayName(String backgroundId) => backgroundId;
 
   @override
   bool shouldRenderDefaultSceneBackground(GameState gameState) {

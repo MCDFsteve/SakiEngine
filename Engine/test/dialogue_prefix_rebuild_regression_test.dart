@@ -11,6 +11,8 @@ void main() {
     required String characterId,
     String? newPose,
     String? newExpression,
+    bool updateAnimation = false,
+    String? newAnimation,
   }) async {
     final tempDir = await Directory.systemTemp.createTemp(
       'dialogue_prefix_rebuild_regression_test_',
@@ -25,6 +27,8 @@ void main() {
         characterId: characterId,
         newPose: newPose,
         newExpression: newExpression,
+        updateAnimation: updateAnimation,
+        newAnimation: newAnimation,
         targetLineNumber: 1,
       );
 
@@ -37,27 +41,70 @@ void main() {
     }
   }
 
-  test('corrupted duplicated character prefix should be normalized in one rewrite',
-      () async {
-    final updated = await _rewriteSingleLine(
-      line:
-          'aru3 afraid2aru3 pose1 gloomy aru3 pose1 sideeye aru3 pose1 sad "$dialogue"',
-      characterId: 'aru3',
-      newPose: 'pose1',
-      newExpression: 'angry',
-    );
+  test(
+    'corrupted duplicated character prefix should be normalized in one rewrite',
+    () async {
+      final updated = await _rewriteSingleLine(
+        line:
+            'aru3 afraid2aru3 pose1 gloomy aru3 pose1 sideeye aru3 pose1 sad "$dialogue"',
+        characterId: 'aru3',
+        newPose: 'pose1',
+        newExpression: 'angry',
+      );
 
-    expect(updated, 'aru3 pose1 angry "$dialogue"');
-  });
+      expect(updated, 'aru3 pose1 angry "$dialogue"');
+    },
+  );
 
-  test('normal character line still keeps tail controls like an/repeat', () async {
+  test(
+    'normal character line still keeps tail controls like an/repeat',
+    () async {
+      final updated = await _rewriteSingleLine(
+        line: 'aru3 pose1 sad an jump repeat 2 "$dialogue"',
+        characterId: 'aru3',
+        newPose: null,
+        newExpression: 'happy',
+      );
+
+      expect(updated, 'aru3 pose1 happy an jump repeat 2 "$dialogue"');
+    },
+  );
+
+  test('selector can replace a character animation', () async {
     final updated = await _rewriteSingleLine(
       line: 'aru3 pose1 sad an jump repeat 2 "$dialogue"',
       characterId: 'aru3',
-      newPose: null,
+      newPose: 'pose1',
       newExpression: 'happy',
+      updateAnimation: true,
+      newAnimation: 'shake',
     );
 
-    expect(updated, 'aru3 pose1 happy an jump repeat 2 "$dialogue"');
+    expect(updated, 'aru3 pose1 happy an shake repeat 2 "$dialogue"');
+  });
+
+  test('selector can add an animation to a character line', () async {
+    final updated = await _rewriteSingleLine(
+      line: 'aru3 pose1 sad "$dialogue"',
+      characterId: 'aru3',
+      newPose: 'pose1',
+      newExpression: 'happy',
+      updateAnimation: true,
+      newAnimation: 'jump',
+    );
+
+    expect(updated, 'aru3 pose1 happy an jump "$dialogue"');
+  });
+
+  test('selector can clear an and its repeat count', () async {
+    final updated = await _rewriteSingleLine(
+      line: 'aru3 pose1 sad an jump repeat 2 "$dialogue"',
+      characterId: 'aru3',
+      newPose: 'pose1',
+      newExpression: 'happy',
+      updateAnimation: true,
+    );
+
+    expect(updated, 'aru3 pose1 happy "$dialogue"');
   });
 }

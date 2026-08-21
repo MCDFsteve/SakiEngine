@@ -369,7 +369,7 @@ class ScriptMerger {
     } else if (node is CgNode) {
       return 'CG: ${node.character} (${node.pose ?? 'default'}, ${node.expression ?? 'default'})';
     } else if (node is HideNode) {
-      return 'Hide: ${node.character}';
+      return 'Hide: ${node.character}${node.immediate ? ' (immediate)' : ''}';
     } else if (node is JumpNode) {
       return 'Jump: ${node.targetLabel}';
     } else if (node is MenuNode) {

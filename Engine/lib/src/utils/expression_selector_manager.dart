@@ -4,13 +4,14 @@ import 'package:sakiengine/src/game/game_manager.dart';
 import 'package:sakiengine/src/utils/key_sequence_detector.dart';
 
 /// 表情选择器管理器
-/// 负责处理Debug模式下的C键检测和表情选择器的显示逻辑
+/// 负责处理Debug模式下的Shift+E检测和表情选择器的显示逻辑
 class ExpressionSelectorManager {
   final GameManager gameManager;
   final Function(String message) showNotificationCallback;
   final Function() triggerReloadCallback;
   final Function(bool show) setExpressionSelectorVisibility;
   final Function() getCurrentGameState;
+  final bool Function()? shouldIgnoreHotkey;
 
   bool _isExpressionSelectorVisible = false;
 
@@ -20,18 +21,19 @@ class ExpressionSelectorManager {
     required this.triggerReloadCallback,
     required this.setExpressionSelectorVisibility,
     required this.getCurrentGameState,
+    this.shouldIgnoreHotkey,
   });
 
-  /// 初始化Shift+C快捷键检测（仅在Debug模式下）
+  /// 初始化Shift+E快捷键检测（仅在Debug模式下）
   void initialize() {
     if (!kEngineDebugMode) return;
 
-    // 使用Shift+C快捷键，避免与其他功能冲突
-    _setupShiftCHotkey();
+    // Shift+C用于角色轮盘，完整差分编辑器使用Shift+E。
+    _setupShiftEHotkey();
   }
 
-  /// 设置Shift+C快捷键
-  void _setupShiftCHotkey() {
+  /// 设置Shift+E快捷键
+  void _setupShiftEHotkey() {
     // 注册到HardwareKeyboard而不是使用LongPressKeyDetector
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
   }
@@ -39,20 +41,22 @@ class ExpressionSelectorManager {
   /// 处理键盘事件
   bool _handleKeyEvent(KeyEvent event) {
     if (!kEngineDebugMode) return false;
+    if (shouldIgnoreHotkey?.call() ?? false) return false;
 
-    // 检查Shift+C组合键
+    // 检查Shift+E组合键
     if (event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.keyC &&
+        event.logicalKey == LogicalKeyboardKey.keyE &&
         HardwareKeyboard.instance.isShiftPressed) {
-      _handleShiftCPress();
-      return true;
+      _handleShiftEPress();
+      // 全局开发快捷键只负责观察，不吞掉文本编辑器的按键。
+      return false;
     }
 
     return false;
   }
 
-  /// 处理Shift+C按键事件
-  void _handleShiftCPress() {
+  /// 处理Shift+E按键事件
+  void _handleShiftEPress() {
     _requestShowExpressionSelector();
   }
 
@@ -74,6 +78,7 @@ class ExpressionSelectorManager {
     required bool showSettings,
     required bool showDeveloperPanel,
     required bool showDebugPanel,
+    required bool showFloatingScriptEditor,
     required bool isShowingMenu,
   }) {
     return !showSaveOverlay &&
@@ -82,6 +87,7 @@ class ExpressionSelectorManager {
         !showSettings &&
         !showDeveloperPanel &&
         !showDebugPanel &&
+        !showFloatingScriptEditor &&
         !_isExpressionSelectorVisible &&
         !isShowingMenu;
   }
@@ -98,7 +104,8 @@ class ExpressionSelectorManager {
       if (kEngineDebugMode) {
         //print('表情选择器: 检测到说话角色 ${speakerInfo.speakerName} (${speakerInfo.characterId})');
         print(
-            '当前pose: ${speakerInfo.currentPose}, expression: ${speakerInfo.currentExpression}');
+          '当前pose: ${speakerInfo.currentPose}, expression: ${speakerInfo.currentExpression}',
+        );
       }
 
       // 通知调用方显示表情选择器
@@ -125,7 +132,21 @@ class ExpressionSelectorManager {
     final characterCount = (gameStateValue.characters as Map).length;
     if (kEngineDebugMode) {
       print(
-          'ExpressionSelector: resolve speaker info speaker=$speaker, speakerAlias=$speakerAlias, characters=$characterCount');
+        'ExpressionSelector: resolve speaker info speaker=$speaker, speakerAlias=$speakerAlias, characters=$characterCount',
+      );
+    }
+
+    // 多个资源可以共用同一个显示名（例如 noe / noe2 都显示为弥黑埜爱）。
+    // 轮盘切换后 speakerAlias 才是当前脚本角色的精确信息，应优先于按名字
+    // 遍历配置；否则会总是取到同名配置中的第一个 alias。
+    if (speakerAlias != null && speakerAlias.isNotEmpty) {
+      final aliased = _findTailSpeakerInfo(gameStateValue);
+      if (aliased != null) {
+        if (kEngineDebugMode) {
+          print('ExpressionSelector: branch=speaker-alias');
+        }
+        return aliased;
+      }
     }
 
     if (speaker != null && speaker.isNotEmpty) {
@@ -138,21 +159,14 @@ class ExpressionSelectorManager {
       }
     }
 
-    final tail = _findTailSpeakerInfo(gameStateValue);
-    if (tail != null) {
-      if (kEngineDebugMode) {
-        print('ExpressionSelector: branch=speaker-alias/tail');
-      }
-      return tail;
-    }
-
     final fallback = _findOnStageFallbackSpeakerInfo(gameStateValue);
     if (kEngineDebugMode) {
       if (fallback == null) {
         print('ExpressionSelector: branch=fallback-onstage -> none');
       } else {
         print(
-            'ExpressionSelector: branch=fallback-onstage -> ${fallback.scriptCharacterKey}/${fallback.characterId}');
+          'ExpressionSelector: branch=fallback-onstage -> ${fallback.scriptCharacterKey}/${fallback.characterId}',
+        );
       }
     }
     return fallback;
@@ -194,6 +208,7 @@ class ExpressionSelectorManager {
             speakerName: currentSpeaker,
             currentPose: characterState.pose ?? 'pose1',
             currentExpression: characterState.expression ?? 'happy',
+            currentAnimation: gameManager.currentDialogueAnimation,
             scriptCharacterKey: characterKey, // 保留characterKey用于脚本修改
           );
         }
@@ -210,6 +225,7 @@ class ExpressionSelectorManager {
             speakerName: currentSpeaker,
             currentPose: characterState.pose ?? 'pose1',
             currentExpression: characterState.expression ?? 'happy',
+            currentAnimation: gameManager.currentDialogueAnimation,
             scriptCharacterKey: characterKey, // 保留characterKey用于脚本修改
           );
         }
@@ -231,6 +247,7 @@ class ExpressionSelectorManager {
         speakerName: currentSpeaker,
         currentPose: characterState.pose ?? 'pose1',
         currentExpression: characterState.expression ?? 'happy',
+        currentAnimation: gameManager.currentDialogueAnimation,
       );
     }
 
@@ -267,13 +284,15 @@ class ExpressionSelectorManager {
         speakerName: cfg?.name ?? tailAlias,
         currentPose: state.pose ?? 'pose1',
         currentExpression: state.expression ?? 'happy',
+        currentAnimation: gameManager.currentDialogueAnimation,
         scriptCharacterKey: tailAlias,
       );
     }
 
     if (kEngineDebugMode) {
       print(
-          'ExpressionSelector: tail alias not found on stage alias=$tailAlias, targetResource=$targetResourceId');
+        'ExpressionSelector: tail alias not found on stage alias=$tailAlias, targetResource=$targetResourceId',
+      );
     }
     return null;
   }
@@ -297,6 +316,7 @@ class ExpressionSelectorManager {
         speakerName: config?.name ?? scriptKey,
         currentPose: state.pose ?? 'pose1',
         currentExpression: state.expression ?? 'happy',
+        currentAnimation: gameManager.currentDialogueAnimation,
         scriptCharacterKey: scriptKey,
       );
     }
@@ -344,11 +364,16 @@ class ExpressionSelectorManager {
 
   /// 处理表情选择变更
   Future<void> handleExpressionSelectionChanged(
-      String characterId, String pose, String expression) async {
+    String characterId,
+    String pose,
+    String expression,
+    String? animation,
+  ) async {
     try {
       if (kEngineDebugMode) {
         print(
-            'ExpressionSelector: 开始处理表情选择变更 - characterId: $characterId, pose: $pose, expression: $expression');
+          'ExpressionSelector: 开始处理表情选择变更 - characterId: $characterId, pose: $pose, expression: $expression',
+        );
       }
 
       // 获取当前对话文本
@@ -370,12 +395,22 @@ class ExpressionSelectorManager {
         }
         // 使用状态中的对话文本
         await _processExpressionChange(
-            stateDialogue, characterId, pose, expression);
+          stateDialogue,
+          characterId,
+          pose,
+          expression,
+          animation,
+        );
         return;
       }
 
       await _processExpressionChange(
-          currentDialogue, characterId, pose, expression);
+        currentDialogue,
+        characterId,
+        pose,
+        expression,
+        animation,
+      );
     } catch (e) {
       if (kEngineDebugMode) {
         print('ExpressionSelector: 处理表情选择变更失败: $e');
@@ -385,24 +420,31 @@ class ExpressionSelectorManager {
   }
 
   /// 处理表情变更的核心逻辑
-  Future<void> _processExpressionChange(String dialogue, String characterId,
-      String pose, String expression) async {
+  Future<void> _processExpressionChange(
+    String dialogue,
+    String characterId,
+    String pose,
+    String expression,
+    String? animation,
+  ) async {
     try {
       if (kEngineDebugMode) {
         print(
-            'ExpressionSelector: 处理表情变更 - dialogue: "$dialogue", characterId: $characterId');
+          'ExpressionSelector: 处理表情变更 - dialogue: "$dialogue", characterId: $characterId',
+        );
       }
 
       final sourceLine = gameManager.currentDialogueSourceLine;
       final sourceScriptFile = gameManager.currentDialogueSourceScriptFile;
       final scriptFileForWrite =
           (sourceScriptFile != null && sourceScriptFile.trim().isNotEmpty)
-              ? sourceScriptFile
-              : gameManager.currentScriptFile;
+          ? sourceScriptFile
+          : gameManager.currentScriptFile;
 
       // 获取当前脚本文件路径（优先使用当前对话记录的来源文件）
       final scriptPath = await ScriptContentModifier.getCurrentScriptFilePath(
-          scriptFileForWrite);
+        scriptFileForWrite,
+      );
       if (kEngineDebugMode) {
         print('ExpressionSelector: 脚本文件路径: $scriptPath');
       }
@@ -420,7 +462,8 @@ class ExpressionSelectorManager {
         print('ExpressionSelector: 脚本角色Key: $scriptCharacterKey');
         print('ExpressionSelector: 脚本写入角色ID: $scriptWriteCharacterId');
         print(
-            'ExpressionSelector: 当前对话来源 sourceScriptFile=$sourceScriptFile, sourceLine=$sourceLine');
+          'ExpressionSelector: 当前对话来源 sourceScriptFile=$sourceScriptFile, sourceLine=$sourceLine',
+        );
         print('ExpressionSelector: 目标脚本文件名: $scriptFileForWrite');
       }
 
@@ -432,6 +475,8 @@ class ExpressionSelectorManager {
         writeCharacterId: scriptWriteCharacterId,
         newPose: pose,
         newExpression: expression,
+        updateAnimation: true,
+        newAnimation: animation,
         targetLineNumber: sourceLine,
       );
 
@@ -440,7 +485,10 @@ class ExpressionSelectorManager {
       }
 
       if (success) {
-        showNotificationCallback('已应用差分: $pose / $expression');
+        final animationLabel = animation ?? '无动画';
+        showNotificationCallback(
+          '已应用差分: $pose / $expression / $animationLabel',
+        );
 
         // 触发脚本重载
         if (kEngineDebugMode) {
@@ -465,6 +513,7 @@ class SpeakerInfo {
   final String speakerName;
   final String currentPose;
   final String currentExpression;
+  final String? currentAnimation;
   final String? scriptCharacterKey; // 用于脚本修改的角色key
 
   const SpeakerInfo({
@@ -472,6 +521,7 @@ class SpeakerInfo {
     required this.speakerName,
     required this.currentPose,
     required this.currentExpression,
+    this.currentAnimation,
     this.scriptCharacterKey,
   });
 }

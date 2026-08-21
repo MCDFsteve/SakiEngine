@@ -13,6 +13,7 @@ class KeySequenceDetector {
   final List<LogicalKeyboardKey> _targetSequence;
   final VoidCallback _onSequenceComplete;
   final Duration _sequenceTimeout;
+  final bool Function()? _shouldIgnore;
 
   bool _isListening = false;
   List<LogicalKeyboardKey> _currentSequence = [];
@@ -22,9 +23,11 @@ class KeySequenceDetector {
     required List<LogicalKeyboardKey> sequence,
     required VoidCallback onSequenceComplete,
     Duration sequenceTimeout = const Duration(seconds: 3),
-  })  : _targetSequence = sequence,
-        _onSequenceComplete = onSequenceComplete,
-        _sequenceTimeout = sequenceTimeout;
+    bool Function()? shouldIgnore,
+  }) : _targetSequence = sequence,
+       _onSequenceComplete = onSequenceComplete,
+       _sequenceTimeout = sequenceTimeout,
+       _shouldIgnore = shouldIgnore;
 
   /// 开始监听键盘事件
   void startListening() {
@@ -34,8 +37,9 @@ class KeySequenceDetector {
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
 
     if (kEngineDebugMode) {
-      final sequenceNames =
-          _targetSequence.map((key) => key.debugName).join('-');
+      final sequenceNames = _targetSequence
+          .map((key) => key.debugName)
+          .join('-');
       print('按键序列检测器: 开始监听序列 $sequenceNames');
     }
   }
@@ -57,6 +61,25 @@ class KeySequenceDetector {
   bool _handleKeyEvent(KeyEvent event) {
     if (!_isListening) return false;
 
+    if (_shouldIgnore?.call() ?? false) {
+      if (_currentSequence.isNotEmpty) {
+        _resetSequence();
+      }
+      return false;
+    }
+
+    // 文字序列只接受无修饰键输入，不与系统编辑或开发快捷键竞争。
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isShiftPressed) {
+      if (_currentSequence.isNotEmpty) {
+        _resetSequence();
+      }
+      return false;
+    }
+
     if (event is KeyDownEvent) {
       final key = event.logicalKey;
 
@@ -68,7 +91,8 @@ class KeySequenceDetector {
 
         if (kEngineDebugMode) {
           print(
-              '按键序列检测器: 按键 ${key.debugName} 匹配，当前序列长度: ${_currentSequence.length}/${_targetSequence.length}');
+            '按键序列检测器: 按键 ${key.debugName} 匹配，当前序列长度: ${_currentSequence.length}/${_targetSequence.length}',
+          );
         }
 
         // 检查序列是否完成
@@ -78,10 +102,11 @@ class KeySequenceDetector {
           }
           _onSequenceComplete();
           _resetSequence();
-          return true;
+          return false;
         }
 
-        return true;
+        // 序列检测器只旁路观察，不能阻断文本输入。
+        return false;
       } else {
         // 按键不匹配，重置序列
         if (_currentSequence.isNotEmpty) {
@@ -136,9 +161,9 @@ class LongPressKeyDetector {
     required LogicalKeyboardKey key,
     required VoidCallback onLongPress,
     Duration longPressDuration = const Duration(milliseconds: 800),
-  })  : _targetKey = key,
-        _onLongPress = onLongPress,
-        _longPressDuration = longPressDuration;
+  }) : _targetKey = key,
+       _onLongPress = onLongPress,
+       _longPressDuration = longPressDuration;
 
   /// 开始监听键盘事件
   void startListening() {
@@ -321,9 +346,11 @@ class ScriptContentModifier {
     String line,
     String characterId,
     String? newPose,
-    String? newExpression,
-    {String? writeCharacterId,}
-  ) {
+    String? newExpression, {
+    String? writeCharacterId,
+    bool updateAnimation = false,
+    String? newAnimation,
+  }) {
     final trimmed = line.trim();
     final quoteEnd = trimmed.lastIndexOf('"');
     if (quoteEnd <= 0) {
@@ -333,8 +360,8 @@ class ScriptContentModifier {
     final tokens = _tailTokensFromNarrationLine(trimmed);
     final desiredCharacterId =
         (writeCharacterId == null || writeCharacterId.trim().isEmpty)
-            ? characterId
-            : writeCharacterId.trim();
+        ? characterId
+        : writeCharacterId.trim();
     final wantsNarration = _isNarratorCharacterId(desiredCharacterId);
 
     if (tokens.isEmpty) {
@@ -343,7 +370,14 @@ class ScriptContentModifier {
       }
       final pose = newPose ?? 'pose1';
       final expression = newExpression ?? 'normal';
-      return '$quoted $desiredCharacterId $pose $expression';
+      final nextTail = <String>[desiredCharacterId, pose, expression];
+      final animation = newAnimation?.trim();
+      if (updateAnimation && animation != null && animation.isNotEmpty) {
+        nextTail
+          ..add('an')
+          ..add(animation);
+      }
+      return '$quoted ${nextTail.join(' ')}';
     }
 
     int aliasIndex = -1;
@@ -368,7 +402,19 @@ class ScriptContentModifier {
       if (!wantsNarration && tokens.length == 1) {
         final nextPose = newPose ?? 'pose1';
         final nextExpression = newExpression ?? 'normal';
-        return '$quoted ${tokens.first} $desiredCharacterId $nextPose $nextExpression';
+        final nextTail = <String>[
+          tokens.first,
+          desiredCharacterId,
+          nextPose,
+          nextExpression,
+        ];
+        final animation = newAnimation?.trim();
+        if (updateAnimation && animation != null && animation.isNotEmpty) {
+          nextTail
+            ..add('an')
+            ..add(animation);
+        }
+        return '$quoted ${nextTail.join(' ')}';
       }
       return line;
     }
@@ -427,12 +473,16 @@ class ScriptContentModifier {
     if (extraTokens.isNotEmpty) {
       nextTail.addAll(extraTokens);
     }
-    if (animation != null && animation.isNotEmpty) {
+    final nextAnimation = updateAnimation ? newAnimation?.trim() : animation;
+    if (nextAnimation != null && nextAnimation.isNotEmpty) {
       nextTail
         ..add('an')
-        ..add(animation);
+        ..add(nextAnimation);
     }
-    if (repeatRaw != null && repeatRaw.isNotEmpty) {
+    if (nextAnimation != null &&
+        nextAnimation.isNotEmpty &&
+        repeatRaw != null &&
+        repeatRaw.isNotEmpty) {
       nextTail
         ..add('repeat')
         ..add(repeatRaw);
@@ -472,8 +522,12 @@ class ScriptContentModifier {
 
         // 检查是否是包含目标对话的行，同时验证角色ID
         if (_isTargetDialogueLine(line, targetDialogue, characterId)) {
-          final modifiedLine =
-              _modifyDialogueLine(line, characterId, null, newExpression);
+          final modifiedLine = _modifyDialogueLine(
+            line,
+            characterId,
+            null,
+            newExpression,
+          );
           if (modifiedLine != line) {
             lines[i] = originalLine.replaceFirst(line, modifiedLine);
             modified = true;
@@ -511,8 +565,11 @@ class ScriptContentModifier {
   }
 
   /// 检查是否是目标对话行
-  static bool _isTargetDialogueLine(String line, String targetDialogue,
-      [String? expectedCharacterId]) {
+  static bool _isTargetDialogueLine(
+    String line,
+    String targetDialogue, [
+    String? expectedCharacterId,
+  ]) {
     // 去除前后空白
     final trimmedLine = line.trim();
     final trimmedDialogue = targetDialogue.trim();
@@ -537,13 +594,18 @@ class ScriptContentModifier {
           if (_isNarratorCharacterId(expectedCharacterId)) {
             if (kEngineDebugMode) {
               final hasTail = quoteEnd < trimmedLine.length - 1;
-              print(hasTail
-                  ? 'ScriptModifier: 匹配格式1b（旁白+尾语法）'
-                  : 'ScriptModifier: 匹配格式1（纯对话）');
+              print(
+                hasTail
+                    ? 'ScriptModifier: 匹配格式1b（旁白+尾语法）'
+                    : 'ScriptModifier: 匹配格式1（纯对话）',
+              );
             }
             return true;
           }
-          if (_isNarrationTailLineForCharacter(trimmedLine, expectedCharacterId)) {
+          if (_isNarrationTailLineForCharacter(
+            trimmedLine,
+            expectedCharacterId,
+          )) {
             if (kEngineDebugMode) {
               print('ScriptModifier: 匹配格式1c（尾语法角色对话）');
             }
@@ -585,7 +647,8 @@ class ScriptContentModifier {
           if (kEngineDebugMode &&
               line.contains(targetDialogue.replaceAll('"', ''))) {
             print(
-                'ScriptModifier: 角色ID不匹配: "$lineCharacterId" !~ "$expectedCharacterId"');
+              'ScriptModifier: 角色ID不匹配: "$lineCharacterId" !~ "$expectedCharacterId"',
+            );
           }
           return false;
         }
@@ -593,17 +656,22 @@ class ScriptContentModifier {
         final quoteStart = trimmedLine.indexOf('"');
         final quoteEnd = trimmedLine.lastIndexOf('"');
         if (quoteStart >= 0 && quoteEnd > quoteStart) {
-          final dialogueContent =
-              trimmedLine.substring(quoteStart + 1, quoteEnd);
+          final dialogueContent = trimmedLine.substring(
+            quoteStart + 1,
+            quoteEnd,
+          );
           if (kEngineDebugMode &&
               line.contains(targetDialogue.replaceAll('"', ''))) {
             print('ScriptModifier: 提取的对话内容: "$dialogueContent"');
             print(
-                'ScriptModifier: 标准化后的对话内容: "${_normalizeDialogueText(dialogueContent)}"');
+              'ScriptModifier: 标准化后的对话内容: "${_normalizeDialogueText(dialogueContent)}"',
+            );
             print(
-                'ScriptModifier: 标准化后的目标对话: "${_normalizeDialogueText(trimmedDialogue)}"');
+              'ScriptModifier: 标准化后的目标对话: "${_normalizeDialogueText(trimmedDialogue)}"',
+            );
             print(
-                'ScriptModifier: 是否匹配: ${_normalizeDialogueText(dialogueContent) == _normalizeDialogueText(trimmedDialogue)}');
+              'ScriptModifier: 是否匹配: ${_normalizeDialogueText(dialogueContent) == _normalizeDialogueText(trimmedDialogue)}',
+            );
           }
 
           // 使用标准化后的文本进行比较
@@ -651,20 +719,24 @@ class ScriptContentModifier {
     String? newPose,
     String? newExpression, {
     String? writeCharacterId,
+    bool updateAnimation = false,
+    String? newAnimation,
   }) {
     final trimmedLine = line.trim();
     final wantsNarration = _isNarratorCharacterId(characterId);
     final desiredCharacterId =
         (writeCharacterId == null || writeCharacterId.trim().isEmpty)
-            ? characterId
-            : writeCharacterId.trim();
+        ? characterId
+        : writeCharacterId.trim();
     final parts = trimmedLine.split(' ');
-    final lineCharacterId = trimmedLine.contains('"') &&
+    final lineCharacterId =
+        trimmedLine.contains('"') &&
             !trimmedLine.startsWith('"') &&
             parts.isNotEmpty
         ? parts[0]
         : null;
-    final effectiveWriteCharacterId = (lineCharacterId != null &&
+    final effectiveWriteCharacterId =
+        (lineCharacterId != null &&
             _isCharacterIdCompatible(
               lineCharacterId: lineCharacterId,
               expectedCharacterId: characterId,
@@ -677,8 +749,9 @@ class ScriptContentModifier {
       String? expression,
       String? position,
       String? animation,
-      String? repeatRaw
-    }) parseCharacterPrefixAttrs(List<String> attrs) {
+      String? repeatRaw,
+    })
+    parseCharacterPrefixAttrs(List<String> attrs) {
       final baseTokens = <String>[];
       String? position;
       String? animation;
@@ -760,7 +833,8 @@ class ScriptContentModifier {
         );
 
         final pose = (newPose ?? parsed.pose ?? 'pose1').trim();
-        final expression = (newExpression ?? parsed.expression ?? 'normal').trim();
+        final expression = (newExpression ?? parsed.expression ?? 'normal')
+            .trim();
         final rebuiltPrefix = <String>[effectiveWriteCharacterId];
         if (pose.isNotEmpty) {
           rebuiltPrefix.add(pose);
@@ -773,12 +847,18 @@ class ScriptContentModifier {
             ..add('at')
             ..add(parsed.position!.trim());
         }
-        if (parsed.animation != null && parsed.animation!.trim().isNotEmpty) {
+        final nextAnimation = updateAnimation
+            ? newAnimation?.trim()
+            : parsed.animation?.trim();
+        if (nextAnimation != null && nextAnimation.isNotEmpty) {
           rebuiltPrefix
             ..add('an')
-            ..add(parsed.animation!.trim());
+            ..add(nextAnimation);
         }
-        if (parsed.repeatRaw != null && parsed.repeatRaw!.trim().isNotEmpty) {
+        if (nextAnimation != null &&
+            nextAnimation.isNotEmpty &&
+            parsed.repeatRaw != null &&
+            parsed.repeatRaw!.trim().isNotEmpty) {
           rebuiltPrefix
             ..add('repeat')
             ..add(parsed.repeatRaw!.trim());
@@ -795,8 +875,11 @@ class ScriptContentModifier {
         newPose,
         newExpression,
         writeCharacterId: effectiveWriteCharacterId,
+        updateAnimation: updateAnimation,
+        newAnimation: newAnimation,
       );
-      if (modifiedNarrationTail != line && modifiedNarrationTail != trimmedLine) {
+      if (modifiedNarrationTail != line &&
+          modifiedNarrationTail != trimmedLine) {
         return modifiedNarrationTail;
       }
       return trimmedLine;
@@ -862,13 +945,17 @@ class ScriptContentModifier {
     if (wantsNarration) {
       return trimmed.substring(quoteIndex);
     }
-    final replacedPrefix =
-        beforeQuote.replaceFirst(lineCharacterId, newCharacterId);
-    return '$replacedPrefix${trimmed.substring(quoteIndex)}';
+    final replacedPrefix = beforeQuote.replaceFirst(
+      lineCharacterId,
+      newCharacterId,
+    );
+    return '$replacedPrefix ${trimmed.substring(quoteIndex)}';
   }
 
   static String _modifySceneOrMovieBackground(
-      String line, String newBackground) {
+    String line,
+    String newBackground,
+  ) {
     final trimmed = line.trim();
     final prefix = trimmed.startsWith('scene ') ? 'scene ' : 'movie ';
     if (!trimmed.startsWith(prefix)) {
@@ -881,13 +968,7 @@ class ScriptContentModifier {
     }
 
     final tokens = params.split(RegExp(r'\s+'));
-    final keywordSet = {
-      'timer',
-      'with',
-      'an',
-      'repeat',
-      'fx',
-    };
+    final keywordSet = {'timer', 'with', 'an', 'repeat', 'fx'};
     int keywordIndex = -1;
     for (int i = 0; i < tokens.length; i++) {
       if (keywordSet.contains(tokens[i])) {
@@ -896,8 +977,9 @@ class ScriptContentModifier {
       }
     }
 
-    final tail =
-        keywordIndex >= 0 ? tokens.sublist(keywordIndex).join(' ') : '';
+    final tail = keywordIndex >= 0
+        ? tokens.sublist(keywordIndex).join(' ')
+        : '';
     if (tail.isEmpty) {
       return '$prefix$newBackground';
     }
@@ -928,6 +1010,8 @@ class ScriptContentModifier {
     String? writeCharacterId,
     String? newPose,
     String? newExpression,
+    bool updateAnimation = false,
+    String? newAnimation,
     int? targetLineNumber,
   }) async {
     try {
@@ -958,6 +1042,21 @@ class ScriptContentModifier {
         print('ScriptModifier: 读取到 ${lines.length} 行脚本');
       }
 
+      final alternateCharacterId = writeCharacterId?.trim();
+
+      String? matchingCharacterId(String line) {
+        if (_isTargetDialogueLine(line, targetDialogue, characterId)) {
+          return characterId;
+        }
+        if (alternateCharacterId != null &&
+            alternateCharacterId.isNotEmpty &&
+            alternateCharacterId != characterId &&
+            _isTargetDialogueLine(line, targetDialogue, alternateCharacterId)) {
+          return alternateCharacterId;
+        }
+        return null;
+      }
+
       if (targetLineNumber != null && targetLineNumber > 0) {
         final targetIndex = targetLineNumber - 1;
         if (targetIndex >= 0 && targetIndex < lines.length) {
@@ -966,18 +1065,22 @@ class ScriptContentModifier {
           if (kEngineDebugMode) {
             print('ScriptModifier: 尝试按精确行号匹配 line=$targetLineNumber: "$line"');
           }
-          if (_isTargetDialogueLine(line, targetDialogue, characterId)) {
-            final modifiedLine =
-                _modifyDialogueLine(
+          final matchedCharacterId = matchingCharacterId(line);
+          if (matchedCharacterId != null) {
+            final modifiedLine = _modifyDialogueLine(
               line,
-              characterId,
+              matchedCharacterId,
               newPose,
               newExpression,
               writeCharacterId: writeCharacterId,
+              updateAnimation: updateAnimation,
+              newAnimation: newAnimation,
             );
             if (modifiedLine != line) {
-              lines[targetIndex] =
-                  originalLine.replaceFirst(line, modifiedLine);
+              lines[targetIndex] = originalLine.replaceFirst(
+                line,
+                modifiedLine,
+              );
               modified = true;
               if (kEngineDebugMode) {
                 print('ScriptModifier: 精确行号命中并修改成功');
@@ -997,26 +1100,32 @@ class ScriptContentModifier {
         // 行号未命中时，优先在附近窗口内定位（行号漂移容错）
         if (!modified) {
           const nearbyWindow = 24;
-          final searchStart =
-              (targetIndex - nearbyWindow).clamp(0, lines.length - 1);
-          final searchEnd =
-              (targetIndex + nearbyWindow).clamp(0, lines.length - 1);
+          final searchStart = (targetIndex - nearbyWindow).clamp(
+            0,
+            lines.length - 1,
+          );
+          final searchEnd = (targetIndex + nearbyWindow).clamp(
+            0,
+            lines.length - 1,
+          );
           if (kEngineDebugMode) {
             print('ScriptModifier: 尝试附近窗口定位 [$searchStart, $searchEnd]');
           }
           for (int i = searchStart; i <= searchEnd; i++) {
             final originalLine = lines[i];
             final line = originalLine.trim();
-            if (!_isTargetDialogueLine(line, targetDialogue, characterId)) {
+            final matchedCharacterId = matchingCharacterId(line);
+            if (matchedCharacterId == null) {
               continue;
             }
-            final modifiedLine =
-                _modifyDialogueLine(
+            final modifiedLine = _modifyDialogueLine(
               line,
-              characterId,
+              matchedCharacterId,
               newPose,
               newExpression,
               writeCharacterId: writeCharacterId,
+              updateAnimation: updateAnimation,
+              newAnimation: newAnimation,
             );
             if (modifiedLine == line) {
               continue;
@@ -1052,18 +1161,20 @@ class ScriptContentModifier {
           }
 
           // 检查是否是包含目标对话的行，同时验证角色ID
-          if (_isTargetDialogueLine(line, targetDialogue, characterId)) {
+          final matchedCharacterId = matchingCharacterId(line);
+          if (matchedCharacterId != null) {
             if (kEngineDebugMode) {
               print('ScriptModifier: 确认匹配行 $i: "$line"');
             }
 
-            final modifiedLine =
-                _modifyDialogueLine(
+            final modifiedLine = _modifyDialogueLine(
               line,
-              characterId,
+              matchedCharacterId,
               newPose,
               newExpression,
               writeCharacterId: writeCharacterId,
+              updateAnimation: updateAnimation,
+              newAnimation: newAnimation,
             );
             if (modifiedLine != line) {
               lines[i] = originalLine.replaceFirst(line, modifiedLine);
@@ -1198,7 +1309,8 @@ class ScriptContentModifier {
         lines[i] = originalLine.replaceFirst(trimmedLine, changed);
         if (kEngineDebugMode) {
           print(
-              'ScriptModifier: 角色修改命中行 ${i + 1}${reason.isNotEmpty ? ' ($reason)' : ''}');
+            'ScriptModifier: 角色修改命中行 ${i + 1}${reason.isNotEmpty ? ' ($reason)' : ''}',
+          );
           print('ScriptModifier: 原始行: $trimmedLine');
           print('ScriptModifier: 修改后: $changed');
         }
@@ -1274,7 +1386,8 @@ class ScriptContentModifier {
         return false;
       }
 
-      final hasAnchor = targetLineNumber != null &&
+      final hasAnchor =
+          targetLineNumber != null &&
           targetLineNumber > 0 &&
           targetLineNumber <= lines.length;
       final targetIndex = hasAnchor ? targetLineNumber - 1 : lines.length;
@@ -1299,13 +1412,17 @@ class ScriptContentModifier {
 
       if (replaceIndex != null) {
         final originalLine = lines[replaceIndex];
-        final changed =
-            _modifySceneOrMovieBackground(originalLine.trim(), newBackground);
+        final changed = _modifySceneOrMovieBackground(
+          originalLine.trim(),
+          newBackground,
+        );
         if (changed == originalLine.trim()) {
           return false;
         }
-        lines[replaceIndex] =
-            originalLine.replaceFirst(originalLine.trim(), changed);
+        lines[replaceIndex] = originalLine.replaceFirst(
+          originalLine.trim(),
+          changed,
+        );
       } else {
         final insertAt = targetIndex.clamp(0, lines.length);
         lines.insert(insertAt, 'scene $newBackground');
@@ -1473,8 +1590,12 @@ class ScriptContentModifier {
 
       final candidateDirs = GameScriptLocalization.candidateDirectories();
       for (final dirName in candidateDirs) {
-        final scriptPath =
-            p.join(gamePath, dirName, 'labels', '$scriptName.sks');
+        final scriptPath = p.join(
+          gamePath,
+          dirName,
+          'labels',
+          '$scriptName.sks',
+        );
         final scriptFile = File(scriptPath);
 
         if (await scriptFile.exists()) {
@@ -1484,7 +1605,8 @@ class ScriptContentModifier {
 
       if (kEngineDebugMode) {
         print(
-            '脚本修改器: 未找到脚本文件 $scriptName.sks (尝试目录: ${candidateDirs.join(', ')})');
+          '脚本修改器: 未找到脚本文件 $scriptName.sks (尝试目录: ${candidateDirs.join(', ')})',
+        );
       }
       return null;
     } catch (e) {

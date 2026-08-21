@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sakiengine/src/widgets/smart_image.dart';
 
 class CommandWheelOption {
@@ -15,7 +16,7 @@ class CommandWheelOption {
   });
 }
 
-/// Debug命令轮盘（按住Command显示，松开应用）
+/// Debug命令轮盘（按住Shift显示，松开应用）
 class CommandRadialWheel extends StatefulWidget {
   final String title;
   final String applyHint;
@@ -23,6 +24,7 @@ class CommandRadialWheel extends StatefulWidget {
   final List<CommandWheelOption> options;
   final Offset center;
   final ValueChanged<String> onHighlightedOptionChanged;
+  final VoidCallback? onDismiss;
 
   const CommandRadialWheel({
     super.key,
@@ -31,7 +33,8 @@ class CommandRadialWheel extends StatefulWidget {
     required this.center,
     required this.onHighlightedOptionChanged,
     this.currentOptionId,
-    this.applyHint = 'Release Command To Apply',
+    this.applyHint = 'Release Shift To Apply',
+    this.onDismiss,
   });
 
   @override
@@ -60,7 +63,8 @@ class _CommandRadialWheelState extends State<CommandRadialWheel> {
       return;
     }
 
-    final optionsChanged = widget.options.length != oldWidget.options.length ||
+    final optionsChanged =
+        widget.options.length != oldWidget.options.length ||
         widget.options.asMap().entries.any((entry) {
           final index = entry.key;
           if (index >= oldWidget.options.length) {
@@ -102,54 +106,67 @@ class _CommandRadialWheelState extends State<CommandRadialWheel> {
       return const SizedBox.shrink();
     }
 
-    return Positioned.fill(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final size = constraints.biggest;
-          final center = Offset(
-            widget.center.dx.clamp(0.0, size.width),
-            widget.center.dy.clamp(0.0, size.height),
-          );
-          final maxRadiusByEdges = [
-            center.dx,
-            center.dy,
-            size.width - center.dx,
-            size.height - center.dy,
-          ].reduce(math.min);
-          final outerRadius =
-              math.max(96.0, math.min(maxRadiusByEdges - 12, 224.0));
-          final innerRadius = outerRadius * 0.45;
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          widget.onDismiss?.call();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Positioned.fill(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final size = constraints.biggest;
+            final center = Offset(
+              widget.center.dx.clamp(0.0, size.width),
+              widget.center.dy.clamp(0.0, size.height),
+            );
+            final maxRadiusByEdges = [
+              center.dx,
+              center.dy,
+              size.width - center.dx,
+              size.height - center.dy,
+            ].reduce(math.min);
+            final outerRadius = math.max(
+              96.0,
+              math.min(maxRadiusByEdges - 12, 224.0),
+            );
+            final innerRadius = outerRadius * 0.45;
 
-          return Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (event) =>
-                _updateHighlightFromPointer(event.localPosition, center),
-            onPointerMove: (event) =>
-                _updateHighlightFromPointer(event.localPosition, center),
-            onPointerHover: (event) =>
-                _updateHighlightFromPointer(event.localPosition, center),
-            child: Stack(
-              children: [
-                CustomPaint(
-                  size: size,
-                  painter: _CommandRadialWheelPainter(
+            return Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) =>
+                  _updateHighlightFromPointer(event.localPosition, center),
+              onPointerMove: (event) =>
+                  _updateHighlightFromPointer(event.localPosition, center),
+              onPointerHover: (event) =>
+                  _updateHighlightFromPointer(event.localPosition, center),
+              child: Stack(
+                children: [
+                  CustomPaint(
+                    size: size,
+                    painter: _CommandRadialWheelPainter(
+                      center: center,
+                      outerRadius: outerRadius,
+                      innerRadius: innerRadius,
+                      segmentCount: widget.options.length,
+                      highlightedIndex: _highlightedIndex,
+                    ),
+                  ),
+                  ..._buildSegmentLabels(
                     center: center,
                     outerRadius: outerRadius,
                     innerRadius: innerRadius,
-                    segmentCount: widget.options.length,
-                    highlightedIndex: _highlightedIndex,
                   ),
-                ),
-                ..._buildSegmentLabels(
-                  center: center,
-                  outerRadius: outerRadius,
-                  innerRadius: innerRadius,
-                ),
-                _buildCenterLabel(center: center, innerRadius: innerRadius),
-              ],
-            ),
-          );
-        },
+                  _buildCenterLabel(center: center, innerRadius: innerRadius),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -246,10 +263,7 @@ class _CommandRadialWheelState extends State<CommandRadialWheel> {
                 widget.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
               const SizedBox(height: 4),
               Text(
@@ -267,10 +281,7 @@ class _CommandRadialWheelState extends State<CommandRadialWheel> {
               Text(
                 widget.applyHint,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 9,
-                ),
+                style: const TextStyle(color: Colors.white54, fontSize: 9),
               ),
             ],
           ),

@@ -7,7 +7,7 @@ import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 
 /// 二进制序列化工具类，用于将游戏数据序列化为二进制格式
 class BinarySerializer {
-  static const int _version = 17; // 增加版本号以支持全屏脚本画布状态
+  static const int _version = 18; // 保存角色动画末帧与淡出状态
   static const String _magicNumber = 'SAKI';
 
   static Uint8List serializeGameStateSnapshot(GameStateSnapshot snapshot) =>
@@ -483,6 +483,22 @@ class BinarySerializer {
     buffer.addAll(_writeNullableString(state.positionId));
     buffer.addAll(_writeNullableString(state.maskType));
     buffer.addAll(_writeNullableString(state.maskColor));
+    final animationProperties = state.animationProperties;
+    if (kSakiDiagnosticLogs && animationProperties != null) {
+      sakiDiagnosticLog(
+        '[SAKI_ANIMATION_HISTORY][SERIALIZE] '
+        'resource=${state.resourceId} properties=$animationProperties '
+        'fading=${state.isFadingOut}',
+      );
+    }
+    buffer.addAll(_writeInt32(animationProperties?.length ?? -1));
+    if (animationProperties != null) {
+      for (final entry in animationProperties.entries) {
+        buffer.addAll(_writeString(entry.key));
+        buffer.addAll(_writeFloat64(entry.value));
+      }
+    }
+    buffer.add(state.isFadingOut ? 1 : 0);
 
     return Uint8List.fromList(buffer);
   }
@@ -498,9 +514,28 @@ class BinarySerializer {
     final positionId = reader.readNullableString();
     String? maskType;
     String? maskColor;
+    Map<String, double>? animationProperties;
+    var isFadingOut = false;
     if (version != null && version >= 15) {
       maskType = reader.readNullableString();
       maskColor = reader.readNullableString();
+    }
+    if (version != null && version >= 18) {
+      final animationPropertyCount = reader.readInt32();
+      if (animationPropertyCount >= 0) {
+        animationProperties = <String, double>{
+          for (int i = 0; i < animationPropertyCount; i++)
+            reader.readString(): reader.readFloat64(),
+        };
+      }
+      isFadingOut = reader.readByte() == 1;
+      if (kSakiDiagnosticLogs && animationProperties != null) {
+        sakiDiagnosticLog(
+          '[SAKI_ANIMATION_HISTORY][DESERIALIZE] '
+          'resource=$resourceId properties=$animationProperties '
+          'fading=$isFadingOut version=$version',
+        );
+      }
     }
 
     return CharacterState(
@@ -510,6 +545,8 @@ class BinarySerializer {
       positionId: positionId,
       maskType: maskType,
       maskColor: maskColor,
+      animationProperties: animationProperties,
+      isFadingOut: isFadingOut,
     );
   }
 
@@ -589,6 +626,11 @@ class BinarySerializer {
       throw UnsupportedError('Int64 not supported on web platform');
     }
     return Uint8List(8)..buffer.asByteData().setInt64(0, value, Endian.little);
+  }
+
+  static Uint8List _writeFloat64(double value) {
+    return Uint8List(8)
+      ..buffer.asByteData().setFloat64(0, value, Endian.little);
   }
 
   static Uint8List _writeString(String value) {
@@ -697,6 +739,11 @@ class _BinaryReader {
     }
     final bytes = readBytes(8);
     return bytes.buffer.asByteData().getInt64(0, Endian.little);
+  }
+
+  double readFloat64() {
+    final bytes = readBytes(8);
+    return bytes.buffer.asByteData().getFloat64(0, Endian.little);
   }
 
   int readByte() {

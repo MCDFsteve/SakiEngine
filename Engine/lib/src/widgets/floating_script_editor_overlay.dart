@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
@@ -69,6 +70,15 @@ String? extractJumpTargetFromScriptLine(String line) {
   return target.isEmpty || target.startsWith('//') ? null : target;
 }
 
+@visibleForTesting
+Future<void> reloadFloatingScriptEditorAfterSave(
+  Future<void> Function()? onReload,
+) async {
+  if (onReload != null) {
+    await onReload();
+  }
+}
+
 /// Debug脚本编辑浮窗（Shift+P）
 /// - 悬浮置顶
 /// - 可拖拽
@@ -99,20 +109,21 @@ class _VisualLineLayout {
   final double top;
   final double height;
 
-  const _VisualLineLayout({
-    required this.top,
-    required this.height,
-  });
+  const _VisualLineLayout({required this.top, required this.height});
+}
+
+class _EditorTextLayout {
+  final List<_VisualLineLayout> lines;
+  final double maxLineWidth;
+
+  const _EditorTextLayout({required this.lines, required this.maxLineWidth});
 }
 
 class _ScriptFileEntry {
   final String path;
   final String relativePath;
 
-  const _ScriptFileEntry({
-    required this.path,
-    required this.relativePath,
-  });
+  const _ScriptFileEntry({required this.path, required this.relativePath});
 
   String get fileName => p.basename(path);
 
@@ -168,10 +179,10 @@ class _SksSyntaxHighlightController extends TextEditingController {
     'voice',
   };
 
-  static final RegExp _numberRegex =
-      RegExp(r'^[+-]?(?:\d+\.?\d*|\.\d+)$');
-  static final RegExp _hexColorRegex =
-      RegExp(r'^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$');
+  static final RegExp _numberRegex = RegExp(r'^[+-]?(?:\d+\.?\d*|\.\d+)$');
+  static final RegExp _hexColorRegex = RegExp(
+    r'^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$',
+  );
   static final RegExp _identifierRegex = RegExp(r'^[A-Za-z_]\w*$');
 
   TextStyle? _cachedBaseStyle;
@@ -287,7 +298,9 @@ class _SksSyntaxHighlightController extends TextEditingController {
         while (i < codePart.length && _isWhitespace(codePart[i])) {
           i++;
         }
-        spans.add(TextSpan(text: codePart.substring(start, i), style: baseStyle));
+        spans.add(
+          TextSpan(text: codePart.substring(start, i), style: baseStyle),
+        );
         continue;
       }
 
@@ -307,10 +320,7 @@ class _SksSyntaxHighlightController extends TextEditingController {
 
       if (_isPunctuation(ch)) {
         spans.add(
-          TextSpan(
-            text: ch,
-            style: _applyColor(baseStyle, _punctuationColor),
-          ),
+          TextSpan(text: ch, style: _applyColor(baseStyle, _punctuationColor)),
         );
         i++;
         previousWordLower = '';
@@ -418,8 +428,7 @@ class _SksSyntaxHighlightController extends TextEditingController {
       while (prefixLength < lines.length &&
           prefixLength < _cachedLines.length &&
           lines[prefixLength] == _cachedLines[prefixLength]) {
-        reusableLineSpans[prefixLength] =
-            _cachedLineSpans[prefixLength];
+        reusableLineSpans[prefixLength] = _cachedLineSpans[prefixLength];
         prefixLength++;
       }
 
@@ -462,7 +471,12 @@ class _FloatingScriptEditorOverlayState
     extends State<FloatingScriptEditorOverlay> {
   final _SksSyntaxHighlightController _scriptController =
       _SksSyntaxHighlightController();
+  final TextEditingController _findController = TextEditingController();
+  final FocusNode _editorFocusNode = FocusNode();
+  final FocusNode _findFocusNode = FocusNode();
+  final UndoHistoryController _undoController = UndoHistoryController();
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _fileListScrollController = ScrollController();
   Timer? _editorRefreshDebounce;
 
@@ -470,7 +484,10 @@ class _FloatingScriptEditorOverlayState
   bool _isLoading = true;
   bool _isDirty = false;
   bool _showFilePanel = true;
+  bool _showFindBar = false;
   bool _isLoadingScriptFiles = true;
+  int _findMatchIndex = -1;
+  int _findMatchCount = 0;
   String? _scriptFilesError;
   String _scriptRootPath = '';
   List<_ScriptFileEntry> _scriptFiles = const <_ScriptFileEntry>[];
@@ -513,7 +530,12 @@ class _FloatingScriptEditorOverlayState
     }
     _editorRefreshDebounce?.cancel();
     _scriptController.dispose();
+    _findController.dispose();
+    _editorFocusNode.dispose();
+    _findFocusNode.dispose();
+    _undoController.dispose();
     _scrollController.dispose();
+    _horizontalScrollController.dispose();
     _fileListScrollController.dispose();
     super.dispose();
   }
@@ -527,13 +549,6 @@ class _FloatingScriptEditorOverlayState
   }
 
   double _collapsedFilePanelWidth(double uiScale) => 32 * uiScale;
-
-  double _editorPaneWidth(double uiScale) {
-    final occupiedWidth = _showFilePanel
-        ? _filePanelWidth(uiScale)
-        : _collapsedFilePanelWidth(uiScale);
-    return _windowWidth - occupiedWidth - 1;
-  }
 
   bool _isCurrentDialogueScriptPath(String path) {
     if (path.isEmpty) {
@@ -586,8 +601,10 @@ class _FloatingScriptEditorOverlayState
       }
 
       final entries = <_ScriptFileEntry>[];
-      await for (final entity
-          in scriptRoot.list(recursive: true, followLinks: false)) {
+      await for (final entity in scriptRoot.list(
+        recursive: true,
+        followLinks: false,
+      )) {
         if (entity is! File ||
             p.extension(entity.path).toLowerCase() != '.sks') {
           continue;
@@ -692,6 +709,9 @@ class _FloatingScriptEditorOverlayState
         if (!mounted || !_scrollController.hasClients) {
           return;
         }
+        if (_horizontalScrollController.hasClients) {
+          _horizontalScrollController.jumpTo(0);
+        }
         if (_isCurrentDialogueScriptPath(entry.path)) {
           _centerCurrentDialogueInEditor();
         } else {
@@ -786,9 +806,451 @@ class _FloatingScriptEditorOverlayState
     _editorRefreshDebounce?.cancel();
     _editorRefreshDebounce = Timer(const Duration(milliseconds: 120), () {
       if (mounted) {
-        setState(() {});
+        if (_showFindBar) {
+          _updateFindResults(selectClosest: false);
+        } else {
+          setState(() {});
+        }
       }
     });
+  }
+
+  TextEditingController? get _activeShortcutController {
+    if (_editorFocusNode.hasFocus) {
+      return _scriptController;
+    }
+    if (_findFocusNode.hasFocus) {
+      return _findController;
+    }
+    return null;
+  }
+
+  void _copySelection(TextEditingController controller) {
+    final value = controller.value;
+    final selection = value.selection;
+    if (!selection.isValid || selection.isCollapsed) {
+      return;
+    }
+    unawaited(
+      Clipboard.setData(ClipboardData(text: selection.textInside(value.text))),
+    );
+  }
+
+  void _cutSelection(TextEditingController controller) {
+    final value = controller.value;
+    final selection = value.selection;
+    if (!selection.isValid || selection.isCollapsed) {
+      return;
+    }
+    unawaited(
+      Clipboard.setData(ClipboardData(text: selection.textInside(value.text))),
+    );
+    _replaceSelection(controller, '');
+  }
+
+  Future<void> _pasteClipboard(TextEditingController controller) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final clipboardText = data?.text;
+    if (!mounted || clipboardText == null || clipboardText.isEmpty) {
+      return;
+    }
+    _replaceSelection(controller, clipboardText);
+  }
+
+  void _replaceSelection(TextEditingController controller, String replacement) {
+    final value = controller.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+    final start = selection.start;
+    final end = selection.end;
+    final newText = value.text.replaceRange(start, end, replacement);
+    controller.value = value.copyWith(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + replacement.length),
+      composing: TextRange.empty,
+    );
+    if (identical(controller, _scriptController)) {
+      _onScriptTextChanged(newText);
+    } else if (identical(controller, _findController)) {
+      _onFindQueryChanged(newText);
+    }
+  }
+
+  void _selectAll(TextEditingController controller) {
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.text.length,
+    );
+  }
+
+  KeyEventResult _handleEditorKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final keyboard = HardwareKeyboard.instance;
+    final shortcutPressed = keyboard.isMetaPressed || keyboard.isControlPressed;
+    final shiftPressed = keyboard.isShiftPressed;
+    final key = event.logicalKey;
+
+    if (shortcutPressed && !keyboard.isAltPressed) {
+      final activeController = _activeShortcutController;
+      if (activeController != null && key == LogicalKeyboardKey.keyC) {
+        _copySelection(activeController);
+        return KeyEventResult.handled;
+      }
+      if (activeController != null && key == LogicalKeyboardKey.keyX) {
+        _cutSelection(activeController);
+        return KeyEventResult.handled;
+      }
+      if (activeController != null && key == LogicalKeyboardKey.keyV) {
+        unawaited(_pasteClipboard(activeController));
+        return KeyEventResult.handled;
+      }
+      if (activeController != null && key == LogicalKeyboardKey.keyA) {
+        _selectAll(activeController);
+        return KeyEventResult.handled;
+      }
+      if (_editorFocusNode.hasFocus && key == LogicalKeyboardKey.keyZ) {
+        if (shiftPressed) {
+          _undoController.redo();
+        } else {
+          _undoController.undo();
+        }
+        return KeyEventResult.handled;
+      }
+      if (_editorFocusNode.hasFocus && key == LogicalKeyboardKey.keyY) {
+        _undoController.redo();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyS) {
+        unawaited(_saveScript());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyF) {
+        _openFindBar();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyG) {
+        if (!_showFindBar) {
+          _openFindBar();
+        } else {
+          _navigateFind(forward: !shiftPressed);
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.slash && _editorFocusNode.hasFocus) {
+        _toggleLineComments();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyW) {
+        widget.onClose();
+        return KeyEventResult.handled;
+      }
+    }
+
+    if (key == LogicalKeyboardKey.f3) {
+      if (!_showFindBar) {
+        _openFindBar();
+      } else {
+        _navigateFind(forward: !shiftPressed);
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.escape) {
+      if (_showFindBar) {
+        _closeFindBar();
+      } else {
+        widget.onClose();
+      }
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  List<TextRange> _findMatches(String query) {
+    if (query.isEmpty) {
+      return const <TextRange>[];
+    }
+
+    final source = _scriptController.text.toLowerCase();
+    final target = query.toLowerCase();
+    final matches = <TextRange>[];
+    var start = 0;
+    while (start <= source.length - target.length) {
+      final matchStart = source.indexOf(target, start);
+      if (matchStart < 0) {
+        break;
+      }
+      matches.add(
+        TextRange(start: matchStart, end: matchStart + target.length),
+      );
+      start = matchStart + target.length;
+    }
+    return matches;
+  }
+
+  void _openFindBar() {
+    final selection = _scriptController.selection;
+    if (selection.isValid && !selection.isCollapsed) {
+      final selectedText = selection.textInside(_scriptController.text);
+      if (selectedText.isNotEmpty &&
+          selectedText.length <= 120 &&
+          !selectedText.contains('\n')) {
+        _findController.value = TextEditingValue(
+          text: selectedText,
+          selection: TextSelection(
+            baseOffset: 0,
+            extentOffset: selectedText.length,
+          ),
+        );
+      }
+    }
+
+    if (!_showFindBar) {
+      setState(() {
+        _showFindBar = true;
+      });
+    }
+    _updateFindResults(selectClosest: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _findFocusNode.requestFocus();
+      _findController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _findController.text.length,
+      );
+    });
+  }
+
+  void _closeFindBar() {
+    if (!_showFindBar) {
+      return;
+    }
+    setState(() {
+      _showFindBar = false;
+    });
+    _editorFocusNode.requestFocus();
+  }
+
+  void _onFindQueryChanged(String _) {
+    _updateFindResults(selectClosest: true);
+  }
+
+  void _updateFindResults({required bool selectClosest}) {
+    final matches = _findMatches(_findController.text);
+    var matchIndex = -1;
+    if (matches.isNotEmpty) {
+      final selection = _scriptController.selection;
+      final currentOffset = selection.isValid ? selection.start : 0;
+      matchIndex = matches.indexWhere((match) => match.start >= currentOffset);
+      if (matchIndex < 0) {
+        matchIndex = 0;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _findMatchCount = matches.length;
+        _findMatchIndex = matchIndex;
+      });
+    } else {
+      _findMatchCount = matches.length;
+      _findMatchIndex = matchIndex;
+    }
+
+    if (selectClosest && matchIndex >= 0) {
+      _selectFindMatch(matches[matchIndex]);
+    }
+  }
+
+  void _navigateFind({required bool forward}) {
+    final matches = _findMatches(_findController.text);
+    if (matches.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _findMatchCount = 0;
+          _findMatchIndex = -1;
+        });
+      }
+      return;
+    }
+
+    final selection = _scriptController.selection;
+    var currentIndex = selection.isValid
+        ? matches.indexWhere(
+            (match) =>
+                match.start == selection.start && match.end == selection.end,
+          )
+        : -1;
+    if (currentIndex < 0) {
+      currentIndex = _findMatchIndex.clamp(0, matches.length - 1);
+    }
+    final nextIndex = forward
+        ? (currentIndex + 1) % matches.length
+        : (currentIndex - 1 + matches.length) % matches.length;
+
+    setState(() {
+      _findMatchCount = matches.length;
+      _findMatchIndex = nextIndex;
+    });
+    _selectFindMatch(matches[nextIndex]);
+  }
+
+  void _selectFindMatch(TextRange match) {
+    _scriptController.selection = TextSelection(
+      baseOffset: match.start,
+      extentOffset: match.end,
+    );
+    _revealScriptOffset(match.start);
+  }
+
+  void _revealScriptOffset(int rawOffset) {
+    if (_scriptController.text.isEmpty) {
+      return;
+    }
+    final offset = rawOffset.clamp(0, _scriptController.text.length);
+    final beforeMatch = _scriptController.text.substring(0, offset);
+    final lineIndex = '\n'.allMatches(beforeMatch).length;
+    final lineStart = beforeMatch.lastIndexOf('\n') + 1;
+    final linePrefix = _scriptController.text.substring(lineStart, offset);
+    final textScale = context.scaleFor(ComponentType.text);
+    final textStyle = TextStyle(
+      fontSize: _editorFontSize * textScale,
+      fontFamily: 'Courier New',
+      height: _lineHeightMultiplier,
+      letterSpacing: 0.4,
+    );
+    final lineLayouts = _computeEditorTextLayout(
+      text: _scriptController.text,
+      textStyle: textStyle,
+    ).lines;
+    final prefixPainter = TextPainter(
+      text: TextSpan(
+        text: linePrefix.isEmpty ? ' ' : linePrefix,
+        style: textStyle,
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final prefixWidth = linePrefix.isEmpty ? 0.0 : prefixPainter.width;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || lineIndex >= lineLayouts.length) {
+        return;
+      }
+      if (_scrollController.hasClients) {
+        final layout = lineLayouts[lineIndex];
+        final viewport = _scrollController.position.viewportDimension;
+        final target = (layout.top + layout.height / 2 - viewport / 2).clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        );
+        unawaited(
+          _scrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
+      if (_horizontalScrollController.hasClients) {
+        final viewport = _horizontalScrollController.position.viewportDimension;
+        final target = (prefixWidth - viewport * 0.3).clamp(
+          0.0,
+          _horizontalScrollController.position.maxScrollExtent,
+        );
+        unawaited(
+          _horizontalScrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
+    });
+  }
+
+  void _toggleLineComments() {
+    final value = _scriptController.value;
+    final selection = value.selection;
+    if (!selection.isValid) {
+      return;
+    }
+
+    final text = value.text;
+    final selectionStart = selection.start.clamp(0, text.length);
+    final selectionEnd = selection.end.clamp(0, text.length);
+    final blockStart = selectionStart == 0
+        ? 0
+        : text.lastIndexOf('\n', selectionStart - 1) + 1;
+    var effectiveEnd = selectionEnd;
+    if (effectiveEnd > blockStart &&
+        effectiveEnd <= text.length &&
+        text[effectiveEnd - 1] == '\n') {
+      effectiveEnd--;
+    }
+    final nextNewline = text.indexOf('\n', effectiveEnd);
+    final blockEnd = nextNewline < 0 ? text.length : nextNewline;
+    final originalBlock = text.substring(blockStart, blockEnd);
+    final lines = originalBlock.split('\n');
+    final nonEmptyLines = lines.where((line) => line.trim().isNotEmpty);
+    final removeComments =
+        nonEmptyLines.isNotEmpty &&
+        nonEmptyLines.every((line) => line.trimLeft().startsWith('//'));
+
+    final transformedLines = <String>[];
+    for (final line in lines) {
+      if (line.trim().isEmpty) {
+        transformedLines.add(line);
+        continue;
+      }
+      final contentStart = line.length - line.trimLeft().length;
+      if (removeComments) {
+        transformedLines.add(
+          line.substring(0, contentStart) + line.substring(contentStart + 2),
+        );
+      } else {
+        transformedLines.add(
+          '${line.substring(0, contentStart)}//${line.substring(contentStart)}',
+        );
+      }
+    }
+    final replacement = transformedLines.join('\n');
+    final newText = text.replaceRange(blockStart, blockEnd, replacement);
+
+    TextSelection newSelection;
+    if (selection.isCollapsed && lines.length == 1) {
+      final contentStart = lines.first.length - lines.first.trimLeft().length;
+      var caret = selectionStart - blockStart;
+      if (removeComments) {
+        if (caret > contentStart + 2) {
+          caret -= 2;
+        } else if (caret > contentStart) {
+          caret = contentStart;
+        }
+      } else if (caret >= contentStart) {
+        caret += 2;
+      }
+      newSelection = TextSelection.collapsed(offset: blockStart + caret);
+    } else {
+      newSelection = TextSelection(
+        baseOffset: blockStart,
+        extentOffset: blockStart + replacement.length,
+      );
+    }
+
+    _scriptController.value = TextEditingValue(
+      text: newText,
+      selection: newSelection,
+    );
+    _onScriptTextChanged(newText);
   }
 
   void _ensureInitialRect(Size size) {
@@ -850,6 +1312,9 @@ class _FloatingScriptEditorOverlayState
       _isDirty = false;
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_horizontalScrollController.hasClients) {
+          _horizontalScrollController.jumpTo(0);
+        }
         _centerCurrentDialogueInEditor();
       });
     } catch (e) {
@@ -907,35 +1372,34 @@ class _FloatingScriptEditorOverlayState
     return -1;
   }
 
-  List<_VisualLineLayout> _computeVisualLineLayouts({
+  _EditorTextLayout _computeEditorTextLayout({
     required String text,
     required TextStyle textStyle,
-    required double maxTextWidth,
   }) {
     final lines = text.split('\n');
-    if (lines.isEmpty || maxTextWidth <= 0) {
-      return const <_VisualLineLayout>[];
-    }
-
     final layouts = <_VisualLineLayout>[];
     var top = 0.0;
+    var maxLineWidth = 0.0;
     final painter = TextPainter(
       textDirection: TextDirection.ltr,
-      maxLines: null,
+      maxLines: 1,
       textScaler: MediaQuery.textScalerOf(context),
     );
 
     for (final line in lines) {
       final measurable = line.isEmpty ? ' ' : line;
       painter.text = TextSpan(text: measurable, style: textStyle);
-      painter.layout(maxWidth: maxTextWidth);
+      painter.layout();
 
       final height = painter.height;
       layouts.add(_VisualLineLayout(top: top, height: height));
       top += height;
+      if (painter.width > maxLineWidth) {
+        maxLineWidth = painter.width;
+      }
     }
 
-    return layouts;
+    return _EditorTextLayout(lines: layouts, maxLineWidth: maxLineWidth);
   }
 
   int _resolveTargetLine(List<String> lines, {bool verbose = false}) {
@@ -978,7 +1442,6 @@ class _FloatingScriptEditorOverlayState
     }
 
     final textScale = context.scaleFor(ComponentType.text);
-    final uiScale = context.scaleFor(ComponentType.ui);
     final textStyle = TextStyle(
       fontSize: _editorFontSize * textScale,
       fontFamily: 'Courier New',
@@ -986,19 +1449,10 @@ class _FloatingScriptEditorOverlayState
       letterSpacing: 0.4,
     );
 
-    final lineNumberWidth = _gutterWidth * uiScale;
-    final horizontalPadding = 12 * uiScale;
-    final availableWidth =
-        (_editorPaneWidth(uiScale) -
-                lineNumberWidth -
-                horizontalPadding * 2)
-            .clamp(120.0, double.infinity);
-
-    final layouts = _computeVisualLineLayouts(
+    final layouts = _computeEditorTextLayout(
       text: _scriptController.text,
       textStyle: textStyle,
-      maxTextWidth: availableWidth,
-    );
+    ).lines;
     if (targetLine < 0 || targetLine >= layouts.length) {
       return;
     }
@@ -1018,7 +1472,7 @@ class _FloatingScriptEditorOverlayState
     );
   }
 
-  Future<void> _saveScript({required bool reloadAfterSave}) async {
+  Future<void> _saveScript() async {
     if (_currentScriptPath.isEmpty) {
       _notify('未加载脚本文件，无法保存');
       return;
@@ -1038,15 +1492,23 @@ class _FloatingScriptEditorOverlayState
         _isDirty = false;
       }
       _notify('脚本已保存: ${p.basename(_currentScriptPath)}');
-
-      if (reloadAfterSave && widget.onReload != null) {
-        await widget.onReload!();
-        _notify('重载完成');
-      }
     } catch (e) {
       _notify('保存失败: $e');
       if (kEngineDebugMode) {
         print('浮窗脚本编辑器: 保存失败: $e');
+      }
+      return;
+    }
+
+    try {
+      await reloadFloatingScriptEditorAfterSave(widget.onReload);
+      if (widget.onReload != null) {
+        _notify('重载完成');
+      }
+    } catch (e) {
+      _notify('脚本已保存，但重载失败: $e');
+      if (kEngineDebugMode) {
+        print('浮窗脚本编辑器: 保存后重载失败: $e');
       }
     }
   }
@@ -1150,9 +1612,7 @@ class _FloatingScriptEditorOverlayState
       ),
       decoration: const BoxDecoration(
         color: Color(0xFF252526),
-        border: Border(
-          right: BorderSide(color: Color(0xFF3E3E42), width: 1),
-        ),
+        border: Border(right: BorderSide(color: Color(0xFF3E3E42), width: 1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1166,10 +1626,7 @@ class _FloatingScriptEditorOverlayState
                   ? BoxDecoration(
                       color: const Color(0xFFAB20A1).withOpacity(0.16),
                       border: const Border(
-                        left: BorderSide(
-                          color: Color(0xFFAB20A1),
-                          width: 2,
-                        ),
+                        left: BorderSide(color: Color(0xFFAB20A1), width: 2),
                       ),
                     )
                   : null,
@@ -1211,9 +1668,9 @@ class _FloatingScriptEditorOverlayState
   ) {
     final groupedFiles = <String, List<_ScriptFileEntry>>{};
     for (final entry in _scriptFiles) {
-      groupedFiles.putIfAbsent(entry.folder, () => <_ScriptFileEntry>[]).add(
-            entry,
-          );
+      groupedFiles
+          .putIfAbsent(entry.folder, () => <_ScriptFileEntry>[])
+          .add(entry);
     }
 
     final listChildren = <Widget>[];
@@ -1317,7 +1774,9 @@ class _FloatingScriptEditorOverlayState
                           style: TextStyle(
                             color: isSelected
                                 ? config.themeColors.primary
-                                : config.themeColors.onSurface.withOpacity(0.82),
+                                : config.themeColors.onSurface.withOpacity(
+                                    0.82,
+                                  ),
                             fontSize: 11 * textScale,
                             fontFamily: 'Courier New',
                           ),
@@ -1344,9 +1803,7 @@ class _FloatingScriptEditorOverlayState
             padding: EdgeInsets.only(left: 9 * uiScale, right: 3 * uiScale),
             decoration: const BoxDecoration(
               color: Color(0xFF252526),
-              border: Border(
-                bottom: BorderSide(color: Color(0xFF3E3E42)),
-              ),
+              border: Border(bottom: BorderSide(color: Color(0xFF3E3E42))),
             ),
             child: Row(
               children: [
@@ -1405,28 +1862,26 @@ class _FloatingScriptEditorOverlayState
                     ),
                   )
                 : _scriptFilesError != null
-                    ? Padding(
-                        padding: EdgeInsets.all(10 * uiScale),
-                        child: Text(
-                          _scriptFilesError!,
-                          style: TextStyle(
-                            color: Colors.orange.shade300,
-                            fontSize: 10.5 * textScale,
-                          ),
-                        ),
-                      )
-                    : Scrollbar(
-                        controller: _fileListScrollController,
-                        thumbVisibility: true,
-                        interactive: true,
-                        child: ListView(
-                          controller: _fileListScrollController,
-                          padding: EdgeInsets.symmetric(
-                            vertical: 4 * uiScale,
-                          ),
-                          children: listChildren,
-                        ),
+                ? Padding(
+                    padding: EdgeInsets.all(10 * uiScale),
+                    child: Text(
+                      _scriptFilesError!,
+                      style: TextStyle(
+                        color: Colors.orange.shade300,
+                        fontSize: 10.5 * textScale,
                       ),
+                    ),
+                  )
+                : Scrollbar(
+                    controller: _fileListScrollController,
+                    thumbVisibility: true,
+                    interactive: true,
+                    child: ListView(
+                      controller: _fileListScrollController,
+                      padding: EdgeInsets.symmetric(vertical: 4 * uiScale),
+                      children: listChildren,
+                    ),
+                  ),
           ),
         ],
       ),
@@ -1466,6 +1921,112 @@ class _FloatingScriptEditorOverlayState
     );
   }
 
+  Widget _buildFindBar(
+    SakiEngineConfig config,
+    double uiScale,
+    double textScale,
+  ) {
+    final resultText = _findMatchCount == 0
+        ? '0 / 0'
+        : '${_findMatchIndex + 1} / $_findMatchCount';
+    return Container(
+      height: 40 * uiScale,
+      padding: EdgeInsets.symmetric(horizontal: 8 * uiScale),
+      decoration: const BoxDecoration(
+        color: Color(0xFF252526),
+        border: Border(bottom: BorderSide(color: Color(0xFF3E3E42))),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.search_rounded,
+            size: 18 * uiScale,
+            color: config.themeColors.primary,
+          ),
+          SizedBox(width: 7 * uiScale),
+          Expanded(
+            child: TextField(
+              controller: _findController,
+              focusNode: _findFocusNode,
+              maxLines: 1,
+              textInputAction: TextInputAction.search,
+              style: TextStyle(
+                color: config.themeColors.onSurface,
+                fontSize: 12 * textScale,
+                fontFamily: 'Courier New',
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '查找脚本文本',
+                hintStyle: TextStyle(
+                  color: config.themeColors.onSurface.withOpacity(0.45),
+                  fontSize: 12 * textScale,
+                ),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 9 * uiScale,
+                  vertical: 7 * uiScale,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4 * uiScale),
+                  borderSide: const BorderSide(color: Color(0xFF4A4A4D)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4 * uiScale),
+                  borderSide: BorderSide(color: config.themeColors.primary),
+                ),
+              ),
+              onChanged: _onFindQueryChanged,
+              onSubmitted: (_) => _navigateFind(forward: true),
+            ),
+          ),
+          SizedBox(width: 8 * uiScale),
+          SizedBox(
+            width: 58 * uiScale,
+            child: Text(
+              resultText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _findMatchCount == 0
+                    ? Colors.orange.shade300
+                    : config.themeColors.onSurface.withOpacity(0.75),
+                fontSize: 10.5 * textScale,
+                fontFamily: 'Courier New',
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: '上一个 (Shift+⌘/Ctrl+G)',
+            onPressed: _findMatchCount == 0
+                ? null
+                : () => _navigateFind(forward: false),
+            icon: const Icon(Icons.keyboard_arrow_up_rounded),
+            iconSize: 18 * uiScale,
+            visualDensity: VisualDensity.compact,
+            color: config.themeColors.primary,
+          ),
+          IconButton(
+            tooltip: '下一个 (⌘/Ctrl+G 或 F3)',
+            onPressed: _findMatchCount == 0
+                ? null
+                : () => _navigateFind(forward: true),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            iconSize: 18 * uiScale,
+            visualDensity: VisualDensity.compact,
+            color: config.themeColors.primary,
+          ),
+          IconButton(
+            tooltip: '关闭查找 (Esc)',
+            onPressed: _closeFindBar,
+            icon: const Icon(Icons.close_rounded),
+            iconSize: 17 * uiScale,
+            visualDensity: VisualDensity.compact,
+            color: config.themeColors.onSurface.withOpacity(0.7),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -1485,338 +2046,406 @@ class _FloatingScriptEditorOverlayState
     _windowHeight = _windowHeight.clamp(_minHeight, screenSize.height);
     _clampRect(screenSize);
 
-    final lineNumberWidth = _gutterWidth * uiScale;
     final editorPadding = 12 * uiScale;
-    final editorTextMaxWidth =
-        (_editorPaneWidth(uiScale) - lineNumberWidth - editorPadding * 2).clamp(
-      120.0,
-      double.infinity,
-    );
     final sourceLines = _scriptController.text.split('\n');
-    final lineLayouts = _computeVisualLineLayouts(
+    final editorTextLayout = _computeEditorTextLayout(
       text: _scriptController.text,
       textStyle: editorTextStyle,
-      maxTextWidth: editorTextMaxWidth,
     );
+    final lineLayouts = editorTextLayout.lines;
     final highlightedLineIndex = _resolveTargetLine(sourceLines);
-    final hasHighlight = highlightedLineIndex >= 0 &&
-        highlightedLineIndex < lineLayouts.length;
-    final highlightTop =
-        hasHighlight ? lineLayouts[highlightedLineIndex].top : 0.0;
-    final highlightHeight =
-        hasHighlight ? lineLayouts[highlightedLineIndex].height : 0.0;
+    final hasHighlight =
+        highlightedLineIndex >= 0 && highlightedLineIndex < lineLayouts.length;
+    final highlightTop = hasHighlight
+        ? lineLayouts[highlightedLineIndex].top
+        : 0.0;
+    final highlightHeight = hasHighlight
+        ? lineLayouts[highlightedLineIndex].height
+        : 0.0;
 
-    return Positioned(
-      left: _windowLeft,
-      top: _windowTop,
-      width: _windowWidth,
-      height: _windowHeight,
-      child: Material(
-        elevation: 30,
-        color: Colors.transparent,
-        child: Container(
-          decoration: BoxDecoration(
-            color: config.themeColors.background.withOpacity(0.96),
-            borderRadius: BorderRadius.circular(config.baseWindowBorder),
-            border: Border.all(
-              color: config.themeColors.primary.withOpacity(0.55),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.35),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleEditorKeyEvent,
+      child: Positioned(
+        left: _windowLeft,
+        top: _windowTop,
+        width: _windowWidth,
+        height: _windowHeight,
+        child: Material(
+          elevation: 30,
+          color: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              color: config.themeColors.background.withOpacity(0.96),
+              borderRadius: BorderRadius.circular(config.baseWindowBorder),
+              border: Border.all(
+                color: config.themeColors.primary.withOpacity(0.55),
+                width: 1,
               ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(config.baseWindowBorder),
-            child: Stack(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    GestureDetector(
-                      onPanUpdate: (details) {
-                        setState(() {
-                          _windowLeft += details.delta.dx;
-                          _windowTop += details.delta.dy;
-                          _clampRect(screenSize);
-                        });
-                      },
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 10 * uiScale,
-                          vertical: 8 * uiScale,
-                        ),
-                        color: config.themeColors.primary.withOpacity(0.16),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip:
-                                  _showFilePanel ? '隐藏文件栏' : '展开文件栏',
-                              onPressed: () {
-                                final shouldShow = !_showFilePanel;
-                                setState(() {
-                                  _showFilePanel = shouldShow;
-                                });
-                                if (shouldShow &&
-                                    _scriptFiles.isEmpty &&
-                                    !_isLoadingScriptFiles) {
-                                  unawaited(_refreshScriptFiles());
-                                }
-                              },
-                              icon: Icon(
-                                _showFilePanel
-                                    ? Icons.folder_open_outlined
-                                    : Icons.folder_outlined,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.35),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(config.baseWindowBorder),
+              child: Stack(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      GestureDetector(
+                        onPanUpdate: (details) {
+                          setState(() {
+                            _windowLeft += details.delta.dx;
+                            _windowTop += details.delta.dy;
+                            _clampRect(screenSize);
+                          });
+                        },
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10 * uiScale,
+                            vertical: 8 * uiScale,
+                          ),
+                          color: config.themeColors.primary.withOpacity(0.16),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                tooltip: _showFilePanel ? '隐藏文件栏' : '展开文件栏',
+                                onPressed: () {
+                                  final shouldShow = !_showFilePanel;
+                                  setState(() {
+                                    _showFilePanel = shouldShow;
+                                  });
+                                  if (shouldShow &&
+                                      _scriptFiles.isEmpty &&
+                                      !_isLoadingScriptFiles) {
+                                    unawaited(_refreshScriptFiles());
+                                  }
+                                },
+                                icon: Icon(
+                                  _showFilePanel
+                                      ? Icons.folder_open_outlined
+                                      : Icons.folder_outlined,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                color: config.themeColors.primary,
                               ),
-                              visualDensity: VisualDensity.compact,
-                              color: config.themeColors.primary,
-                            ),
-                            Expanded(
-                              child: Text(
-                                '脚本编辑浮窗 (Shift+P)',
-                                style: config.reviewTitleTextStyle.copyWith(
-                                  fontSize:
-                                      config.reviewTitleTextStyle.fontSize! *
-                                          textScale *
-                                          0.62,
-                                  color: config.themeColors.primary,
+                              Expanded(
+                                child: Text(
+                                  '脚本编辑浮窗 (Shift+P)',
+                                  style: config.reviewTitleTextStyle.copyWith(
+                                    fontSize:
+                                        config.reviewTitleTextStyle.fontSize! *
+                                        textScale *
+                                        0.62,
+                                    color: config.themeColors.primary,
+                                  ),
                                 ),
                               ),
+                              IconButton(
+                                tooltip: '查找 (⌘/Ctrl+F)',
+                                onPressed: _openFindBar,
+                                icon: const Icon(Icons.search_rounded),
+                                visualDensity: VisualDensity.compact,
+                                color: config.themeColors.primary,
+                              ),
+                              IconButton(
+                                tooltip: '定位当前句',
+                                onPressed: _centerCurrentDialogueInEditor,
+                                icon: const Icon(Icons.center_focus_strong),
+                                visualDensity: VisualDensity.compact,
+                                color: config.themeColors.primary,
+                              ),
+                              IconButton(
+                                tooltip: '保存并重载 (⌘/Ctrl+S)',
+                                onPressed: _saveScript,
+                                icon: const Icon(Icons.save_alt),
+                                visualDensity: VisualDensity.compact,
+                                color: Colors.green.shade500,
+                              ),
+                              IconButton(
+                                tooltip: '关闭 (Esc / ⌘/Ctrl+W)',
+                                onPressed: widget.onClose,
+                                icon: const Icon(Icons.close),
+                                visualDensity: VisualDensity.compact,
+                                color: config.themeColors.primary,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10 * uiScale,
+                          vertical: 6 * uiScale,
+                        ),
+                        color: Colors.black.withOpacity(0.2),
+                        child: Text(
+                          _currentScriptPath.isNotEmpty
+                              ? '${_isDirty ? '● ' : ''}$_currentScriptPath'
+                              : '未加载脚本文件',
+                          style: TextStyle(
+                            color: config.themeColors.primary.withOpacity(0.86),
+                            fontSize: 11 * textScale,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (_showFindBar)
+                        _buildFindBar(config, uiScale, textScale),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            if (_showFilePanel)
+                              _buildScriptFilePanel(config, uiScale, textScale)
+                            else
+                              _buildCollapsedFilePanelHandle(config, uiScale),
+                            const VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: Color(0xFF3E3E42),
                             ),
-                            IconButton(
-                              tooltip: '定位当前句',
-                              onPressed: _centerCurrentDialogueInEditor,
-                              icon: const Icon(Icons.center_focus_strong),
-                              visualDensity: VisualDensity.compact,
-                              color: config.themeColors.primary,
-                            ),
-                            IconButton(
-                              tooltip: '保存',
-                              onPressed: () =>
-                                  _saveScript(reloadAfterSave: false),
-                              icon: const Icon(Icons.save_alt),
-                              visualDensity: VisualDensity.compact,
-                              color: Colors.green.shade500,
-                            ),
-                            IconButton(
-                              tooltip: '保存并重载',
-                              onPressed: () =>
-                                  _saveScript(reloadAfterSave: true),
-                              icon: const Icon(Icons.refresh),
-                              visualDensity: VisualDensity.compact,
-                              color: Colors.lightBlue.shade400,
-                            ),
-                            IconButton(
-                              tooltip: '关闭',
-                              onPressed: widget.onClose,
-                              icon: const Icon(Icons.close),
-                              visualDensity: VisualDensity.compact,
-                              color: config.themeColors.primary,
+                            Expanded(
+                              child: _isLoading
+                                  ? const Center(
+                                      child: CircularProgressIndicator(),
+                                    )
+                                  : Container(
+                                      color: const Color(0xFF1E1E1E),
+                                      child: ScrollbarTheme(
+                                        data: ScrollbarThemeData(
+                                          thumbColor:
+                                              WidgetStateProperty.resolveWith((
+                                                states,
+                                              ) {
+                                                if (states.contains(
+                                                  WidgetState.dragged,
+                                                )) {
+                                                  return config
+                                                      .themeColors
+                                                      .primary;
+                                                }
+                                                if (states.contains(
+                                                  WidgetState.hovered,
+                                                )) {
+                                                  return config
+                                                      .themeColors
+                                                      .primary
+                                                      .withOpacity(0.86);
+                                                }
+                                                return config
+                                                    .themeColors
+                                                    .primary
+                                                    .withOpacity(0.62);
+                                              }),
+                                          trackColor: WidgetStateProperty.all(
+                                            Colors.black.withOpacity(0.32),
+                                          ),
+                                          trackBorderColor:
+                                              WidgetStateProperty.all(
+                                                config.themeColors.primary
+                                                    .withOpacity(0.2),
+                                              ),
+                                          thickness:
+                                              WidgetStateProperty.resolveWith((
+                                                states,
+                                              ) {
+                                                return (states.contains(
+                                                          WidgetState.dragged,
+                                                        )
+                                                        ? 11
+                                                        : 9) *
+                                                    uiScale;
+                                              }),
+                                          radius: Radius.circular(5 * uiScale),
+                                          crossAxisMargin: 3 * uiScale,
+                                          mainAxisMargin: 6 * uiScale,
+                                          minThumbLength: 40 * uiScale,
+                                          interactive: true,
+                                        ),
+                                        child: Scrollbar(
+                                          controller: _scrollController,
+                                          thumbVisibility: true,
+                                          trackVisibility: true,
+                                          interactive: true,
+                                          child: SingleChildScrollView(
+                                            controller: _scrollController,
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                _buildLineNumbers(
+                                                  uiScale,
+                                                  textScale,
+                                                  lineLayouts,
+                                                  sourceLines,
+                                                  highlightedLineIndex,
+                                                ),
+                                                Expanded(
+                                                  child: LayoutBuilder(
+                                                    builder: (context, constraints) {
+                                                      final contentWidth =
+                                                          (editorTextLayout
+                                                                      .maxLineWidth +
+                                                                  editorPadding *
+                                                                      2 +
+                                                                  24 * uiScale)
+                                                              .clamp(
+                                                                constraints
+                                                                    .maxWidth,
+                                                                double.infinity,
+                                                              )
+                                                              .toDouble();
+                                                      return Scrollbar(
+                                                        controller:
+                                                            _horizontalScrollController,
+                                                        scrollbarOrientation:
+                                                            ScrollbarOrientation
+                                                                .bottom,
+                                                        thumbVisibility: true,
+                                                        interactive: true,
+                                                        child: SingleChildScrollView(
+                                                          controller:
+                                                              _horizontalScrollController,
+                                                          scrollDirection:
+                                                              Axis.horizontal,
+                                                          child: SizedBox(
+                                                            width: contentWidth,
+                                                            child: Stack(
+                                                              children: [
+                                                                if (hasHighlight)
+                                                                  Positioned(
+                                                                    left: 0,
+                                                                    right: 0,
+                                                                    top:
+                                                                        highlightTop +
+                                                                        editorPadding,
+                                                                    height:
+                                                                        highlightHeight,
+                                                                    child: IgnorePointer(
+                                                                      child: Container(
+                                                                        decoration: BoxDecoration(
+                                                                          color:
+                                                                              const Color(
+                                                                                0xFFAB20A1,
+                                                                              ).withOpacity(
+                                                                                0.12,
+                                                                              ),
+                                                                          border: const Border(
+                                                                            left: BorderSide(
+                                                                              color: Color(
+                                                                                0xFFAB20A1,
+                                                                              ),
+                                                                              width: 3,
+                                                                            ),
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                TextField(
+                                                                  controller:
+                                                                      _scriptController,
+                                                                  focusNode:
+                                                                      _editorFocusNode,
+                                                                  undoController:
+                                                                      _undoController,
+                                                                  maxLines:
+                                                                      null,
+                                                                  keyboardType:
+                                                                      TextInputType
+                                                                          .multiline,
+                                                                  style:
+                                                                      editorTextStyle,
+                                                                  decoration: InputDecoration(
+                                                                    border:
+                                                                        InputBorder
+                                                                            .none,
+                                                                    contentPadding:
+                                                                        EdgeInsets.all(
+                                                                          editorPadding,
+                                                                        ),
+                                                                    hintText:
+                                                                        '脚本内容...',
+                                                                    hintStyle: TextStyle(
+                                                                      color: const Color(
+                                                                        0xFF6A9955,
+                                                                      ),
+                                                                      fontSize:
+                                                                          _editorFontSize *
+                                                                          textScale,
+                                                                      fontFamily:
+                                                                          'Courier New',
+                                                                    ),
+                                                                    isDense:
+                                                                        true,
+                                                                  ),
+                                                                  onChanged:
+                                                                      _onScriptTextChanged,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                             ),
                           ],
                         ),
                       ),
-                    ),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 10 * uiScale,
-                        vertical: 6 * uiScale,
-                      ),
-                      color: Colors.black.withOpacity(0.2),
-                      child: Text(
-                        _currentScriptPath.isNotEmpty
-                            ? '${_isDirty ? '● ' : ''}$_currentScriptPath'
-                            : '未加载脚本文件',
-                        style: TextStyle(
-                          color: config.themeColors.primary.withOpacity(0.86),
-                          fontSize: 11 * textScale,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          if (_showFilePanel)
-                            _buildScriptFilePanel(
-                              config,
-                              uiScale,
-                              textScale,
-                            )
-                          else
-                            _buildCollapsedFilePanelHandle(config, uiScale),
-                          const VerticalDivider(
-                            width: 1,
-                            thickness: 1,
-                            color: Color(0xFF3E3E42),
+                    ],
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.resizeUpLeftDownRight,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: (details) {
+                          setState(() {
+                            final maxWidth = (screenSize.width - _windowLeft)
+                                .clamp(_minWidth, screenSize.width);
+                            final maxHeight = (screenSize.height - _windowTop)
+                                .clamp(_minHeight, screenSize.height);
+                            _windowWidth = (_windowWidth + details.delta.dx)
+                                .clamp(_minWidth, maxWidth);
+                            _windowHeight = (_windowHeight + details.delta.dy)
+                                .clamp(_minHeight, maxHeight);
+                          });
+                        },
+                        child: Container(
+                          width: 22 * uiScale,
+                          height: 22 * uiScale,
+                          alignment: Alignment.bottomRight,
+                          padding: EdgeInsets.only(
+                            right: 5 * uiScale,
+                            bottom: 5 * uiScale,
                           ),
-                          Expanded(
-                            child: _isLoading
-                                ? const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : Container(
-                              color: const Color(0xFF1E1E1E),
-                              child: ScrollbarTheme(
-                                data: ScrollbarThemeData(
-                                  thumbColor:
-                                      WidgetStateProperty.resolveWith((states) {
-                                    if (states.contains(WidgetState.dragged)) {
-                                      return config.themeColors.primary;
-                                    }
-                                    if (states.contains(WidgetState.hovered)) {
-                                      return config.themeColors.primary
-                                          .withOpacity(0.86);
-                                    }
-                                    return config.themeColors.primary
-                                        .withOpacity(0.62);
-                                  }),
-                                  trackColor: WidgetStateProperty.all(
-                                    Colors.black.withOpacity(0.32),
-                                  ),
-                                  trackBorderColor: WidgetStateProperty.all(
-                                    config.themeColors.primary.withOpacity(0.2),
-                                  ),
-                                  thickness:
-                                      WidgetStateProperty.resolveWith((states) {
-                                    return (states.contains(WidgetState.dragged)
-                                            ? 11
-                                            : 9) *
-                                        uiScale;
-                                  }),
-                                  radius: Radius.circular(5 * uiScale),
-                                  crossAxisMargin: 3 * uiScale,
-                                  mainAxisMargin: 6 * uiScale,
-                                  minThumbLength: 40 * uiScale,
-                                  interactive: true,
-                                ),
-                                child: Scrollbar(
-                                  controller: _scrollController,
-                                  thumbVisibility: true,
-                                  trackVisibility: true,
-                                  interactive: true,
-                                  child: SingleChildScrollView(
-                                    controller: _scrollController,
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        _buildLineNumbers(
-                                          uiScale,
-                                          textScale,
-                                          lineLayouts,
-                                          sourceLines,
-                                          highlightedLineIndex,
-                                        ),
-                                        Expanded(
-                                          child: Stack(
-                                            children: [
-                                              if (hasHighlight)
-                                                Positioned(
-                                                  left: 0,
-                                                  right: 0,
-                                                  top: highlightTop +
-                                                      editorPadding,
-                                                  height: highlightHeight,
-                                                  child: IgnorePointer(
-                                                    child: Container(
-                                                      decoration: BoxDecoration(
-                                                        color: const Color(
-                                                          0xFFAB20A1,
-                                                        ).withOpacity(0.12),
-                                                        border: const Border(
-                                                          left: BorderSide(
-                                                            color: Color(
-                                                              0xFFAB20A1,
-                                                            ),
-                                                            width: 3,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              TextField(
-                                                controller: _scriptController,
-                                                maxLines: null,
-                                                keyboardType:
-                                                    TextInputType.multiline,
-                                                style: editorTextStyle,
-                                                decoration: InputDecoration(
-                                                  border: InputBorder.none,
-                                                  contentPadding: EdgeInsets.all(
-                                                    editorPadding,
-                                                  ),
-                                                  hintText: '脚本内容...',
-                                                  hintStyle: TextStyle(
-                                                    color: const Color(
-                                                      0xFF6A9955,
-                                                    ),
-                                                    fontSize: _editorFontSize *
-                                                        textScale,
-                                                    fontFamily: 'Courier New',
-                                                  ),
-                                                  isDense: true,
-                                                ),
-                                                onChanged: _onScriptTextChanged,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                          child: Icon(
+                            Icons.drag_handle,
+                            size: 14 * uiScale,
+                            color: config.themeColors.primary.withOpacity(0.75),
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.resizeUpLeftDownRight,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onPanUpdate: (details) {
-                        setState(() {
-                          final maxWidth = (screenSize.width - _windowLeft)
-                              .clamp(_minWidth, screenSize.width);
-                          final maxHeight = (screenSize.height - _windowTop)
-                              .clamp(_minHeight, screenSize.height);
-                          _windowWidth = (_windowWidth + details.delta.dx)
-                              .clamp(_minWidth, maxWidth);
-                          _windowHeight = (_windowHeight + details.delta.dy)
-                              .clamp(_minHeight, maxHeight);
-                        });
-                      },
-                      child: Container(
-                        width: 22 * uiScale,
-                        height: 22 * uiScale,
-                        alignment: Alignment.bottomRight,
-                        padding: EdgeInsets.only(
-                          right: 5 * uiScale,
-                          bottom: 5 * uiScale,
-                        ),
-                        child: Icon(
-                          Icons.drag_handle,
-                          size: 14 * uiScale,
-                          color: config.themeColors.primary.withOpacity(0.75),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

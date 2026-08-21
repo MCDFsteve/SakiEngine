@@ -77,10 +77,6 @@ public class VideoOutput: NSObject {
     let enableHardwareAcceleration =
       VideoOutput.isSimulator ? false : enableHardwareAcceleration
 
-    NSLog(
-      "VideoOutput: enableHardwareAcceleration: \(enableHardwareAcceleration)"
-    )
-
     if VideoOutput.isSimulator {
       NSLog(
         "VideoOutput: warning: hardware rendering is disabled in the iOS simulator, due to an incompatibility with OpenGL ES"

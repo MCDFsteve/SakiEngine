@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sakiengine/src/widgets/command_radial_wheel.dart';
 import 'package:sakiengine/src/widgets/smart_image.dart';
 
@@ -11,6 +12,7 @@ class CommandGridMenu extends StatefulWidget {
   final Offset center;
   final ValueChanged<String> onHighlightedOptionChanged;
   final ValueChanged<String>? onOptionDoubleTap;
+  final VoidCallback? onDismiss;
 
   const CommandGridMenu({
     super.key,
@@ -20,7 +22,8 @@ class CommandGridMenu extends StatefulWidget {
     required this.onHighlightedOptionChanged,
     this.onOptionDoubleTap,
     this.currentOptionId,
-    this.applyHint = 'Release Command To Apply',
+    this.applyHint = 'Release Shift To Apply',
+    this.onDismiss,
   });
 
   @override
@@ -73,123 +76,138 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
       return const SizedBox.shrink();
     }
 
-    return Positioned.fill(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final size = constraints.biggest;
-          final menuWidth = size.width.clamp(560.0, 880.0);
-          final menuHeight = size.height.clamp(360.0, 620.0);
-          final left = (widget.center.dx - menuWidth / 2)
-              .clamp(12.0, size.width - menuWidth - 12.0);
-          final top = (widget.center.dy - menuHeight / 2)
-              .clamp(12.0, size.height - menuHeight - 12.0);
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          widget.onDismiss?.call();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Positioned.fill(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final size = constraints.biggest;
+            final menuWidth = size.width.clamp(560.0, 880.0);
+            final menuHeight = size.height.clamp(360.0, 620.0);
+            final left = (widget.center.dx - menuWidth / 2).clamp(
+              12.0,
+              size.width - menuWidth - 12.0,
+            );
+            final top = (widget.center.dy - menuHeight / 2).clamp(
+              12.0,
+              size.height - menuHeight - 12.0,
+            );
 
-          return Stack(
-            children: [
-              Positioned(
-                left: left,
-                top: top,
-                width: menuWidth,
-                height: menuHeight,
-                child: IgnorePointer(
-                  ignoring: false,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF121212).withOpacity(0.90),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.18),
-                        width: 1,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.45),
-                          blurRadius: 16,
-                          offset: const Offset(0, 7),
+            return Stack(
+              children: [
+                Positioned(
+                  left: left,
+                  top: top,
+                  width: menuWidth,
+                  height: menuHeight,
+                  child: IgnorePointer(
+                    ignoring: false,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF121212).withOpacity(0.90),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.18),
+                          width: 1,
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  widget.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.45),
+                            blurRadius: 16,
+                            offset: const Offset(0, 7),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              Text(
-                                widget.applyHint,
-                                style: const TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 10,
+                                Text(
+                                  widget.applyHint,
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 10,
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Divider(
-                          height: 1,
-                          color: Color(0x33FFFFFF),
-                        ),
-                        Expanded(
-                          child: GridView.builder(
-                            padding: const EdgeInsets.all(10),
-                            gridDelegate:
-                                const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: 200,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8,
-                              childAspectRatio: 1.30,
+                              ],
                             ),
-                            itemCount: widget.options.length,
-                            itemBuilder: (context, index) {
-                              final option = widget.options[index];
-                              final selected = option.id == _highlightedId;
-                              return _GridCell(
-                                option: option,
-                                selected: selected,
-                                onHover: () {
-                                  if (_highlightedId == option.id) {
-                                    return;
-                                  }
-                                  setState(() {
-                                    _highlightedId = option.id;
-                                  });
-                                  widget.onHighlightedOptionChanged(option.id);
-                                },
-                                onDoubleTap: () {
-                                  if (_highlightedId != option.id) {
+                          ),
+                          const Divider(height: 1, color: Color(0x33FFFFFF)),
+                          Expanded(
+                            child: GridView.builder(
+                              padding: const EdgeInsets.all(10),
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent: 200,
+                                    mainAxisSpacing: 8,
+                                    crossAxisSpacing: 8,
+                                    childAspectRatio: 1.30,
+                                  ),
+                              itemCount: widget.options.length,
+                              itemBuilder: (context, index) {
+                                final option = widget.options[index];
+                                final selected = option.id == _highlightedId;
+                                return _GridCell(
+                                  option: option,
+                                  selected: selected,
+                                  onHover: () {
+                                    if (_highlightedId == option.id) {
+                                      return;
+                                    }
                                     setState(() {
                                       _highlightedId = option.id;
                                     });
-                                    widget
-                                        .onHighlightedOptionChanged(option.id);
-                                  }
-                                  widget.onOptionDoubleTap?.call(option.id);
-                                },
-                              );
-                            },
+                                    widget.onHighlightedOptionChanged(
+                                      option.id,
+                                    );
+                                  },
+                                  onDoubleTap: () {
+                                    if (_highlightedId != option.id) {
+                                      setState(() {
+                                        _highlightedId = option.id;
+                                      });
+                                      widget.onHighlightedOptionChanged(
+                                        option.id,
+                                      );
+                                    }
+                                    widget.onOptionDoubleTap?.call(option.id);
+                                  },
+                                );
+                              },
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -243,14 +261,14 @@ class _GridCell extends StatelessWidget {
                     color: const Color(0xFF151515),
                     child:
                         option.imagePath != null && option.imagePath!.isNotEmpty
-                            ? SmartImage.asset(
-                                option.imagePath!,
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                height: double.infinity,
-                                errorWidget: const _GridFallbackIcon(),
-                              )
-                            : const _GridFallbackIcon(),
+                        ? SmartImage.asset(
+                            option.imagePath!,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            errorWidget: const _GridFallbackIcon(),
+                          )
+                        : const _GridFallbackIcon(),
                   ),
                 ),
               ),

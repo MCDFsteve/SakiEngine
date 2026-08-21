@@ -526,18 +526,26 @@ class GameUILayerState extends State<GameUILayer> {
                 if (speakerInfo == null) {
                   return const SizedBox.shrink();
                 }
+                final dialogueContext =
+                    widget.gameManager.currentDialogueContext;
                 return ExpressionSelectorDialog(
                   characterId: speakerInfo.characterId,
                   characterName: speakerInfo.speakerName,
                   currentPose: speakerInfo.currentPose,
                   currentExpression: speakerInfo.currentExpression,
-                  currentDialogue: widget.gameManager.currentDialogueText,
-                  onSelectionChanged: (pose, expression) {
+                  currentAnimation: speakerInfo.currentAnimation,
+                  previousDialogue: dialogueContext?.previousDialogue,
+                  currentDialogue:
+                      dialogueContext?.currentDialogue ??
+                      widget.gameManager.currentDialogueText,
+                  nextDialogue: dialogueContext?.nextDialogue,
+                  onSelectionChanged: (pose, expression, animation) {
                     widget.expressionSelectorManager
                         ?.handleExpressionSelectionChanged(
                           speakerInfo.characterId,
                           pose,
                           expression,
+                          animation,
                         );
                   },
                   onClose: widget.onToggleExpressionSelector,

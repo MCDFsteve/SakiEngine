@@ -13,35 +13,18 @@ uniform float overallAlpha;
 out vec4 fragColor;
 
 void main() {
+    // 采样品质由引擎侧 setImageSampler(filterQuality) 控制：
+    // - FilterQuality.none → 最近邻（像素风立绘保持锐利）
+    // - FilterQuality.high → 双线性（平滑过渡）
     vec2 uv = (FlutterFragCoord().xy - uOffset) / uSize;
+    // 按各图尺寸做半像素内缩，避免采样到边缘外（双线性模式下的边缘渗色）。
+    vec2 from_halfTexel = 0.5 / max(u_imageFrom_dimensions, vec2(1.0));
+    vec2 to_halfTexel = 0.5 / max(u_imageTo_dimensions, vec2(1.0));
+    vec2 from_uv = clamp(uv, from_halfTexel, vec2(1.0) - from_halfTexel);
+    vec2 to_uv = clamp(uv, to_halfTexel, vec2(1.0) - to_halfTexel);
 
-    // --- Bilinear filtering for imageFrom ---
-    vec2 from_texSize = u_imageFrom_dimensions;
-    vec2 from_texelSize = 1.0 / from_texSize;
-    vec2 from_f = fract(uv * from_texSize);
-
-    vec4 from_t00 = texture(imageFrom, uv);
-    vec4 from_t10 = texture(imageFrom, uv + vec2(from_texelSize.x, 0.0));
-    vec4 from_t01 = texture(imageFrom, uv + vec2(0.0, from_texelSize.y));
-    vec4 from_t11 = texture(imageFrom, uv + vec2(from_texelSize.x, from_texelSize.y));
-
-    vec4 from_interpX1 = mix(from_t00, from_t10, from_f.x);
-    vec4 from_interpX2 = mix(from_t01, from_t11, from_f.x);
-    vec4 from_color = mix(from_interpX1, from_interpX2, from_f.y);
-
-    // --- Bilinear filtering for imageTo ---
-    vec2 to_texSize = u_imageTo_dimensions;
-    vec2 to_texelSize = 1.0 / to_texSize;
-    vec2 to_f = fract(uv * to_texSize);
-
-    vec4 to_t00 = texture(imageTo, uv);
-    vec4 to_t10 = texture(imageTo, uv + vec2(to_texelSize.x, 0.0));
-    vec4 to_t01 = texture(imageTo, uv + vec2(0.0, to_texelSize.y));
-    vec4 to_t11 = texture(imageTo, uv + vec2(to_texelSize.x, to_texelSize.y));
-    
-    vec4 to_interpX1 = mix(to_t00, to_t10, to_f.x);
-    vec4 to_interpX2 = mix(to_t01, to_t11, to_f.x);
-    vec4 to_color = mix(to_interpX1, to_interpX2, to_f.y);
+    vec4 from_color = texture(imageFrom, from_uv);
+    vec4 to_color = texture(imageTo, to_uv);
 
     fragColor = mix(from_color, to_color, progress) * overallAlpha;
 }

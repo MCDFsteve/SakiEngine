@@ -58,6 +58,12 @@ class SceneTransitionEffectManager {
       return;
     }
 
+    final overlay = Overlay.of(context);
+    final transitionRect = transitionType == TransitionType.pixel ||
+            transitionType == TransitionType.diss
+        ? _resolveTransitionRect(context, overlay)
+        : null;
+
     _isTransitioning = true;
     //print('[SceneTransition] 开始${transitionType.name}转场，时长: ${duration.inMilliseconds}ms');
 
@@ -157,14 +163,51 @@ class SceneTransitionEffectManager {
 
     // 创建覆盖层
     _overlayEntry = OverlayEntry(
-      builder: (context) => transitionWidget,
+      builder: (context) {
+        if (transitionRect == null) {
+          return transitionWidget;
+        }
+        return Positioned.fromRect(
+          rect: transitionRect,
+          child: ClipRect(child: transitionWidget),
+        );
+      },
     );
 
     // 插入覆盖层
     //print('[SceneTransition] 插入${transitionType.name}转场覆盖层');
-    Overlay.of(context).insert(_overlayEntry!);
+    overlay.insert(_overlayEntry!);
 
     return completer.future;
+  }
+
+  Rect? _resolveTransitionRect(BuildContext context, OverlayState overlay) {
+    final source = context.findRenderObject();
+    final overlayRenderObject = overlay.context.findRenderObject();
+    if (source is! RenderBox ||
+        overlayRenderObject is! RenderBox ||
+        !source.hasSize ||
+        !overlayRenderObject.hasSize ||
+        source.size.isEmpty) {
+      return null;
+    }
+
+    try {
+      final rect = MatrixUtils.transformRect(
+        source.getTransformTo(overlayRenderObject),
+        Offset.zero & source.size,
+      );
+      if (!rect.left.isFinite ||
+          !rect.top.isFinite ||
+          !rect.width.isFinite ||
+          !rect.height.isFinite ||
+          rect.isEmpty) {
+        return null;
+      }
+      return rect;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<ui.Image?> _captureTransitionFrame(BuildContext context) async {
@@ -1015,6 +1058,7 @@ class _PixelTransitionOverlayState extends State<_PixelTransitionOverlay>
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
+      key: const ValueKey<String>('pixel_transition_overlay'),
       ignoring: true,
       child: Material(
         color: Colors.transparent,

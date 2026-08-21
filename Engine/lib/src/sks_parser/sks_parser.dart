@@ -975,7 +975,9 @@ class SksParser {
           );
           break;
         case 'hide':
-          nodes.add(HideNode(parts[1]));
+          final immediate =
+              parts.length > 2 && parts[2].toLowerCase() == 'immediate';
+          nodes.add(HideNode(parts[1], immediate: immediate));
           break;
         case 'nvl':
           nodes.add(NvlNode());
