@@ -7,6 +7,7 @@ import 'package:sakiengine/src/widgets/animated_webp_image.dart';
 import 'package:sakiengine/src/utils/cg_image_compositor.dart';
 import 'package:sakiengine/src/utils/cg_pre_warm_manager.dart';
 import 'package:sakiengine/src/rendering/image_sampling.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 import '../utils/smart_image_io.dart'
     if (dart.library.html) '../utils/smart_image_web.dart';
 
@@ -284,8 +285,8 @@ class SmartImage extends StatelessWidget {
     if (_isMemoryCachePath(path)) {
       return false;
     }
-    // 检查是否为绝对路径：Unix风格 (/) 或 Windows风格 (C:)
-    return path.startsWith('/') || (path.length > 2 && path[1] == ':');
+    // 同时识别 Windows 扩展路径（\\?\C:\...）与 UNC 路径。
+    return isFileSystemAssetPath(path);
   }
 
   /// 判断是否为内存缓存路径

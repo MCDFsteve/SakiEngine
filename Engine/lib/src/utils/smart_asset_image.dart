@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/widgets/smart_image.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 import 'smart_asset_image_io.dart' if (dart.library.html) 'smart_asset_image_web.dart';
 
 class SmartAssetImage extends StatelessWidget {
@@ -50,7 +51,7 @@ class SmartAssetImage extends StatelessWidget {
             }
             
             // 非Web平台：检查是否是绝对路径（Debug模式）
-            if (assetPath.startsWith('/') || assetPath.contains(':')) {
+            if (isFileSystemAssetPath(assetPath)) {
               // 绝对路径：使用平台特定的实现
               return buildSvgFile(
                 assetPath,

@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:path/path.dart' as p;
 import 'package:sakiengine/src/utils/webp_preload_cache.dart';
 import 'package:sakiengine/src/rendering/image_sampling.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 
 // 平台特定导入
 import 'animated_webp_image_io.dart'
@@ -86,9 +87,7 @@ class _AnimatedWebPImageState extends State<AnimatedWebPImage>
   /// 加载WebP字节数据，支持外部文件系统
   Future<Uint8List?> _loadWebPBytes() async {
     try {
-      final isAbsolutePath =
-          widget.assetPath.startsWith('/') ||
-          (widget.assetPath.length > 2 && widget.assetPath[1] == ':');
+      final isAbsolutePath = isFileSystemAssetPath(widget.assetPath);
       if (!kIsWeb && isAbsolutePath) {
         final file = createFile(widget.assetPath);
         if (await file?.exists() == true) {

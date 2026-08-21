@@ -40,6 +40,7 @@ import 'package:sakiengine/src/game/nvl_state_manager.dart';
 import 'package:sakiengine/src/game/chapter_autosave_manager.dart';
 import 'package:sakiengine/src/game/script_sound_state_resolver.dart';
 import 'package:sakiengine/src/native/native_memory_pressure.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 
 part 'game_manager_lifecycle.dart';
 

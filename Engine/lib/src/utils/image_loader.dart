@@ -9,6 +9,7 @@ import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/config/saki_pack_store.dart';
 import 'package:sakiengine/src/utils/cg_image_compositor.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 
 /// 图像加载器 - 支持多种图像格式包括AVIF和WebP
 ///
@@ -157,8 +158,7 @@ class ImageLoader {
   static Future<ui.Image?> _loadAvifImage(String assetPath) async {
     try {
       Uint8List bytes;
-      final isAbsolutePath =
-          assetPath.startsWith('/') || (assetPath.length > 2 && assetPath[1] == ':');
+      final isAbsolutePath = isFileSystemAssetPath(assetPath);
       if (!kIsWeb && isAbsolutePath) {
         final file = File(assetPath);
         if (await file.exists()) {
@@ -283,8 +283,7 @@ class ImageLoader {
   /// 加载标准图像格式
   static Future<ui.Image?> _loadStandardImage(String assetPath) async {
     try {
-      final isAbsolutePath =
-          assetPath.startsWith('/') || (assetPath.length > 2 && assetPath[1] == ':');
+      final isAbsolutePath = isFileSystemAssetPath(assetPath);
       if (!kIsWeb && isAbsolutePath) {
         final file = File(assetPath);
         if (await file.exists()) {
@@ -297,9 +296,7 @@ class ImageLoader {
       if (!kIsWeb) {
         final materialized =
             await SakiPackStore.instance.resolvePathForPlayback(assetPath);
-        if (materialized != null &&
-            (materialized.startsWith('/') ||
-                (materialized.length > 2 && materialized[1] == ':'))) {
+        if (materialized != null && isFileSystemAssetPath(materialized)) {
           final bytes = await File(materialized).readAsBytes();
           final codec = await ui.instantiateImageCodec(bytes);
           final frame = await codec.getNextFrame();

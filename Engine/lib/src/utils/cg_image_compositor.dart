@@ -10,6 +10,7 @@ import 'package:sakiengine/src/utils/character_layer_parser.dart';
 import 'package:sakiengine/src/utils/image_loader.dart';
 import 'package:sakiengine/src/rendering/image_sampling.dart';
 import 'package:sakiengine/src/native/native_image_metadata.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 
 /// CG图像合成器 - 负责将多层图像合成为单张图像并将结果保存到磁盘缓存
 class CgImageCompositor {
@@ -165,8 +166,7 @@ class CgImageCompositor {
 
       final physicalPaths = layerPaths
           .where(
-            (path) =>
-                path.startsWith('/') || (path.length > 2 && path[1] == ':'),
+            isFileSystemAssetPath,
           )
           .toList(growable: false);
       final metadata = await inspectImagesNatively(physicalPaths);

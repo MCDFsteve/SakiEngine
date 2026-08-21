@@ -31,6 +31,7 @@ import 'package:sakiengine/src/widgets/confirm_dialog.dart';
 import 'package:sakiengine/src/widgets/common/notification_overlay.dart';
 import 'package:sakiengine/src/widgets/nvl_screen.dart';
 import 'package:sakiengine/src/utils/scaling_manager.dart';
+import 'package:sakiengine/src/utils/asset_path_utils.dart';
 import 'package:sakiengine/src/widgets/common/black_screen_transition.dart';
 import 'package:sakiengine/src/widgets/common/bottom_up_reveal.dart';
 import 'package:sakiengine/src/widgets/settings_screen.dart';
@@ -1584,7 +1585,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
             height: double.infinity,
             errorWidget: const ColoredBox(color: Colors.black),
           );
-        } else if (background.startsWith('/')) {
+        } else if (isFileSystemAssetPath(background)) {
           //print('[_buildBackground] 🐛 检测到绝对文件路径，直接使用Image.file加载: $background');
           // 直接使用Image.file，不预缓存，避免FutureBuilder导致的黑屏
           backgroundWidget = Image.file(

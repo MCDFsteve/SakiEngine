@@ -334,8 +334,7 @@ extension _GameManagerLifecycle on GameManager {
       return true;
     }
 
-    if (normalized.startsWith('/') ||
-        (normalized.length > 2 && normalized[1] == ':')) {
+    if (isFileSystemAssetPath(normalized)) {
       return File(normalized).exists();
     }
 
