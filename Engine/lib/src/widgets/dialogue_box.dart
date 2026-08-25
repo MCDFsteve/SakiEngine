@@ -57,6 +57,17 @@ class _DialogueBoxState extends State<DialogueBox>
     }
   }
 
+  void _onReadTextTrackerChanged() {
+    final isRead = ReadTextTracker.instance.isRead(
+      widget.speaker,
+      widget.dialogue,
+      widget.scriptIndex,
+    );
+    if (mounted && isRead != _isRead) {
+      setState(() => _isRead = isRead);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +78,7 @@ class _DialogueBoxState extends State<DialogueBox>
       widget.dialogue,
       widget.scriptIndex,
     );
+    ReadTextTracker.instance.addListener(_onReadTextTrackerChanged);
 
     // 初始化打字机动画管理器
     _typewriterController = TypewriterAnimationManager();
@@ -116,6 +128,7 @@ class _DialogueBoxState extends State<DialogueBox>
   void dispose() {
     widget.progressionManager?.registerTypewriter(null);
     SettingsManager().removeListener(_onSettingsChanged);
+    ReadTextTracker.instance.removeListener(_onReadTextTrackerChanged);
     _typewriterController.removeListener(_onTypewriterStateChanged);
     _typewriterController.dispose();
     _textFadeController.dispose();

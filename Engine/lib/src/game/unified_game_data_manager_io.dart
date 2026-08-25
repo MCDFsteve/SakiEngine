@@ -12,7 +12,7 @@ class UnifiedGameDataManager {
   factory UnifiedGameDataManager() => _instance;
   UnifiedGameDataManager._internal();
 
-  static const int _version = 3;
+  static const int _version = 4;
   static const String _fileName = 'game_data.sakidata';
   static const String _defaultMouseRollbackBehavior = 'rewind';
   static const bool _defaultMouseParallaxEnabled = true;
@@ -36,6 +36,7 @@ class UnifiedGameDataManager {
   bool _isSoundEnabled = true;
   double _musicVolume = 0.8;
   double _soundVolume = 0.8;
+  double _voiceVolume = 0.8;
 
   // 持久化变量
   final Map<String, bool> _boolVariables = {};
@@ -119,6 +120,7 @@ class UnifiedGameDataManager {
     buffer.add(_writeBool(_isSoundEnabled));
     buffer.add(_writeDouble(_musicVolume));
     buffer.add(_writeDouble(_soundVolume));
+    buffer.add(_writeDouble(_voiceVolume));
 
     // 写入持久化变量
     buffer.add(_writeInt32(_boolVariables.length));
@@ -188,6 +190,9 @@ class UnifiedGameDataManager {
     _isSoundEnabled = reader.readBool();
     _musicVolume = reader.readDouble();
     _soundVolume = reader.readDouble();
+    // v3 及更早版本中，语音与音效共用 soundVolume。迁移时继承该值，
+    // 避免升级后玩家的语音听感突然发生变化。
+    _voiceVolume = version >= 4 ? reader.readDouble() : _soundVolume;
 
     // 读取持久化变量
     final boolCount = reader.readInt32();
@@ -318,6 +323,12 @@ class UnifiedGameDataManager {
   double get soundVolume => _soundVolume;
   Future<void> setSoundVolume(double value, String projectName) async {
     _soundVolume = value;
+    await save(projectName);
+  }
+
+  double get voiceVolume => _voiceVolume;
+  Future<void> setVoiceVolume(double value, String projectName) async {
+    _voiceVolume = value;
     await save(projectName);
   }
 

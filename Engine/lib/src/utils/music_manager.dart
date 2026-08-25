@@ -57,6 +57,38 @@ class _MusicPlayRequest {
   });
 }
 
+/// Project-provided metadata for a character with independently adjustable
+/// dialogue voice volume.
+///
+/// [voiceFilePrefixes] are matched against the voice asset's file name (for
+/// example, `xiayo_` matches `Assets/voice/cp1/xiayo_001.m4a`). Keeping the
+/// matching rule here lets projects declare their cast without teaching the
+/// engine about project-specific character names or directories.
+class VoiceCharacterProfile {
+  final String id;
+  final String displayName;
+  final String avatarAsset;
+  final String previewVoiceAsset;
+  final List<String> voiceFilePrefixes;
+
+  const VoiceCharacterProfile({
+    required this.id,
+    required this.displayName,
+    required this.avatarAsset,
+    required this.previewVoiceAsset,
+    required this.voiceFilePrefixes,
+  });
+
+  bool matchesVoiceAsset(String assetPath) {
+    final fileName = p.basename(assetPath.trim()).toLowerCase();
+    return voiceFilePrefixes.any((prefix) {
+      final normalizedPrefix = p.basename(prefix.trim()).toLowerCase();
+      return normalizedPrefix.isNotEmpty &&
+          fileName.startsWith(normalizedPrefix);
+    });
+  }
+}
+
 class MusicManager extends ChangeNotifier {
   static final MusicManager _instance = MusicManager._internal();
   factory MusicManager() => _instance;
@@ -119,6 +151,9 @@ class MusicManager extends ChangeNotifier {
   String? _currentSound;
   double? _previewMusicVolume;
   double? _previewSoundVolume;
+  double? _previewVoiceVolume;
+  List<VoiceCharacterProfile> _voiceCharacterProfiles = const [];
+  String? _currentVoiceCharacterId;
   _MusicPlayRequest? _queuedMusicRequest;
   Future<void>? _musicTransitionDrain;
   bool _isMusicTransitioning = false;
@@ -133,8 +168,94 @@ class MusicManager extends ChangeNotifier {
   bool get isSoundEnabled => _dataManager.isSoundEnabled;
   double get musicVolume => _previewMusicVolume ?? _dataManager.musicVolume;
   double get soundVolume => _previewSoundVolume ?? _dataManager.soundVolume;
+  double get voiceVolume => _previewVoiceVolume ?? _dataManager.voiceVolume;
+  List<VoiceCharacterProfile> get voiceCharacterProfiles =>
+      _voiceCharacterProfiles;
   String? get currentBackgroundMusic => _currentBackgroundMusic;
   String? get currentSound => _currentSound;
+
+  static const String _voiceCharacterVolumeKeyPrefix =
+      'sakiengine.voiceCharacterVolume.';
+
+  /// Registers the independently adjustable voice cast for the active project.
+  void configureVoiceCharacters(List<VoiceCharacterProfile> profiles) {
+    final ids = <String>{};
+    for (final profile in profiles) {
+      final id = profile.id.trim();
+      if (id.isEmpty) {
+        throw ArgumentError.value(
+          profile.id,
+          'profile.id',
+          'Must not be empty',
+        );
+      }
+      if (!ids.add(id)) {
+        throw ArgumentError.value(profile.id, 'profile.id', 'Must be unique');
+      }
+      if (profile.voiceFilePrefixes.isEmpty) {
+        throw ArgumentError.value(
+          profile.voiceFilePrefixes,
+          'profile.voiceFilePrefixes',
+          'Must contain at least one prefix',
+        );
+      }
+    }
+
+    _voiceCharacterProfiles = List.unmodifiable(profiles);
+    notifyListeners();
+  }
+
+  String _voiceCharacterVolumeKey(String characterId) =>
+      '$_voiceCharacterVolumeKeyPrefix${Uri.encodeComponent(characterId)}';
+
+  VoiceCharacterProfile? voiceCharacterProfileForAsset(String assetPath) {
+    for (final profile in _voiceCharacterProfiles) {
+      if (profile.matchesVoiceAsset(assetPath)) {
+        return profile;
+      }
+    }
+    return null;
+  }
+
+  double voiceCharacterVolume(String characterId) {
+    return _dataManager
+        .getDoubleVariable(
+          _voiceCharacterVolumeKey(characterId),
+          defaultValue: 1.0,
+        )
+        .clamp(0.0, 1.0)
+        .toDouble();
+  }
+
+  Future<void> setVoiceCharacterVolume(
+    String characterId,
+    double volume,
+  ) async {
+    await initialize();
+    final normalizedVolume = volume.clamp(0.0, 1.0).toDouble();
+    await _dataManager.setDoubleVariable(
+      _voiceCharacterVolumeKey(characterId),
+      normalizedVolume,
+      _projectName!,
+    );
+    if (_currentVoiceCharacterId == characterId) {
+      await _updateVoiceVolume();
+    }
+    notifyListeners();
+  }
+
+  Future<void> resetVoiceCharacterVolumes() async {
+    await initialize();
+    for (final profile in _voiceCharacterProfiles) {
+      await _dataManager.setDoubleVariable(
+        _voiceCharacterVolumeKey(profile.id),
+        1.0,
+        _projectName!,
+      );
+    }
+    await _updateVoiceVolume();
+    notifyListeners();
+  }
 
   void _musicSourceLog(String message) {
     if (_musicSourceDiagnostics && kEngineDebugMode) {
@@ -301,6 +422,13 @@ class MusicManager extends ChangeNotifier {
     _previewSoundVolume = null;
     await _dataManager.setSoundVolume(normalizedVolume, _projectName!);
     await _updateTrackVolume(AudioTrackType.sound);
+    notifyListeners();
+  }
+
+  Future<void> setVoiceVolume(double volume) async {
+    final normalizedVolume = volume.clamp(0.0, 1.0).toDouble();
+    _previewVoiceVolume = null;
+    await _dataManager.setVoiceVolume(normalizedVolume, _projectName!);
     await _updateVoiceVolume();
     notifyListeners();
   }
@@ -314,12 +442,22 @@ class MusicManager extends ChangeNotifier {
   Future<void> previewSoundVolume(double volume) async {
     _previewSoundVolume = volume.clamp(0.0, 1.0).toDouble();
     await _updateTrackVolume(AudioTrackType.sound);
+    notifyListeners();
+  }
+
+  Future<void> previewVoiceVolume(double volume) async {
+    _previewVoiceVolume = volume.clamp(0.0, 1.0).toDouble();
     await _updateVoiceVolume();
     notifyListeners();
   }
 
   Future<void> _updateVoiceVolume() async {
-    final volume = _dataManager.isSoundEnabled ? soundVolume : 0.0;
+    final characterVolume = _currentVoiceCharacterId == null
+        ? 1.0
+        : voiceCharacterVolume(_currentVoiceCharacterId!);
+    final volume = _dataManager.isSoundEnabled
+        ? (voiceVolume * characterVolume).clamp(0.0, 1.0).toDouble()
+        : 0.0;
     await _voicePlayer.setVolume(volume);
   }
 
@@ -776,6 +914,7 @@ class MusicManager extends ChangeNotifier {
       return;
     }
 
+    _currentVoiceCharacterId = voiceCharacterProfileForAsset(assetPath)?.id;
     final sessionGeneration = _audioSessionGeneration;
     await _voicePlayer.stop();
     await _voicePlayer.setLoopMode(LoopMode.off);
@@ -859,7 +998,7 @@ class MusicManager extends ChangeNotifier {
       final resolved = _normalizeBundleAssetPath(trimmed);
       final packPlaybackPath =
           await SakiPackStore.instance.resolvePathForPlayback(resolved) ??
-              await SakiPackStore.instance.resolvePathForPlayback(trimmed);
+          await SakiPackStore.instance.resolvePathForPlayback(trimmed);
       if (packPlaybackPath != null) {
         if (traceMusic) {
           _musicSourceLog('try setFilePath(sakipack): "$packPlaybackPath"');

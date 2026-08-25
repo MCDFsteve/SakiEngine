@@ -4,8 +4,8 @@ import 'package:sakiengine/src/utils/foundation_compat.dart';
 
 /// 鼠标滚轮处理器
 /// 负责处理游戏中的鼠标滚轮事件:
-/// - 向前滚动(向上): 推进对话
-/// - 向后滚动(向下): 回退剧情
+/// - 向下滚动: 推进对话
+/// - 向上滚动: 回退剧情或打开观看记录
 class MouseWheelHandler {
   /// 向前滚动回调 (推进对话)
   final VoidCallback? onScrollForward;
@@ -37,15 +37,15 @@ class MouseWheelHandler {
     // 处理标准的PointerScrollEvent（鼠标滚轮）
     if (pointerSignal is PointerScrollEvent) {
       _log('PointerScrollEvent dy=${pointerSignal.scrollDelta.dy}');
-      // 向上滚动 (dy < 0): 前进剧情
+      // 向上滚动 (dy < 0): 回退剧情或打开观看记录
       if (pointerSignal.scrollDelta.dy < 0) {
-        _log('branch=forward');
-        onScrollForward?.call();
-      }
-      // 向下滚动 (dy > 0): 回滚剧情
-      else if (pointerSignal.scrollDelta.dy > 0) {
         _log('branch=backward');
         onScrollBackward?.call();
+      }
+      // 向下滚动 (dy > 0): 推进剧情
+      else if (pointerSignal.scrollDelta.dy > 0) {
+        _log('branch=forward');
+        onScrollForward?.call();
       }
     }
     // 处理macOS触控板事件
@@ -71,11 +71,11 @@ class MouseWheelHandler {
     }
     _log('PointerPanZoomUpdateEvent panDelta.dy=$dy');
     if (dy < 0) {
-      _log('panZoom branch=forward');
-      onScrollForward?.call();
-    } else {
       _log('panZoom branch=backward');
       onScrollBackward?.call();
+    } else {
+      _log('panZoom branch=forward');
+      onScrollForward?.call();
     }
   }
 }

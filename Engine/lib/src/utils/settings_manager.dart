@@ -24,6 +24,7 @@ class SettingsManager extends ChangeNotifier with WindowListener {
   static const bool defaultSoundEnabled = true;
   static const double defaultMusicVolume = 0.8;
   static const double defaultSoundVolume = 0.8;
+  static const double defaultVoiceVolume = 0.8;
 
   // 打字机默认值 - 每秒显示字数
   static const double defaultTypewriterCharsPerSecond = 50.0;
@@ -684,6 +685,7 @@ class SettingsManager extends ChangeNotifier with WindowListener {
     await _dataManager.setSoundEnabled(defaultSoundEnabled, _projectName!);
     await _dataManager.setMusicVolume(defaultMusicVolume, _projectName!);
     await _dataManager.setSoundVolume(defaultSoundVolume, _projectName!);
+    await _dataManager.setVoiceVolume(defaultVoiceVolume, _projectName!);
 
     // 应用默认全屏设置（非Web平台）
     if (!kIsWeb) {

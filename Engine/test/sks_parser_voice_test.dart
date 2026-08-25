@@ -49,4 +49,21 @@ stop voice
       'Assets/voice/cp1/xiayo_001.m4a',
     );
   });
+
+  test('character voice profiles match file prefixes across chapters', () {
+    const profile = VoiceCharacterProfile(
+      id: 'xiayo',
+      displayName: '夏悠',
+      avatarAsset: 'Assets/images/xiayo.webp',
+      previewVoiceAsset: 'Assets/voice/cp0/xiayo_001.m4a',
+      voiceFilePrefixes: ['xiayo_'],
+    );
+
+    expect(profile.matchesVoiceAsset('Assets/voice/cp0/xiayo_001.m4a'), isTrue);
+    expect(profile.matchesVoiceAsset('cp2/XIAYO_481.M4A'), isTrue);
+    expect(
+      profile.matchesVoiceAsset('Assets/voice/cp1/gonna_001.m4a'),
+      isFalse,
+    );
+  });
 }

@@ -5,6 +5,7 @@ import 'package:sakiengine/src/config/saki_engine_config.dart';
 class GameStyleSlider extends StatefulWidget {
   final double value;
   final ValueChanged<double> onChanged;
+  final ValueChanged<double>? onChangeEnd;
   final double min;
   final double max;
   final int? divisions;
@@ -19,6 +20,7 @@ class GameStyleSlider extends StatefulWidget {
     required this.onChanged,
     required this.scale,
     required this.config,
+    this.onChangeEnd,
     this.min = 0.0,
     this.max = 1.0,
     this.divisions,
@@ -30,7 +32,8 @@ class GameStyleSlider extends StatefulWidget {
   State<GameStyleSlider> createState() => _GameStyleSliderState();
 }
 
-class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderStateMixin {
+class _GameStyleSliderState extends State<GameStyleSlider>
+    with TickerProviderStateMixin {
   late AnimationController _animationController;
   late AnimationController _pulseController;
   late AnimationController _dragController;
@@ -40,14 +43,15 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
   late Animation<double> _scaleAnimation;
   late Animation<Color?> _trackColorAnimation;
   late Animation<double> _hoverPulseAnimation;
-  
+
   bool _isDragging = false;
   bool _isHovered = false;
+  double? _dragValue;
 
   @override
   void initState() {
     super.initState();
-    
+
     // 主动画控制器
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -73,49 +77,36 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
     );
 
     // 发光动画
-    _glowAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOut,
-    ));
+    _glowAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
 
     // 脉冲动画
-    _pulseAnimation = Tween<double>(
-      begin: 0.8,
-      end: 1.3,
-    ).animate(CurvedAnimation(
-      parent: _pulseController,
-      curve: Curves.easeInOut,
-    ));
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.3).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
 
     // 拖拽时的缩放动画
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.2,
-    ).animate(CurvedAnimation(
-      parent: _dragController,
-      curve: Curves.elasticOut,
-    ));
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
+      CurvedAnimation(parent: _dragController, curve: Curves.elasticOut),
+    );
 
     // 轨道颜色动画
-    _trackColorAnimation = ColorTween(
-      begin: widget.config.themeColors.onSurfaceVariant.withOpacity(0.3),
-      end: widget.config.themeColors.primary.withOpacity(0.6),
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeInOut,
-    ));
+    _trackColorAnimation =
+        ColorTween(
+          begin: widget.config.themeColors.onSurfaceVariant.withOpacity(0.3),
+          end: widget.config.themeColors.primary.withOpacity(0.6),
+        ).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: Curves.easeInOut,
+          ),
+        );
 
     // 悬浮脉冲动画
-    _hoverPulseAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.15,
-    ).animate(CurvedAnimation(
-      parent: _hoverPulseController,
-      curve: Curves.easeInOut,
-    ));
+    _hoverPulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _hoverPulseController, curve: Curves.easeInOut),
+    );
 
     // 启动脉冲动画
     _pulseController.repeat(reverse: true);
@@ -124,15 +115,18 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
   @override
   void didUpdateWidget(GameStyleSlider oldWidget) {
     super.didUpdateWidget(oldWidget);
-    
+
     // 重新初始化颜色动画以响应主题变化
-    _trackColorAnimation = ColorTween(
-      begin: widget.config.themeColors.onSurfaceVariant.withOpacity(0.3),
-      end: widget.config.themeColors.primary.withOpacity(0.6),
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeInOut,
-    ));
+    _trackColorAnimation =
+        ColorTween(
+          begin: widget.config.themeColors.onSurfaceVariant.withOpacity(0.3),
+          end: widget.config.themeColors.primary.withOpacity(0.6),
+        ).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: Curves.easeInOut,
+          ),
+        );
   }
 
   @override
@@ -156,6 +150,18 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
     _dragController.reverse();
   }
 
+  void _handleTapValue(double value) {
+    widget.onChanged(value);
+    widget.onChangeEnd?.call(value);
+  }
+
+  void _handlePanEnd() {
+    final value = _dragValue ?? widget.value;
+    _dragValue = null;
+    _handleDragEnd();
+    widget.onChangeEnd?.call(value);
+  }
+
   double get _normalizedValue {
     return (widget.value - widget.min) / (widget.max - widget.min);
   }
@@ -165,7 +171,7 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
     final sliderHeight = 56 * widget.scale;
     final trackHeight = 16 * widget.scale;
     final thumbSize = 32 * widget.scale;
-    
+
     return MouseRegion(
       onEnter: (_) {
         setState(() => _isHovered = true);
@@ -186,7 +192,7 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
         child: LayoutBuilder(
           builder: (context, constraints) {
             final availableWidth = constraints.maxWidth;
-            
+
             return AnimatedBuilder(
               animation: Listenable.merge([
                 _animationController,
@@ -202,20 +208,29 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                     // 背景轨道（可点击）
                     GestureDetector(
                       onTapDown: (details) {
-                        final RenderBox box = context.findRenderObject() as RenderBox;
-                        final localPosition = box.globalToLocal(details.globalPosition);
-                        final adjustedPosition = localPosition.dx - thumbSize / 2;
-                        final progress = (adjustedPosition / availableWidth).clamp(0.0, 1.0);
-                        final newValue = widget.min + (widget.max - widget.min) * progress;
-                        
+                        final RenderBox box =
+                            context.findRenderObject() as RenderBox;
+                        final localPosition = box.globalToLocal(
+                          details.globalPosition,
+                        );
+                        final adjustedPosition =
+                            localPosition.dx - thumbSize / 2;
+                        final progress = (adjustedPosition / availableWidth)
+                            .clamp(0.0, 1.0);
+                        final newValue =
+                            widget.min + (widget.max - widget.min) * progress;
+
                         if (widget.divisions != null) {
-                          final step = (widget.max - widget.min) / widget.divisions!;
+                          final step =
+                              (widget.max - widget.min) / widget.divisions!;
                           final roundedValue = (newValue / step).round() * step;
-                          widget.onChanged(roundedValue.clamp(widget.min, widget.max));
+                          _handleTapValue(
+                            roundedValue.clamp(widget.min, widget.max),
+                          );
                         } else {
-                          widget.onChanged(newValue);
+                          _handleTapValue(newValue);
                         }
-                        
+
                         // 添加点击反馈动画
                         _handleDragStart();
                         Future.delayed(const Duration(milliseconds: 150), () {
@@ -226,11 +241,17 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                         width: availableWidth,
                         height: trackHeight,
                         decoration: BoxDecoration(
-                          color: widget.config.themeColors.surface.withOpacity(0.5),
+                          color: widget.config.themeColors.surface.withOpacity(
+                            0.5,
+                          ),
                           border: Border.all(
                             color: _isHovered || _isDragging
-                              ? widget.config.themeColors.primary.withOpacity(0.6)
-                              : widget.config.themeColors.primary.withOpacity(0.3),
+                                ? widget.config.themeColors.primary.withOpacity(
+                                    0.6,
+                                  )
+                                : widget.config.themeColors.primary.withOpacity(
+                                    0.3,
+                                  ),
                             width: 2 * widget.scale,
                           ),
                           boxShadow: [
@@ -258,26 +279,36 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                         ),
                       ),
                     ),
-                    
+
                     // 进度轨道（也可点击）
                     Positioned(
                       left: 0,
                       child: GestureDetector(
                         onTapDown: (details) {
-                          final RenderBox box = context.findRenderObject() as RenderBox;
-                          final localPosition = box.globalToLocal(details.globalPosition);
-                          final adjustedPosition = localPosition.dx - thumbSize / 2;
-                          final progress = (adjustedPosition / availableWidth).clamp(0.0, 1.0);
-                          final newValue = widget.min + (widget.max - widget.min) * progress;
-                          
+                          final RenderBox box =
+                              context.findRenderObject() as RenderBox;
+                          final localPosition = box.globalToLocal(
+                            details.globalPosition,
+                          );
+                          final adjustedPosition =
+                              localPosition.dx - thumbSize / 2;
+                          final progress = (adjustedPosition / availableWidth)
+                              .clamp(0.0, 1.0);
+                          final newValue =
+                              widget.min + (widget.max - widget.min) * progress;
+
                           if (widget.divisions != null) {
-                            final step = (widget.max - widget.min) / widget.divisions!;
-                            final roundedValue = (newValue / step).round() * step;
-                            widget.onChanged(roundedValue.clamp(widget.min, widget.max));
+                            final step =
+                                (widget.max - widget.min) / widget.divisions!;
+                            final roundedValue =
+                                (newValue / step).round() * step;
+                            _handleTapValue(
+                              roundedValue.clamp(widget.min, widget.max),
+                            );
                           } else {
-                            widget.onChanged(newValue);
+                            _handleTapValue(newValue);
                           }
-                          
+
                           // 添加点击反馈动画
                           _handleDragStart();
                           Future.delayed(const Duration(milliseconds: 150), () {
@@ -297,10 +328,14 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: widget.config.themeColors.primary.withOpacity(
-                                  0.3 * _glowAnimation.value * _pulseAnimation.value,
-                                ),
-                                blurRadius: 8 * widget.scale * _pulseAnimation.value,
+                                color: widget.config.themeColors.primary
+                                    .withOpacity(
+                                      0.3 *
+                                          _glowAnimation.value *
+                                          _pulseAnimation.value,
+                                    ),
+                                blurRadius:
+                                    8 * widget.scale * _pulseAnimation.value,
                                 offset: Offset(0, 0),
                               ),
                             ],
@@ -322,30 +357,52 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                         ),
                       ),
                     ),
-                    
+
                     // 拖拽滑块
                     Positioned(
                       left: (availableWidth - thumbSize) * _normalizedValue,
                       child: GestureDetector(
-                        onPanStart: (_) => _handleDragStart(),
-                        onPanEnd: (_) => _handleDragEnd(),
+                        onPanStart: (_) {
+                          _dragValue = widget.value;
+                          _handleDragStart();
+                        },
+                        onPanEnd: (_) => _handlePanEnd(),
+                        onPanCancel: _handlePanEnd,
                         onPanUpdate: (details) {
-                          final RenderBox box = context.findRenderObject() as RenderBox;
-                          final localPosition = box.globalToLocal(details.globalPosition);
-                          final adjustedPosition = localPosition.dx - thumbSize / 2;
-                          final progress = (adjustedPosition / availableWidth).clamp(0.0, 1.0);
-                          final newValue = widget.min + (widget.max - widget.min) * progress;
-                          
+                          final RenderBox box =
+                              context.findRenderObject() as RenderBox;
+                          final localPosition = box.globalToLocal(
+                            details.globalPosition,
+                          );
+                          final adjustedPosition =
+                              localPosition.dx - thumbSize / 2;
+                          final progress = (adjustedPosition / availableWidth)
+                              .clamp(0.0, 1.0);
+                          final newValue =
+                              widget.min + (widget.max - widget.min) * progress;
+
                           if (widget.divisions != null) {
-                            final step = (widget.max - widget.min) / widget.divisions!;
-                            final roundedValue = (newValue / step).round() * step;
-                            widget.onChanged(roundedValue.clamp(widget.min, widget.max));
+                            final step =
+                                (widget.max - widget.min) / widget.divisions!;
+                            final roundedValue =
+                                (newValue / step).round() * step;
+                            _dragValue = roundedValue.clamp(
+                              widget.min,
+                              widget.max,
+                            );
                           } else {
-                            widget.onChanged(newValue);
+                            _dragValue = newValue;
                           }
+                          widget.onChanged(_dragValue!);
                         },
                         child: Transform.scale(
-                          scale: (1.0 + 0.1 * _scaleAnimation.value + (_isHovered && !_isDragging ? 0.05 : 0.0)) * (_isHovered && !_isDragging ? _hoverPulseAnimation.value : 1.0),
+                          scale:
+                              (1.0 +
+                                  0.1 * _scaleAnimation.value +
+                                  (_isHovered && !_isDragging ? 0.05 : 0.0)) *
+                              (_isHovered && !_isDragging
+                                  ? _hoverPulseAnimation.value
+                                  : 1.0),
                           child: Container(
                             width: thumbSize,
                             height: thumbSize,
@@ -353,7 +410,8 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                               shape: BoxShape.circle,
                               color: widget.config.themeColors.background,
                               border: Border.all(
-                                color: widget.config.themeColors.primary.withOpacity(0.9),
+                                color: widget.config.themeColors.primary
+                                    .withOpacity(0.9),
                                 width: 3 * widget.scale,
                               ),
                               boxShadow: [
@@ -365,23 +423,34 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                                 ),
                                 // 脉冲发光
                                 BoxShadow(
-                                  color: widget.config.themeColors.primary.withOpacity(
-                                    0.4 * _glowAnimation.value * _pulseAnimation.value,
-                                  ),
-                                  blurRadius: 12 * widget.scale * _pulseAnimation.value,
+                                  color: widget.config.themeColors.primary
+                                      .withOpacity(
+                                        0.4 *
+                                            _glowAnimation.value *
+                                            _pulseAnimation.value,
+                                      ),
+                                  blurRadius:
+                                      12 * widget.scale * _pulseAnimation.value,
                                   offset: Offset(0, 0),
                                 ),
                                 // 悬浮时额外发光
                                 if (_isHovered && !_isDragging)
                                   BoxShadow(
-                                    color: widget.config.themeColors.primary.withOpacity(0.3 * _hoverPulseAnimation.value),
-                                    blurRadius: 8 * widget.scale * _hoverPulseAnimation.value,
+                                    color: widget.config.themeColors.primary
+                                        .withOpacity(
+                                          0.3 * _hoverPulseAnimation.value,
+                                        ),
+                                    blurRadius:
+                                        8 *
+                                        widget.scale *
+                                        _hoverPulseAnimation.value,
                                     offset: Offset(0, 0),
                                   ),
                                 // 拖拽时额外发光
                                 if (_isDragging)
                                   BoxShadow(
-                                    color: widget.config.themeColors.primary.withOpacity(0.6),
+                                    color: widget.config.themeColors.primary
+                                        .withOpacity(0.6),
                                     blurRadius: 16 * widget.scale,
                                     offset: Offset(0, 0),
                                   ),
@@ -392,7 +461,14 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                                 animation: _pulseController,
                                 builder: (context, child) {
                                   return Transform.scale(
-                                    scale: _isDragging ? 1.0 : (_isHovered ? _hoverPulseAnimation.value * 0.1 + 0.9 : _pulseAnimation.value * 0.3 + 0.7),
+                                    scale: _isDragging
+                                        ? 1.0
+                                        : (_isHovered
+                                              ? _hoverPulseAnimation.value *
+                                                        0.1 +
+                                                    0.9
+                                              : _pulseAnimation.value * 0.3 +
+                                                    0.7),
                                     child: Container(
                                       width: thumbSize * 0.5,
                                       height: thumbSize * 0.5,
@@ -400,15 +476,22 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                                         shape: BoxShape.circle,
                                         gradient: RadialGradient(
                                           colors: [
-                                            widget.config.themeColors.primary.withOpacity(0.9),
-                                            widget.config.themeColors.primary.withOpacity(0.6),
-                                            widget.config.themeColors.primary.withOpacity(0.3),
+                                            widget.config.themeColors.primary
+                                                .withOpacity(0.9),
+                                            widget.config.themeColors.primary
+                                                .withOpacity(0.6),
+                                            widget.config.themeColors.primary
+                                                .withOpacity(0.3),
                                           ],
                                           stops: const [0.0, 0.7, 1.0],
                                         ),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: widget.config.themeColors.primary.withOpacity(0.8),
+                                            color: widget
+                                                .config
+                                                .themeColors
+                                                .primary
+                                                .withOpacity(0.8),
                                             blurRadius: 4 * widget.scale,
                                             offset: Offset(0, 0),
                                           ),
@@ -423,12 +506,15 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                         ),
                       ),
                     ),
-                    
+
                     // 值显示（如果启用）
                     if (widget.showValue)
                       Positioned(
                         top: -32 * widget.scale, // 调整位置避免被裁剪
-                        left: (availableWidth - 60 * widget.scale) * _normalizedValue + 30 * widget.scale,
+                        left:
+                            (availableWidth - 60 * widget.scale) *
+                                _normalizedValue +
+                            30 * widget.scale,
                         child: AnimatedOpacity(
                           opacity: _isDragging || _isHovered ? 1.0 : 0.0,
                           duration: const Duration(milliseconds: 200),
@@ -439,9 +525,11 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                               vertical: 4 * widget.scale,
                             ),
                             decoration: BoxDecoration(
-                              color: widget.config.themeColors.background.withOpacity(0.95),
+                              color: widget.config.themeColors.background
+                                  .withOpacity(0.95),
                               border: Border.all(
-                                color: widget.config.themeColors.primary.withOpacity(0.5),
+                                color: widget.config.themeColors.primary
+                                    .withOpacity(0.5),
                                 width: 1,
                               ),
                               boxShadow: [
@@ -454,11 +542,14 @@ class _GameStyleSliderState extends State<GameStyleSlider> with TickerProviderSt
                             ),
                             child: Text(
                               widget.divisions != null
-                                ? '${(widget.value * 100).round()}%'
-                                : widget.value.toStringAsFixed(2),
+                                  ? '${(widget.value * 100).round()}%'
+                                  : widget.value.toStringAsFixed(2),
                               textAlign: TextAlign.center,
                               style: widget.config.dialogueTextStyle.copyWith(
-                                fontSize: widget.config.dialogueTextStyle.fontSize! * widget.scale * 0.5,
+                                fontSize:
+                                    widget.config.dialogueTextStyle.fontSize! *
+                                    widget.scale *
+                                    0.5,
                                 color: widget.config.themeColors.primary,
                                 fontWeight: FontWeight.bold,
                               ),

@@ -41,6 +41,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _musicEnabled = true;
   double _musicVolume = 0.8;
   double _soundVolume = 0.8;
+  double _voiceVolume = 0.8;
+  Map<String, double> _voiceCharacterVolumes = const {};
 
   // 玩法设置
   String _fastForwardMode = SettingsManager.defaultFastForwardMode;
@@ -75,12 +77,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _settingsManager.init();
 
       final fastForwardMode = await _settingsManager.getFastForwardMode();
-      final mouseRollbackBehavior =
-          await _settingsManager.getMouseRollbackBehavior();
+      final mouseRollbackBehavior = await _settingsManager
+          .getMouseRollbackBehavior();
 
       final musicEnabled = _musicManager.isMusicEnabled;
       final musicVolume = _musicManager.musicVolume;
       final soundVolume = _musicManager.soundVolume;
+      final voiceVolume = _musicManager.voiceVolume;
+      final voiceCharacterVolumes = <String, double>{
+        for (final profile in _musicManager.voiceCharacterProfiles)
+          profile.id: _musicManager.voiceCharacterVolume(profile.id),
+      };
 
       if (!mounted) return;
 
@@ -90,6 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _musicEnabled = musicEnabled;
         _musicVolume = musicVolume;
         _soundVolume = soundVolume;
+        _voiceVolume = voiceVolume;
+        _voiceCharacterVolumes = voiceCharacterVolumes;
         _isLoading = false;
       });
     } catch (e) {
@@ -111,6 +120,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _updateSoundVolume(double value) async {
     setState(() => _soundVolume = value);
     await _musicManager.setSoundVolume(value);
+  }
+
+  Future<void> _updateVoiceVolume(double value) async {
+    setState(() => _voiceVolume = value);
+    await _musicManager.setVoiceVolume(value);
+  }
+
+  void _previewVoiceCharacterVolume(String characterId, double value) {
+    setState(() {
+      _voiceCharacterVolumes = {..._voiceCharacterVolumes, characterId: value};
+    });
+  }
+
+  Future<void> _commitVoiceCharacterVolume(
+    String characterId,
+    double value,
+  ) async {
+    _previewVoiceCharacterVolume(characterId, value);
+    await _musicManager.setVoiceCharacterVolume(characterId, value);
+
+    VoiceCharacterProfile? selectedProfile;
+    for (final profile in _musicManager.voiceCharacterProfiles) {
+      if (profile.id == characterId) {
+        selectedProfile = profile;
+        break;
+      }
+    }
+    if (selectedProfile == null || selectedProfile.previewVoiceAsset.isEmpty) {
+      return;
+    }
+    await _musicManager.playVoice(selectedProfile.previewVoiceAsset);
   }
 
   Future<void> _updateFastForwardMode(String value) async {
@@ -143,6 +183,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _musicManager.setSoundEnabled(SettingsManager.defaultSoundEnabled);
       await _musicManager.setMusicVolume(SettingsManager.defaultMusicVolume);
       await _musicManager.setSoundVolume(SettingsManager.defaultSoundVolume);
+      await _musicManager.setVoiceVolume(SettingsManager.defaultVoiceVolume);
+      await _musicManager.resetVoiceCharacterVolumes();
       await _loadSettings();
     }
   }
@@ -155,8 +197,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         // 当设置变化时，重新更新主题配置
         SakiEngineConfig().updateThemeForDarkMode();
         final localization = LocalizationManager();
-        final content =
-            _isLoading ? _buildLoadingContent() : _buildSettingsContent();
+        final content = _isLoading
+            ? _buildLoadingContent()
+            : _buildSettingsContent();
 
         if (widget.useOverlayScaffold) {
           return OverlayScaffold(
@@ -183,9 +226,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildLoadingContent() {
-    return Center(
-      child: Container(color: const Color.fromARGB(0, 0, 0, 0)),
-    );
+    return Center(child: Container(color: const Color.fromARGB(0, 0, 0, 0)));
   }
 
   Widget _buildSettingsContent() {
@@ -195,9 +236,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(
       children: [
         _buildTabBar(config, scale),
-        Expanded(
-          child: _buildTabContent(config, scale),
-        ),
+        Expanded(child: _buildTabContent(config, scale)),
       ],
     );
   }
@@ -207,8 +246,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final tabTitles = _tabTitleKeys.map(localization.t).toList();
 
     return Container(
-      padding:
-          EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 8 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 16 * scale,
+        vertical: 8 * scale,
+      ),
       decoration: BoxDecoration(
         color: config.themeColors.surface.withOpacity(0.3),
         border: Border(
@@ -243,9 +284,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           musicEnabled: _musicEnabled,
           musicVolume: _musicVolume,
           soundVolume: _soundVolume,
+          voiceVolume: _voiceVolume,
           onMusicEnabledChanged: _updateMusicEnabled,
           onMusicVolumeChanged: _updateMusicVolume,
           onSoundVolumeChanged: _updateSoundVolume,
+          onVoiceVolumeChanged: _updateVoiceVolume,
+          voiceCharacterProfiles: _musicManager.voiceCharacterProfiles,
+          voiceCharacterVolumes: _voiceCharacterVolumes,
+          onVoiceCharacterVolumeChanged: _previewVoiceCharacterVolume,
+          onVoiceCharacterVolumeChangeEnd: _commitVoiceCharacterVolume,
         );
       case 2: // 玩法设置
         return GameplaySettingsTab(
@@ -356,11 +403,11 @@ class _SettingsButtonState extends State<_SettingsButton> {
           decoration: BoxDecoration(
             color: _isHovered
                 ? (isPrimary
-                    ? widget.config.themeColors.primary.withOpacity(0.9)
-                    : widget.config.themeColors.primary.withOpacity(0.15))
+                      ? widget.config.themeColors.primary.withOpacity(0.9)
+                      : widget.config.themeColors.primary.withOpacity(0.15))
                 : (isPrimary
-                    ? widget.config.themeColors.primary.withOpacity(0.8)
-                    : widget.config.themeColors.primary.withOpacity(0.1)),
+                      ? widget.config.themeColors.primary.withOpacity(0.8)
+                      : widget.config.themeColors.primary.withOpacity(0.1)),
             border: Border.all(
               color: widget.config.themeColors.primary.withOpacity(0.5),
               width: 1,
@@ -380,7 +427,8 @@ class _SettingsButtonState extends State<_SettingsButton> {
               Text(
                 widget.text,
                 style: widget.config.reviewTitleTextStyle.copyWith(
-                  fontSize: widget.config.reviewTitleTextStyle.fontSize! *
+                  fontSize:
+                      widget.config.reviewTitleTextStyle.fontSize! *
                       textScale *
                       0.5,
                   color: isPrimary
@@ -433,13 +481,9 @@ class _SettingsTabState extends State<_SettingsTab>
       vsync: this,
     );
 
-    _glowAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOut,
-    ));
+    _glowAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
 
     if (widget.isSelected) {
       _animationController.value = 1.0;
@@ -492,25 +536,27 @@ class _SettingsTabState extends State<_SettingsTab>
                 color: widget.isSelected
                     ? widget.config.themeColors.primary.withOpacity(0.15)
                     : (_isHovered
-                        ? widget.config.themeColors.primary.withOpacity(0.08)
-                        : Colors.transparent),
+                          ? widget.config.themeColors.primary.withOpacity(0.08)
+                          : Colors.transparent),
                 border: Border.all(
                   color: widget.isSelected
                       ? widget.config.themeColors.primary.withOpacity(0.6)
                       : (_isHovered
-                          ? widget.config.themeColors.primary.withOpacity(0.3)
-                          : Colors.transparent),
+                            ? widget.config.themeColors.primary.withOpacity(0.3)
+                            : Colors.transparent),
                   width: widget.isSelected ? 2 : 1,
                 ),
                 borderRadius: BorderRadius.circular(
-                    widget.config.baseWindowBorder > 0
-                        ? widget.config.baseWindowBorder * widget.scale
-                        : 0 * widget.scale),
+                  widget.config.baseWindowBorder > 0
+                      ? widget.config.baseWindowBorder * widget.scale
+                      : 0 * widget.scale,
+                ),
                 boxShadow: widget.isSelected
                     ? [
                         BoxShadow(
-                          color: widget.config.themeColors.primary
-                              .withOpacity(0.2 * _glowAnimation.value),
+                          color: widget.config.themeColors.primary.withOpacity(
+                            0.2 * _glowAnimation.value,
+                          ),
                           blurRadius: 8 * widget.scale * _glowAnimation.value,
                           offset: Offset(0, 2 * widget.scale),
                         ),
@@ -521,14 +567,16 @@ class _SettingsTabState extends State<_SettingsTab>
                 child: Text(
                   widget.title,
                   style: widget.config.reviewTitleTextStyle.copyWith(
-                    fontSize: widget.config.reviewTitleTextStyle.fontSize! *
+                    fontSize:
+                        widget.config.reviewTitleTextStyle.fontSize! *
                         textScale *
                         0.65,
                     color: widget.isSelected
                         ? widget.config.themeColors.primary
                         : widget.config.themeColors.primary.withOpacity(0.7),
-                    fontWeight:
-                        widget.isSelected ? FontWeight.bold : FontWeight.w500,
+                    fontWeight: widget.isSelected
+                        ? FontWeight.bold
+                        : FontWeight.w500,
                     letterSpacing: 0.5,
                   ),
                 ),

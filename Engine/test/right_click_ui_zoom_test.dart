@@ -56,8 +56,10 @@ void main() {
 
   test('hidden UI reserves wheel and trackpad input for scene zoom', () {
     var forwardCount = 0;
+    var backwardCount = 0;
     final handler = MouseWheelHandler(
       onScrollForward: () => forwardCount += 1,
+      onScrollBackward: () => backwardCount += 1,
       shouldHandleScroll: () => !uiManager.isUIHidden,
     );
 
@@ -69,6 +71,7 @@ void main() {
       const PointerPanZoomUpdateEvent(panDelta: Offset(0, -100)),
     );
     expect(forwardCount, 0);
+    expect(backwardCount, 0);
 
     uiManager.setUIHidden(false);
     handler.handlePointerSignal(
@@ -77,7 +80,8 @@ void main() {
     handler.handlePanZoomUpdate(
       const PointerPanZoomUpdateEvent(panDelta: Offset(0, -100)),
     );
-    expect(forwardCount, 2);
+    expect(forwardCount, 0);
+    expect(backwardCount, 2);
   });
 
   testWidgets('hidden UI supports mouse zoom, drag, and animated reset', (

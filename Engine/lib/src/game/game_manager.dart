@@ -3114,6 +3114,8 @@ class GameManager {
         final bool resourceChanged =
             currentCharacterState != null &&
             currentCharacterState.resourceId != resourceId;
+        final bool isCgVariantUpdate =
+            currentCharacterState != null && !resourceChanged;
         if (isNewSlot || resourceChanged) {
           CompositeCgRenderer.resetFadeToken(finalCharacterKey);
         }
@@ -3151,7 +3153,9 @@ class GameManager {
 
         _currentState = _currentState.copyWith(
           cgCharacters: newCgCharacters,
-          clearDialogueAndSpeaker: true,
+          // 同一 CG 的差分更新只替换画面层。保留当前对话可避免 UI 在
+          // CG 状态和下一句台词之间短暂切到“无对话框”后重新出现。
+          clearDialogueAndSpeaker: !isCgVariantUpdate,
           everShownCharacters: _everShownCharacters,
         );
         _gameStateController.add(_currentState);
@@ -5451,7 +5455,7 @@ class GameManager {
     final newCharacters = Map.of(_currentState.characters);
     newCharacters.remove(characterId);
 
-    if (_tickerProvider == null || newCharacters.length < 2) {
+    if (_tickerProvider == null || newCharacters.isEmpty) {
       _currentState = _currentState.copyWith(
         characters: newCharacters,
         clearDialogueAndSpeaker: false,

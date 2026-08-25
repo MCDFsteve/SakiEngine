@@ -1,10 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:sakiengine/src/utils/read_text_identifier.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:saki_native/saki_native.dart';
@@ -24,8 +23,14 @@ class ReadTextTracker extends ChangeNotifier {
   // 使用对话内容的哈希值作为唯一标识
   final Set<String> _readDialogues = <String>{};
   final Set<int> _stableReadHashes = <int>{};
+  final Map<int, bool> _legacyIndexAgnosticMatchCache = <int, bool>{};
   BigInt? _nativeHandle;
   Timer? _nativeFlushTimer;
+
+  // Old records included the global AST index. Story edits in this project
+  // shifted it by hundreds of nodes, so lazily probe a bounded neighborhood
+  // while those records are migrated to content-only hashes.
+  static const int _legacyIndexScanRadius = 1024;
 
   // 二进制文件配置
   static const String _fileName = 'saki.sakiread';
@@ -51,8 +56,10 @@ class ReadTextTracker extends ChangeNotifier {
     }
     _readDialogues.clear(); // 确保清空任何现有数据
     _stableReadHashes.clear();
+    _legacyIndexAgnosticMatchCache.clear();
     //print('[ReadTextTracker] 清空后已读数量: ${_readDialogues.length}');
     await _loadFromStorage();
+    notifyListeners();
     //print('[ReadTextTracker] 初始化完成，最终已读数量: ${_readDialogues.length}');
     //print('[ReadTextTracker] ========== 初始化结束 ==========');
   }
@@ -67,17 +74,19 @@ class ReadTextTracker extends ChangeNotifier {
       return;
     }
 
-    // 创建唯一标识符，结合说话者、对话内容和脚本索引
-    final stableHash = _createStableIdentifier(speaker, dialogue, scriptIndex);
-    //print('[ReadTextTracker] 生成标识符: $identifier');
+    final indexedHash = stableIndexedReadHash(speaker, dialogue, scriptIndex);
+    final contentHash = stableReadContentHash(speaker, dialogue);
+    final newHashes = <int>[
+      if (_stableReadHashes.add(indexedHash)) indexedHash,
+      if (_stableReadHashes.add(contentHash)) contentHash,
+    ];
 
-    if (!_stableReadHashes.contains(stableHash)) {
-      _stableReadHashes.add(stableHash);
+    if (newHashes.isNotEmpty) {
       //print('[ReadTextTracker] 新增已读: $identifier (总数: ${_readDialogues.length})');
       //print('[ReadTextTracker] 当前实例hashCode: ${hashCode}');
       final nativeHandle = _nativeHandle;
       if (nativeHandle != null) {
-        _appendNativeReadHash(nativeHandle, stableHash);
+        _appendNativeReadHashes(nativeHandle, newHashes);
       } else {
         _saveToStorage();
       }
@@ -95,10 +104,18 @@ class ReadTextTracker extends ChangeNotifier {
     if (dialogue.trim().isEmpty) return false;
 
     final identifier = _createIdentifier(speaker, dialogue, scriptIndex);
-    final stableHash = _createStableIdentifier(speaker, dialogue, scriptIndex);
+    final indexedHash = stableIndexedReadHash(speaker, dialogue, scriptIndex);
+    final contentHash = stableReadContentHash(speaker, dialogue);
     final result =
-        _stableReadHashes.contains(stableHash) ||
-        _readDialogues.contains(identifier);
+        _stableReadHashes.contains(contentHash) ||
+        _stableReadHashes.contains(indexedHash) ||
+        _readDialogues.contains(identifier) ||
+        _matchesLegacyIndexedRecord(
+          speaker,
+          dialogue,
+          scriptIndex,
+          contentHash,
+        );
     //print('[ReadTextTracker] 检查是否已读: "$identifier" = $result (实例${hashCode}, 总数${_readDialogues.length})');
     return result;
   }
@@ -113,23 +130,54 @@ class ReadTextTracker extends ChangeNotifier {
     return content.hashCode.toString();
   }
 
-  int _createStableIdentifier(
+  bool _matchesLegacyIndexedRecord(
     String? speaker,
     String dialogue,
     int scriptIndex,
+    int contentHash,
   ) {
-    final bytes = utf8.encode('${speaker ?? ''}|$dialogue|$scriptIndex');
-    var hash = 1469598103934665603;
-    for (final byte in bytes) {
-      hash ^= byte;
-      hash = (hash * 1099511628211) & 0x7fffffffffffffff;
+    final cached = _legacyIndexAgnosticMatchCache[contentHash];
+    if (cached != null) {
+      return cached;
     }
-    return hash;
+    if (containsLegacyIndexedReadHashNear(
+      hashes: _stableReadHashes,
+      speaker: speaker,
+      dialogue: dialogue,
+      currentScriptIndex: scriptIndex,
+      radius: _legacyIndexScanRadius,
+    )) {
+      _legacyIndexAgnosticMatchCache[contentHash] = true;
+      return true;
+    }
+    final firstIndex = scriptIndex > _legacyIndexScanRadius
+        ? scriptIndex - _legacyIndexScanRadius
+        : 0;
+    final lastIndex = scriptIndex + _legacyIndexScanRadius;
+    for (
+      var candidateIndex = firstIndex;
+      candidateIndex <= lastIndex;
+      candidateIndex++
+    ) {
+      if (_readDialogues.contains(
+        _createIdentifier(speaker, dialogue, candidateIndex),
+      )) {
+        _legacyIndexAgnosticMatchCache[contentHash] = true;
+        return true;
+      }
+    }
+    _legacyIndexAgnosticMatchCache[contentHash] = false;
+    return false;
   }
 
-  Future<void> _appendNativeReadHash(BigInt handle, int hash) async {
+  Future<void> _appendNativeReadHashes(
+    BigInt handle,
+    Iterable<int> hashes,
+  ) async {
     try {
-      await readStateMark(handle: handle, stableHash: hash);
+      for (final hash in hashes) {
+        await readStateMark(handle: handle, stableHash: hash);
+      }
       _nativeFlushTimer?.cancel();
       _nativeFlushTimer = Timer(const Duration(milliseconds: 250), () async {
         try {
@@ -161,6 +209,7 @@ class ReadTextTracker extends ChangeNotifier {
         await readStateClear(handle: nativeHandle);
         _stableReadHashes.clear();
         _readDialogues.clear();
+        _legacyIndexAgnosticMatchCache.clear();
         notifyListeners();
         return;
       }
@@ -176,6 +225,7 @@ class ReadTextTracker extends ChangeNotifier {
 
       _readDialogues.clear();
       _stableReadHashes.clear();
+      _legacyIndexAgnosticMatchCache.clear();
       //print('[ReadTextTracker] 清除后: ${_readDialogues.length} 条已读记录');
       //print('[ReadTextTracker] 清除操作完成');
     } catch (e) {
@@ -183,6 +233,7 @@ class ReadTextTracker extends ChangeNotifier {
       // 即使删除文件失败，也清空内存中的数据
       _readDialogues.clear();
       _stableReadHashes.clear();
+      _legacyIndexAgnosticMatchCache.clear();
     }
 
     notifyListeners();
@@ -409,6 +460,7 @@ class ReadTextTracker extends ChangeNotifier {
       _readDialogues.addAll(readList.cast<String>());
       _stableReadHashes.clear();
       _stableReadHashes.addAll(stableList.map((value) => value as int));
+      _legacyIndexAgnosticMatchCache.clear();
       final nativeHandle = _nativeHandle;
       if (nativeHandle != null) {
         await replaceReadStateValues(

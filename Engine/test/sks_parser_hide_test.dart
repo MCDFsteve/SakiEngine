@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sakiengine/src/config/config_models.dart';
 import 'package:sakiengine/src/game/game_manager.dart';
 import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 import 'package:sakiengine/src/sks_parser/sks_parser.dart';
@@ -82,6 +84,77 @@ void main() {
         );
 
         expect(wasHiddenAtApiCall, isTrue);
+      },
+    );
+
+    testWidgets(
+      'the last auto-positioned character smoothly recenters after concurrent fades',
+      (tester) async {
+        late BuildContext context;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (builderContext) {
+                context = builderContext;
+                return const SizedBox();
+              },
+            ),
+          ),
+        );
+
+        final manager = GameManager();
+        addTearDown(manager.dispose);
+        manager.poseConfigs['auto'] = PoseConfig(
+          id: 'auto',
+          scale: 1.3,
+          ycenter: 0.7,
+          anchor: 'auto',
+        );
+        manager.setContext(context, const TestVSync());
+
+        await manager.startTestScript(
+          ScriptNode([HideNode('left'), HideNode('middle')]),
+          initialState: GameState(
+            characters: {
+              'left': CharacterState(resourceId: 'left', positionId: 'auto'),
+              'middle': CharacterState(
+                resourceId: 'middle',
+                positionId: 'auto',
+              ),
+              'right': CharacterState(resourceId: 'right', positionId: 'auto'),
+            },
+          ),
+        );
+
+        manager.removeCharacterAfterFadeOut('left');
+        manager.removeCharacterAfterFadeOut('middle');
+
+        expect(manager.currentState.characters.keys, ['right']);
+        expect(
+          manager
+              .currentState
+              .characters['right']!
+              .animationProperties!['xcenter'],
+          closeTo(0.8, 0.001),
+        );
+
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        final halfwayX = manager
+            .currentState
+            .characters['right']!
+            .animationProperties!['xcenter']!;
+        expect(halfwayX, greaterThan(0.5));
+        expect(halfwayX, lessThan(0.8));
+
+        await tester.pumpAndSettle();
+        expect(
+          manager
+              .currentState
+              .characters['right']!
+              .animationProperties!['xcenter'],
+          closeTo(0.5, 0.001),
+        );
       },
     );
   });
