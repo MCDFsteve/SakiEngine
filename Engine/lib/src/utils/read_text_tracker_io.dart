@@ -4,10 +4,9 @@ import 'dart:typed_data';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/utils/read_text_identifier.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:saki_native/saki_native.dart';
 import 'package:sakiengine/src/native/saki_native_runtime.dart';
+import 'package:sakiengine/src/utils/local_storage_paths.dart';
 
 /// 已读文本跟踪器
 ///
@@ -242,15 +241,12 @@ class ReadTextTracker extends ChangeNotifier {
   /// 获取.sakiread文件路径
   Future<String> _getReadFilePath() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
       final projectName = await _getCurrentProjectName();
-      final savesDir = Directory(
-        '${directory.path}/SakiEngine/Saves/$projectName',
+      final file = await LocalStoragePaths.projectMetadataFile(
+        projectName,
+        _fileName,
       );
-      if (!await savesDir.exists()) {
-        await savesDir.create(recursive: true);
-      }
-      return p.join(savesDir.path, _fileName);
+      return file.path;
     } catch (e) {
       //print('[ReadTextTracker] 获取文件路径失败: $e');
       rethrow;

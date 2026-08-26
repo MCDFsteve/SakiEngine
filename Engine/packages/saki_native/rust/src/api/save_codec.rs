@@ -782,12 +782,17 @@ pub fn scan_save_headers(
 ) -> Result<RustSaveHeaderScan, String> {
     let started = std::time::Instant::now();
     let directory_path = Path::new(&directory);
-    let use_persistent_cache = start_slot_id <= 1 && end_slot_id >= i32::MAX as i64;
-    let mut cached_by_name = if use_persistent_cache {
-        read_cached_save_headers(directory_path)
-    } else {
-        HashMap::new()
-    };
+    // The all-i64 range is reserved for save-list callers that need every
+    // persisted save kind (manual, auto, and quick). Normal ranges continue
+    // to address numbered manual slots only.
+    let scan_all_save_kinds = start_slot_id == i64::MIN && end_slot_id == i64::MAX;
+    let write_persistent_cache =
+        scan_all_save_kinds || (start_slot_id <= 1 && end_slot_id >= i32::MAX as i64);
+
+    // A partial numbered range must still be allowed to reuse the persistent
+    // index. Previously 1..54 ignored it and reopened every save file, which
+    // could trigger macOS cloud hydration just to display the first page.
+    let mut cached_by_name = read_cached_save_headers(directory_path);
     let mut paths = Vec::new();
     for entry in fs::read_dir(&directory)
         .map_err(|error| format!("read save directory {directory}: {error}"))?
@@ -804,16 +809,23 @@ pub fn scan_save_headers(
             continue;
         };
         let file_name = file_name.to_string();
-        let Some(id_text) = file_name
+        let manual_slot_id = file_name
             .strip_prefix("save_")
             .and_then(|value| value.strip_suffix(".sakisav"))
-        else {
-            continue;
+            .and_then(|value| value.parse::<i64>().ok());
+        let is_auto_save = file_name
+            .strip_prefix("autosave_")
+            .and_then(|value| value.strip_suffix(".sakisav"))
+            .is_some_and(|value| value.parse::<u32>().is_ok());
+        let is_quick_save = file_name == "quicksave.sakisav"
+            || (file_name.starts_with("quicksave_") && file_name.ends_with(".sakisav"));
+
+        let should_scan = if scan_all_save_kinds {
+            manual_slot_id.is_some() || is_auto_save || is_quick_save
+        } else {
+            manual_slot_id.is_some_and(|id| id >= start_slot_id && id <= end_slot_id)
         };
-        let Ok(id) = id_text.parse::<i64>() else {
-            continue;
-        };
-        if id >= start_slot_id && id <= end_slot_id {
+        if should_scan {
             paths.push(SaveHeaderPath {
                 path,
                 file_name,
@@ -886,7 +898,11 @@ pub fn scan_save_headers(
         }
     }
 
-    if use_persistent_cache && invalid_files.is_empty() {
+    if write_persistent_cache && invalid_files.is_empty() {
+        // Preserve cached entries for save kinds outside the requested range.
+        // They are revalidated against file metadata whenever that kind is
+        // scanned, so retaining them here cannot return stale data.
+        cache_entries.extend(cached_by_name.into_values());
         if let Err(error) = write_cached_save_headers(directory_path, cache_entries) {
             eprintln!("[SAKI_SAVE][RUST] cache-write-failed error={error}");
         }
@@ -1051,6 +1067,51 @@ mod tests {
             scan_save_headers(directory.to_string_lossy().to_string(), 1, i32::MAX as i64).unwrap();
         assert_eq!(second.slots.len(), 3);
         assert!(second.invalid_files.is_empty());
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn header_scan_separates_manual_ranges_from_all_save_kinds() {
+        let directory = std::env::temp_dir().join(format!(
+            "saki_save_header_kinds_{}_{}",
+            std::process::id(),
+            NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+
+        for (file_name, id) in [
+            ("save_1.sakisav", 1_i64),
+            ("save_99.sakisav", 99_i64),
+            ("autosave_1.sakisav", 700_i64),
+            ("quicksave.sakisav", -1_i64),
+        ] {
+            let mut bytes = minimal_save(18);
+            bytes[8..16].copy_from_slice(&id.to_le_bytes());
+            fs::write(directory.join(file_name), bytes).unwrap();
+        }
+
+        let manual_page =
+            scan_save_headers(directory.to_string_lossy().to_string(), 1, 54).unwrap();
+        assert_eq!(manual_page.slots.len(), 1);
+        assert!(manual_page.slots[0].file_path.ends_with("save_1.sakisav"));
+
+        let all =
+            scan_save_headers(directory.to_string_lossy().to_string(), i64::MIN, i64::MAX).unwrap();
+        assert_eq!(all.slots.len(), 4);
+        let file_names = all
+            .slots
+            .iter()
+            .map(|slot| {
+                Path::new(&slot.file_path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert!(file_names.contains(&"autosave_1.sakisav".to_string()));
+        assert!(file_names.contains(&"quicksave.sakisav".to_string()));
 
         let _ = fs::remove_dir_all(directory);
     }

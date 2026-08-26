@@ -56,7 +56,7 @@ final class _TestPathProvider extends PathProviderPlatform {
   final String documentsPath;
 
   @override
-  Future<String?> getApplicationDocumentsPath() async => documentsPath;
+  Future<String?> getApplicationSupportPath() async => documentsPath;
 }
 
 Uint8List _buildVersion3Data({required double soundVolume}) {

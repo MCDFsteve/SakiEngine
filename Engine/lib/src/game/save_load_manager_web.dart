@@ -383,6 +383,14 @@ class SaveLoadManager {
     // return null;
   }
 
+  Future<SaveSlot?> loadQuickSaveHeader({String? namespace}) {
+    return loadQuickSave(namespace: namespace);
+  }
+
+  Future<SaveSlot?> loadFullSaveSlot(SaveSlot listedSlot) async {
+    return listedSlot;
+  }
+
   /// 检查快速存档是否存在
   Future<bool> hasQuickSave({String? namespace}) async {
     // try {
@@ -470,6 +478,10 @@ class SaveLoadManager {
 
     autoSaveSlots.sort((a, b) => b.saveTime.compareTo(a.saveTime));
     return autoSaveSlots;
+  }
+
+  Future<List<SaveSlot>> listAutoSaveSlotHeaders() {
+    return listAutoSaveSlots();
   }
 
   Future<bool> hasAutoSave() async {

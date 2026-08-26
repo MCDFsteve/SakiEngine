@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:sakiengine/src/utils/local_storage_paths.dart';
 
 /// 管理 CG 预合成结果的磁盘缓存目录
 class CgCacheStorage {
@@ -28,11 +28,9 @@ class CgCacheStorage {
       }
     }
 
-    final baseDir = await getApplicationDocumentsDirectory();
     final projectName = await _resolveProjectName();
-    final cacheDir = Directory(
-      p.join(baseDir.path, 'SakiEngine', 'Saves', projectName, '.cg_cache'),
-    );
+    final baseDir = await LocalStoragePaths.projectCacheDirectory(projectName);
+    final cacheDir = Directory(p.join(baseDir.path, '.cg_cache'));
 
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);

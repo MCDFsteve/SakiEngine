@@ -1,11 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:sakiengine/src/utils/local_storage_paths.dart';
 
 /// 统一的游戏数据管理器
 /// 将所有游戏数据（设置、变量、音量等）保存到存档目录
-/// 使用二进制格式，方便 Steam 云存档同步
+/// 使用二进制格式，便于平台云存档按发行配置同步
 class UnifiedGameDataManager {
   static final UnifiedGameDataManager _instance =
       UnifiedGameDataManager._internal();
@@ -49,13 +49,11 @@ class UnifiedGameDataManager {
 
   /// 获取数据文件路径
   Future<String> _getDataFilePath(String projectName) async {
-    final directory = await getApplicationDocumentsDirectory();
-    final dataDir =
-        Directory('${directory.path}/SakiEngine/Saves/$projectName');
-    if (!await dataDir.exists()) {
-      await dataDir.create(recursive: true);
-    }
-    return '${dataDir.path}/$_fileName';
+    final file = await LocalStoragePaths.projectMetadataFile(
+      projectName,
+      _fileName,
+    );
+    return file.path;
   }
 
   /// 初始化并加载数据

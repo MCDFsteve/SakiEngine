@@ -25,6 +25,24 @@ import 'package:sakiengine/src/widgets/quick_menu.dart';
 import 'package:sakiengine/src/widgets/mobile_quick_menu.dart'; // 新增：手机端快捷菜单
 import 'package:sakiengine/src/widgets/mobile_touch_controller.dart';
 
+@visibleForTesting
+int? resolveMenuDialogueHistoryIndex({
+  required int dialogueHistoryLength,
+  required bool isMenuNode,
+  required bool choiceMenuDisplaysLeadingDialogue,
+}) {
+  if (!isMenuNode || dialogueHistoryLength <= 0) {
+    return null;
+  }
+  if (!choiceMenuDisplaysLeadingDialogue) {
+    return dialogueHistoryLength - 1;
+  }
+  if (dialogueHistoryLength < 2) {
+    return null;
+  }
+  return dialogueHistoryLength - 2;
+}
+
 /// 游戏UI层组件
 /// 包含所有游戏中的UI元素，支持右键隐藏
 class GameUILayer extends StatefulWidget {
@@ -195,21 +213,28 @@ class GameUILayerState extends State<GameUILayer> {
     final latestDialogueEntry = dialogueHistory.isNotEmpty
         ? dialogueHistory.last
         : null;
-    final menuPreviousDialogueEntry = isMenuNode && dialogueHistory.length >= 2
-        ? dialogueHistory[dialogueHistory.length - 2]
-        : null;
-    final leadingDialogueBeforeMenu = dialogueHistory.isNotEmpty
-        ? dialogueHistory.last.dialogue
+    final choiceMenuDisplaysLeadingDialogue =
+        isMenuNode && widget.gameModule.choiceMenuDisplaysLeadingDialogue;
+    final menuDialogueHistoryIndex = resolveMenuDialogueHistoryIndex(
+      dialogueHistoryLength: dialogueHistory.length,
+      isMenuNode: isMenuNode,
+      choiceMenuDisplaysLeadingDialogue: choiceMenuDisplaysLeadingDialogue,
+    );
+    final menuDialogueEntry = menuDialogueHistoryIndex == null
+        ? null
+        : dialogueHistory[menuDialogueHistoryIndex];
+    final leadingDialogueBeforeMenu = choiceMenuDisplaysLeadingDialogue
+        ? latestDialogueEntry?.dialogue
         : null;
     final dialogueForDialogueBox =
-        menuPreviousDialogueEntry?.dialogue ?? widget.gameState.dialogue;
+        menuDialogueEntry?.dialogue ?? widget.gameState.dialogue;
     final speakerForDialogueBox =
-        menuPreviousDialogueEntry?.speaker ?? widget.gameState.speaker;
+        menuDialogueEntry?.speaker ?? widget.gameState.speaker;
     final dialogueTagForDialogueBox =
-        menuPreviousDialogueEntry?.dialogueTag ?? widget.gameState.dialogueTag;
+        menuDialogueEntry?.dialogueTag ?? widget.gameState.dialogueTag;
     final speakerAliasForDialogueBox = widget.gameState.speakerAlias;
     final scriptIndexForDialogueBox =
-        menuPreviousDialogueEntry?.scriptIndex ??
+        menuDialogueEntry?.scriptIndex ??
         latestDialogueEntry?.scriptIndex ??
         widget.gameManager.currentScriptIndex;
     final shouldShowNormalDialogue =

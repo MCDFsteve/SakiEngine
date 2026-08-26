@@ -2,12 +2,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/utils/debug_logger.dart';
 import 'package:sakiengine/src/utils/performance_monitor.dart';
 import 'package:sakiengine/src/utils/scaling_manager.dart';
 import 'package:sakiengine/src/widgets/common/overlay_scaffold.dart';
+import 'package:sakiengine/src/utils/local_storage_paths.dart';
 
 class DebugPanelDialog extends StatefulWidget {
   final VoidCallback onClose;
@@ -1046,8 +1046,8 @@ class _DebugPanelDialogState extends State<DebugPanelDialog>
 
   Future<void> _openSaveDirectory() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final savesBaseDir = '${directory.path}/SakiEngine/Saves';
+      final directory = await LocalStoragePaths.savesRootDirectory();
+      final savesBaseDir = directory.path;
 
       if (Platform.isMacOS) {
         await Process.run('open', [savesBaseDir]);

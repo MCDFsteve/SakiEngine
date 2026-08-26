@@ -171,6 +171,12 @@ abstract class GameModule {
     );
   }
 
+  /// 选项菜单是否接管菜单前最后一句台词的显示。
+  ///
+  /// 返回 `false` 时，最后一句继续显示在普通对话框，选项菜单仅负责选项。
+  /// 默认保留现有行为，避免改变既有项目的自定义选项布局。
+  bool get choiceMenuDisplaysLeadingDialogue => true;
+
   /// 创建自定义场景基础层（位于角色层下方）。
   /// 返回 `null` 时表示不插入自定义层。
   Widget? createSceneBaseLayer({
@@ -599,6 +605,9 @@ class DefaultGameModule implements GameModule {
       isFastForwarding: isFastForwarding,
     );
   }
+
+  @override
+  bool get choiceMenuDisplaysLeadingDialogue => true;
 
   @override
   Widget? createSceneBaseLayer({
