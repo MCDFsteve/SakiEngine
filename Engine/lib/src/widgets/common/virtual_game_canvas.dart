@@ -54,10 +54,10 @@ class SakiVirtualGameCanvas extends StatelessWidget {
         final canvasAspectRatio = matchAvailableAspectRatio
             ? availableAspectRatio
             : _normalizeAspectRatio(selectedAspectRatio) ??
-                _resolveClosestAspectRatio(
-                  availableAspectRatio,
-                  fallbackAspectRatio,
-                );
+                  _resolveClosestAspectRatio(
+                    availableAspectRatio,
+                    fallbackAspectRatio,
+                  );
         final selectedCanvasWidth = canvasHeight * canvasAspectRatio;
         final scaleX = availableWidth / selectedCanvasWidth;
         final scaleY = availableHeight / canvasHeight;
@@ -78,18 +78,23 @@ class SakiVirtualGameCanvas extends StatelessWidget {
           ),
         );
 
-        return ColoredBox(
-          color: Colors.black,
-          child: ClipRect(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              clipBehavior: Clip.hardEdge,
-              child: SizedBox(
-                width: selectedCanvasWidth,
-                height: canvasHeight,
-                child: MediaQuery(
-                  data: virtualMediaQuery,
-                  child: child,
+        // LayoutBuilder can receive loose constraints (for example as a
+        // non-positioned child of a Stack). Pin the outer canvas to the host
+        // size so FittedBox covers the full viewport instead of shrink-wrapping
+        // to the logical 16:9 child and exposing the black backing at an edge.
+        return SizedBox(
+          width: availableWidth,
+          height: availableHeight,
+          child: ColoredBox(
+            color: Colors.black,
+            child: ClipRect(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: selectedCanvasWidth,
+                  height: canvasHeight,
+                  child: MediaQuery(data: virtualMediaQuery, child: child),
                 ),
               ),
             ),
