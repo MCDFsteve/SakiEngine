@@ -13,6 +13,26 @@ typedef ScriptCanvasPaintCallback =
 @immutable
 class ScriptCanvasDefinition {
   final ScriptCanvasPaintCallback paint;
+  final Duration animationDuration;
+  final bool loop;
 
-  const ScriptCanvasDefinition({required this.paint});
+  const ScriptCanvasDefinition({
+    required this.paint,
+    this.animationDuration = Duration.zero,
+    this.loop = false,
+  });
+}
+
+/// One named canvas exposed by a project module to scripts and debug tooling.
+@immutable
+class ScriptCanvasRegistration {
+  final String id;
+  final String displayName;
+  final ScriptCanvasDefinition definition;
+
+  const ScriptCanvasRegistration({
+    required this.id,
+    required this.displayName,
+    required this.definition,
+  });
 }

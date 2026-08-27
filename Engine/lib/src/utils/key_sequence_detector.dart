@@ -1509,6 +1509,72 @@ class ScriptContentModifier {
     }
   }
 
+  /// Places a persistent `canvas <id>` command immediately before the current
+  /// dialogue. An adjacent canvas/hide-canvas command is replaced in place.
+  static Future<bool> modifyCanvasNearDialogue({
+    required String scriptFilePath,
+    required String canvasId,
+    int? targetLineNumber,
+  }) async {
+    try {
+      final normalized = canvasId.trim().replaceAll(RegExp(r'\s+'), ' ');
+      if (normalized.isEmpty || normalized.contains('\n')) {
+        return false;
+      }
+      final file = File(scriptFilePath);
+      if (!await file.exists()) {
+        return false;
+      }
+      final lines = (await file.readAsString()).split('\n');
+      if (lines.isEmpty) {
+        return false;
+      }
+
+      final hasAnchor =
+          targetLineNumber != null &&
+          targetLineNumber > 0 &&
+          targetLineNumber <= lines.length;
+      final targetIndex = hasAnchor ? targetLineNumber - 1 : lines.length;
+      int? replaceIndex;
+      if (hasAnchor) {
+        for (int i = targetIndex - 1; i >= 0; i--) {
+          final trimmed = lines[i].trim();
+          if (trimmed.isEmpty ||
+              trimmed.startsWith('//') ||
+              trimmed.startsWith('#')) {
+            continue;
+          }
+          if (trimmed.startsWith('canvas ') || trimmed == 'hide canvas') {
+            replaceIndex = i;
+          }
+          break;
+        }
+      }
+
+      final command = 'canvas $normalized';
+      if (replaceIndex != null) {
+        final originalLine = lines[replaceIndex];
+        if (originalLine.trim() == command) {
+          return true;
+        }
+        lines[replaceIndex] = originalLine.replaceFirst(
+          originalLine.trim(),
+          command,
+        );
+      } else {
+        lines.insert(targetIndex.clamp(0, lines.length), command);
+      }
+
+      await _writeScriptFile(file, lines.join('\n'));
+      return true;
+    } catch (e) {
+      if (kEngineDebugMode) {
+        print('ScriptModifier: 放置 Canvas 失败: $e');
+      }
+      return false;
+    }
+  }
+
   /// 写入脚本文件，使用多种方法确保成功
   static Future<void> _writeScriptFile(File file, String content) async {
     bool writeSuccess = false;

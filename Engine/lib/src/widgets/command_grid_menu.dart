@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:sakiengine/src/widgets/command_radial_wheel.dart';
 import 'package:sakiengine/src/widgets/smart_image.dart';
 
+typedef CommandGridPreviewBuilder =
+    Widget Function(BuildContext context, String optionId);
+
 /// Debug命令网格菜单（用于承载大量选项，如背景）
 class CommandGridMenu extends StatefulWidget {
   final String title;
@@ -12,6 +15,7 @@ class CommandGridMenu extends StatefulWidget {
   final Offset center;
   final ValueChanged<String> onHighlightedOptionChanged;
   final ValueChanged<String>? onOptionDoubleTap;
+  final CommandGridPreviewBuilder? previewBuilder;
   final VoidCallback? onDismiss;
 
   const CommandGridMenu({
@@ -21,6 +25,7 @@ class CommandGridMenu extends StatefulWidget {
     required this.center,
     required this.onHighlightedOptionChanged,
     this.onOptionDoubleTap,
+    this.previewBuilder,
     this.currentOptionId,
     this.applyHint = 'Release Shift To Apply',
     this.onDismiss,
@@ -173,6 +178,10 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
                                 return _GridCell(
                                   option: option,
                                   selected: selected,
+                                  preview: widget.previewBuilder?.call(
+                                    context,
+                                    option.id,
+                                  ),
                                   onHover: () {
                                     if (_highlightedId == option.id) {
                                       return;
@@ -216,12 +225,14 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
 class _GridCell extends StatelessWidget {
   final CommandWheelOption option;
   final bool selected;
+  final Widget? preview;
   final VoidCallback onHover;
   final VoidCallback? onDoubleTap;
 
   const _GridCell({
     required this.option,
     required this.selected,
+    this.preview,
     required this.onHover,
     this.onDoubleTap,
   });
@@ -260,15 +271,17 @@ class _GridCell extends StatelessWidget {
                   child: Container(
                     color: const Color(0xFF151515),
                     child:
-                        option.imagePath != null && option.imagePath!.isNotEmpty
-                        ? SmartImage.asset(
-                            option.imagePath!,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                            errorWidget: const _GridFallbackIcon(),
-                          )
-                        : const _GridFallbackIcon(),
+                        preview ??
+                        (option.imagePath != null &&
+                                option.imagePath!.isNotEmpty
+                            ? SmartImage.asset(
+                                option.imagePath!,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: double.infinity,
+                                errorWidget: const _GridFallbackIcon(),
+                              )
+                            : const _GridFallbackIcon()),
                   ),
                 ),
               ),

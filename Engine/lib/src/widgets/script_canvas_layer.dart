@@ -6,12 +6,14 @@ class ScriptCanvasLayer extends StatefulWidget {
   final ScriptCanvasDefinition definition;
   final Duration duration;
   final int revision;
+  final bool absorbsPointer;
 
   const ScriptCanvasLayer({
     super.key,
     required this.definition,
     required this.duration,
     required this.revision,
+    this.absorbsPointer = false,
   });
 
   @override
@@ -33,20 +35,31 @@ class _ScriptCanvasLayerState extends State<ScriptCanvasLayer>
   void didUpdateWidget(covariant ScriptCanvasLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.revision != widget.revision ||
-        oldWidget.duration != widget.duration) {
+        oldWidget.duration != widget.duration ||
+        oldWidget.definition != widget.definition) {
       _restart();
     }
   }
 
   void _restart() {
-    if (widget.duration <= Duration.zero) {
-      _controller
-        ..stop()
-        ..value = 1;
+    _controller.stop();
+    if (widget.definition.loop) {
+      final period = widget.definition.animationDuration > Duration.zero
+          ? widget.definition.animationDuration
+          : const Duration(seconds: 1);
+      _controller.repeat(period: period);
+      return;
+    }
+
+    final animationDuration = widget.duration > Duration.zero
+        ? widget.duration
+        : widget.definition.animationDuration;
+    if (animationDuration <= Duration.zero) {
+      _controller.value = 1;
       return;
     }
     _controller
-      ..duration = widget.duration
+      ..duration = animationDuration
       ..forward(from: 0);
   }
 
@@ -58,19 +71,20 @@ class _ScriptCanvasLayerState extends State<ScriptCanvasLayer>
 
   @override
   Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: AbsorbPointer(
-        child: RepaintBoundary(
-          child: CustomPaint(
-            painter: _ScriptCanvasCustomPainter(
-              definition: widget.definition,
-              progress: _controller,
-              revision: widget.revision,
-            ),
-            child: const SizedBox.expand(),
-          ),
+    final canvas = RepaintBoundary(
+      child: CustomPaint(
+        painter: _ScriptCanvasCustomPainter(
+          definition: widget.definition,
+          progress: _controller,
+          revision: widget.revision,
         ),
+        child: const SizedBox.expand(),
       ),
+    );
+    return Positioned.fill(
+      child: widget.absorbsPointer
+          ? AbsorbPointer(child: canvas)
+          : IgnorePointer(child: canvas),
     );
   }
 }

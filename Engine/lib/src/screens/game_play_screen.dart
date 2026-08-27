@@ -82,7 +82,7 @@ typedef InitialLoadingOverlayBuilder =
 typedef SaveLoadTransitionOverlayBuilder =
     Widget Function(BuildContext context, VoidCallback onCompleted);
 
-enum _CommandDebugMenuMode { expression, character, background, music }
+enum _CommandDebugMenuMode { expression, character, background, canvas, music }
 
 class GamePlayScreen extends StatefulWidget {
   final SaveSlot? saveSlotToLoad;
@@ -141,6 +141,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _showExpressionWheel = false; // 差分快捷轮盘显示状态（Debug）
   bool _showCharacterWheel = false; // 角色切换轮盘显示状态（Debug）
   bool _showBackgroundGridMenu = false; // 背景选择网格菜单显示状态（Debug）
+  bool _showCanvasGridMenu = false; // Canvas预览/放置网格显示状态（Debug）
   bool _showMusicGridMenu = false; // 音乐选择网格菜单显示状态（Debug）
   bool _showFloatingScriptEditor = false; // 悬浮脚本编辑器显示状态（Debug）
   bool _isShiftKeyPressed = false; // Shift按键按住状态（Debug）
@@ -174,6 +175,10 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   List<CommandWheelOption> _backgroundGridOptions = const [];
   String? _backgroundGridCurrentId;
   String? _backgroundGridHighlightedId;
+  List<CommandWheelOption> _canvasGridOptions = const [];
+  String? _canvasGridCurrentId;
+  String? _canvasGridHighlightedId;
+  String? _canvasGridOriginalId;
   List<CommandWheelOption> _musicGridOptions = const [];
   String? _musicGridCurrentId;
   String? _musicGridHighlightedId;
@@ -210,6 +215,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       _showExpressionWheel ||
       _showCharacterWheel ||
       _showBackgroundGridMenu ||
+      _showCanvasGridMenu ||
       _showMusicGridMenu;
 
   bool get _hasThumbnailBlockingOverlayOpen {
@@ -532,7 +538,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
   bool get _isBlockingCinematicInput {
     final gameState = _gameManager.currentState;
-    return gameState.movieFile != null || gameState.scriptCanvasId != null;
+    return gameState.movieFile != null ||
+        (gameState.scriptCanvasId != null &&
+            gameState.scriptCanvasDurationSeconds > 0);
   }
 
   bool _hasVisibleStartupText(GameState gameState) {
@@ -1049,7 +1057,10 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
                                     final isBlockingCinematic =
                                         gameState.movieFile != null ||
-                                        gameState.scriptCanvasId != null;
+                                        (gameState.scriptCanvasId != null &&
+                                            gameState
+                                                    .scriptCanvasDurationSeconds >
+                                                0);
 
                                     // 只有在没有弹窗及阻断式演出时才推进剧情。
                                     if (!hasOverlayOpen &&
@@ -1272,6 +1283,89 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                               _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
+                                          _showCanvasGridMenu &&
+                                          _canvasGridOptions.isNotEmpty)
+                                        CommandGridMenu(
+                                          title: 'Canvas 预览与放置',
+                                          applyHint:
+                                              'Shift+V · Double Click To Place',
+                                          options: _canvasGridOptions,
+                                          currentOptionId: _canvasGridCurrentId,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              Offset(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width /
+                                                    2,
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.height /
+                                                    2,
+                                              ),
+                                          previewBuilder:
+                                              (previewContext, optionId) {
+                                                final definition = gameModule
+                                                    .resolveScriptCanvas(
+                                                      canvasId: optionId,
+                                                      gameState: gameState,
+                                                      scriptIndex: _gameManager
+                                                          .currentScriptIndex,
+                                                    );
+                                                if (definition == null) {
+                                                  return const SizedBox.shrink();
+                                                }
+                                                return Stack(
+                                                  fit: StackFit.expand,
+                                                  children: [
+                                                    const DecoratedBox(
+                                                      decoration: BoxDecoration(
+                                                        gradient:
+                                                            LinearGradient(
+                                                              begin: Alignment
+                                                                  .topLeft,
+                                                              end: Alignment
+                                                                  .bottomRight,
+                                                              colors: [
+                                                                Color(
+                                                                  0xFF182132,
+                                                                ),
+                                                                Color(
+                                                                  0xFF080B12,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                      ),
+                                                    ),
+                                                    ScriptCanvasLayer(
+                                                      key: ValueKey(
+                                                        'canvas-preview-$optionId',
+                                                      ),
+                                                      definition: definition,
+                                                      duration: Duration.zero,
+                                                      revision:
+                                                          optionId.hashCode,
+                                                    ),
+                                                  ],
+                                                );
+                                              },
+                                          onHighlightedOptionChanged:
+                                              (optionId) {
+                                                _canvasGridHighlightedId =
+                                                    optionId;
+                                                _previewCanvasSelection(
+                                                  optionId,
+                                                );
+                                              },
+                                          onOptionDoubleTap: (_) {
+                                            unawaited(
+                                              _applyCanvasGridSelectionAndClose(),
+                                            );
+                                          },
+                                          onDismiss:
+                                              _dismissCommandMenuForEscape,
+                                        ),
+                                      if (kEngineDebugMode &&
                                           _showFloatingScriptEditor)
                                         FloatingScriptEditorOverlay(
                                           gameManager: _gameManager,
@@ -1305,7 +1399,8 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                             ),
                           ),
                         ),
-                        if (scriptCanvasDefinition != null)
+                        if (scriptCanvasDefinition != null &&
+                            gameState.scriptCanvasDurationSeconds > 0)
                           ScriptCanvasLayer(
                             key: ValueKey(
                               '$scriptCanvasId-${gameState.scriptCanvasRevision}',
@@ -1317,6 +1412,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                       .round(),
                             ),
                             revision: gameState.scriptCanvasRevision,
+                            absorbsPointer: true,
                           ),
                       ],
                     );
@@ -1355,6 +1451,15 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       gameState: gameState,
       scriptIndex: _gameManager.currentScriptIndex,
     );
+    final scriptCanvasId = gameState.scriptCanvasId;
+    final persistentCanvasDefinition =
+        scriptCanvasId != null && gameState.scriptCanvasDurationSeconds <= 0
+        ? module.resolveScriptCanvas(
+            canvasId: scriptCanvasId,
+            gameState: gameState,
+            scriptIndex: _gameManager.currentScriptIndex,
+          )
+        : null;
     final shouldRenderDefaultSceneBackground = module
         .shouldRenderDefaultSceneBackground(gameState);
     final characterLighting = module.resolveCharacterLighting(gameState);
@@ -1479,6 +1584,17 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
           // scene 前景层（位于场景元素之上，UI层之下）
           if (sceneForegroundLayer != null) sceneForegroundLayer,
+
+          // 持续 canvas 覆盖游戏画面，但不遮挡或阻断 UI。
+          if (persistentCanvasDefinition != null)
+            ScriptCanvasLayer(
+              key: ValueKey(
+                'persistent-$scriptCanvasId-${gameState.scriptCanvasRevision}',
+              ),
+              definition: persistentCanvasDefinition,
+              duration: Duration.zero,
+              revision: gameState.scriptCanvasRevision,
+            ),
         ],
       ),
     );

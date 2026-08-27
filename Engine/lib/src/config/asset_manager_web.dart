@@ -51,7 +51,8 @@ class AssetManager {
     }
 
     throw Exception(
-        'Failed to load asset from bundle. Tried: ${candidates.join(', ')}. Last error: $lastError');
+      'Failed to load asset from bundle. Tried: ${candidates.join(', ')}. Last error: $lastError',
+    );
   }
 
   Map<String, dynamic> listToManifestMap(List<String> assets) {
@@ -75,11 +76,14 @@ class AssetManager {
   Future<List<String>> listAssets(String directory, String extension) async {
     final assets = <String>[];
     final seen = <String>{};
-    final candidates =
-        GameScriptLocalization.resolveAssetDirectories(directory);
+    final candidates = GameScriptLocalization.resolveAssetDirectories(
+      directory,
+    );
     final resolvedDirectories = <String>[];
-    final precompiledAssets =
-        _listPrecompiledAssets(candidates: candidates, extension: extension);
+    final precompiledAssets = _listPrecompiledAssets(
+      candidates: candidates,
+      extension: extension,
+    );
     if (precompiledAssets.isNotEmpty) {
       return precompiledAssets;
     }
@@ -218,9 +222,9 @@ class AssetManager {
       return null;
     }
 
-    final candidates = _exactAssetPathCandidates(name)
-        .map((candidate) => candidate.toLowerCase())
-        .toSet();
+    final candidates = _exactAssetPathCandidates(
+      name,
+    ).map((candidate) => candidate.toLowerCase()).toSet();
     for (final key in _bundleAssetKeysByPriority()) {
       final normalizedKey = key.replaceAll('\\', '/').toLowerCase();
       final keyWithoutBundleAssetsPrefix = normalizedKey.startsWith('assets/')
@@ -232,8 +236,9 @@ class AssetManager {
         return key;
       }
       if (normalizedKey.startsWith('packages/') &&
-          candidates
-              .any((candidate) => normalizedKey.endsWith('/$candidate'))) {
+          candidates.any(
+            (candidate) => normalizedKey.endsWith('/$candidate'),
+          )) {
         _imageCache[name] = key;
         return key;
       }
@@ -258,6 +263,10 @@ class AssetManager {
     return _findAssetInBundle(name);
   }
 
+  Future<String?> findNativeMediaAsset(String name) {
+    return findAsset(name);
+  }
+
   Future<String?> _findAssetInBundle(String name) async {
     await _loadManifest();
     if (_assetManifest == null) {
@@ -277,7 +286,7 @@ class AssetManager {
       '.gif',
       '.bmp',
       '.webp',
-      '.avif'
+      '.avif',
     ];
     final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
     final supportedExtensions = [...imageExtensions, ...videoExtensions];
@@ -286,8 +295,8 @@ class AssetManager {
     final targetFileName = name.split('/').last;
     final targetFileNameLower = targetFileName.toLowerCase();
     final targetFileNameWithoutExt = p.basenameWithoutExtension(targetFileName);
-    final targetFileNameWithoutExtLower =
-        targetFileNameWithoutExt.toLowerCase();
+    final targetFileNameWithoutExtLower = targetFileNameWithoutExt
+        .toLowerCase();
 
     // 提取路径部分，例如 "backgrounds/sky" -> "backgrounds"
     final pathParts = name.split('/');
@@ -310,11 +319,12 @@ class AssetManager {
         if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
           continue;
         }
-        final keyFileNameWithoutExtLower =
-            p.basenameWithoutExtension(keyFileName).toLowerCase();
+        final keyFileNameWithoutExtLower = p
+            .basenameWithoutExtension(keyFileName)
+            .toLowerCase();
         final fileNameMatched =
             keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-                keyFileNameLower == targetFileNameLower;
+            keyFileNameLower == targetFileNameLower;
 
         // 检查文件名是否匹配且路径包含cg（支持cg的任意子文件夹）
         if (fileNameMatched) {
@@ -338,11 +348,12 @@ class AssetManager {
       if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
         continue;
       }
-      final keyFileNameWithoutExtLower =
-          p.basenameWithoutExtension(keyFileName).toLowerCase();
+      final keyFileNameWithoutExtLower = p
+          .basenameWithoutExtension(keyFileName)
+          .toLowerCase();
       final fileNameMatched =
           keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-              keyFileNameLower == targetFileNameLower;
+          keyFileNameLower == targetFileNameLower;
 
       // 检查文件名是否匹配
       if (fileNameMatched) {
@@ -372,11 +383,12 @@ class AssetManager {
       if (!supportedExtensions.any((ext) => keyFileNameLower.endsWith(ext))) {
         continue;
       }
-      final keyFileNameWithoutExtLower =
-          p.basenameWithoutExtension(keyFileName).toLowerCase();
+      final keyFileNameWithoutExtLower = p
+          .basenameWithoutExtension(keyFileName)
+          .toLowerCase();
       final fileNameMatched =
           keyFileNameWithoutExtLower == targetFileNameWithoutExtLower ||
-              keyFileNameLower == targetFileNameLower;
+          keyFileNameLower == targetFileNameLower;
 
       if (fileNameMatched) {
         _imageCache[name] = key;
@@ -390,19 +402,23 @@ class AssetManager {
 
   /// Web平台返回空列表
   static Future<List<String>> getAvailableCharacterLayersRecursive(
-      String characterId) async {
+    String characterId,
+  ) async {
     return <String>[];
   }
 
   /// Web平台返回空列表
   static Future<List<String>> getAvailableCharacterLayers(
-      String characterId) async {
+    String characterId,
+  ) async {
     return <String>[];
   }
 
   /// Web平台返回null
   static Future<String?> getDefaultLayerForLevel(
-      String characterId, int layerLevel) async {
+    String characterId,
+    int layerLevel,
+  ) async {
     return null;
   }
 }

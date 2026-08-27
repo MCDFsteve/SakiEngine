@@ -416,7 +416,7 @@ script_default_language: zhs // zhs / zhc / en / jp
 
 ### 图像绘制语法
 
-SakiEngine 支持四种主要的图像显示方式：
+SakiEngine 支持五种主要的图像显示方式：
 
 #### 场景背景 (scene)
 
@@ -447,6 +447,19 @@ anime rain keep          // 播放雨滴动画，播放完后保持显示
 anime fire loop          // 播放火焰动画，循环播放不停止
 anime magic keep loop    // 播放魔法效果，循环播放且保持显示
 ```
+
+#### 项目画布 (canvas)
+
+```sks
+// 显示项目模块注册的持续绘制效果；覆盖游戏画面，但不遮挡 UI
+canvas pixel_rain
+
+// 清除当前画布
+hide canvas
+```
+
+项目通过 `GameModule.scriptCanvases` 注册画布 ID、显示名与绘制回调。Debug
+模式下按 `Shift+V` 可打开画布预览/放置网格，双击把命令放到当前对话前。
 
 #### CG插图 (cg)
 

@@ -293,6 +293,12 @@ class _SksCompiler {
     if (node is StopAnimeNode) {
       return 'StopAnimeNode()';
     }
+    if (node is CanvasNode) {
+      return 'CanvasNode(${_str(node.canvasId)})';
+    }
+    if (node is HideCanvasNode) {
+      return 'HideCanvasNode()';
+    }
     if (node is ShowNode) {
       return 'ShowNode(${_str(node.character)}, pose: ${_nullableString(node.pose)}, '
           'expression: ${_nullableString(node.expression)}, position: ${_nullableString(node.position)}, '

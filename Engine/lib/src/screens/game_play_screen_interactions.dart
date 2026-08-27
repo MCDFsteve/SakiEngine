@@ -421,6 +421,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     if (_showMusicGridMenu) {
       unawaited(_restoreMusicPreviewIfNeeded());
     }
+    _restoreCanvasPreviewIfNeeded();
     _setStateIfMounted(() {
       _showFloatingScriptEditor = false;
       _showDeveloperPanel = false;
@@ -442,6 +443,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     final isShortcutA = logicalKey == LogicalKeyboardKey.keyA;
     final isShortcutC = logicalKey == LogicalKeyboardKey.keyC;
     final isShortcutB = logicalKey == LogicalKeyboardKey.keyB;
+    final isShortcutV = logicalKey == LogicalKeyboardKey.keyV;
     final isShortcut1 =
         logicalKey == LogicalKeyboardKey.digit1 ||
         logicalKey == LogicalKeyboardKey.exclamation ||
@@ -452,6 +454,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             isShortcutA ||
             isShortcutC ||
             isShortcutB ||
+            isShortcutV ||
             isShortcut1)) {
       print(
         'ExpressionWheel: key event type=${event.runtimeType}, key=${logicalKey.debugName}, isShiftPressed=${HardwareKeyboard.instance.isShiftPressed}, internalPressed=$_isShiftKeyPressed, mode=$_activeCommandMenuMode, visible=$_isAnyCommandMenuOpen',
@@ -486,11 +489,13 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             print('ExpressionWheel: keyUp apply character selection');
           }
           unawaited(_applyCharacterWheelSelectionAndClose());
-        } else if (_showBackgroundGridMenu || _showMusicGridMenu) {
-          // 背景/音乐改为“常驻+双击应用”，Shift松开不做自动应用。
+        } else if (_showBackgroundGridMenu ||
+            _showCanvasGridMenu ||
+            _showMusicGridMenu) {
+          // 网格菜单采用“常驻+双击应用”，Shift松开不做自动应用。
           if (kSakiDiagnosticLogs) {
             print(
-              'ExpressionWheel: keyUp keep grid menu open (background/music persistent mode)',
+              'ExpressionWheel: keyUp keep grid menu open (background/canvas/music persistent mode)',
             );
           }
         } else {
@@ -502,7 +507,11 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
     if (event is KeyRepeatEvent &&
         _isShiftKeyPressed &&
-        (isShortcutA || isShortcutC || isShortcutB || isShortcut1)) {
+        (isShortcutA ||
+            isShortcutC ||
+            isShortcutB ||
+            isShortcutV ||
+            isShortcut1)) {
       return true;
     }
 
@@ -514,6 +523,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         requestedMode = _CommandDebugMenuMode.character;
       } else if (isShortcutB) {
         requestedMode = _CommandDebugMenuMode.background;
+      } else if (isShortcutV) {
+        requestedMode = _CommandDebugMenuMode.canvas;
       } else if (isShortcut1) {
         requestedMode = _CommandDebugMenuMode.music;
       }
@@ -557,6 +568,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           case _CommandDebugMenuMode.background:
             isTargetVisible = _showBackgroundGridMenu;
             break;
+          case _CommandDebugMenuMode.canvas:
+            isTargetVisible = _showCanvasGridMenu;
+            break;
           case _CommandDebugMenuMode.music:
             isTargetVisible = _showMusicGridMenu;
             break;
@@ -569,6 +583,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
               _CommandDebugMenuMode.expression => 'expression',
               _CommandDebugMenuMode.character => 'character',
               _CommandDebugMenuMode.background => 'background',
+              _CommandDebugMenuMode.canvas => 'canvas',
               _CommandDebugMenuMode.music => 'music',
             };
             print('ExpressionWheel: switch mode -> $modeName');
@@ -588,6 +603,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
   bool _isGridMenuMode(_CommandDebugMenuMode mode) {
     return mode == _CommandDebugMenuMode.background ||
+        mode == _CommandDebugMenuMode.canvas ||
         mode == _CommandDebugMenuMode.music;
   }
 
@@ -595,6 +611,8 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     switch (mode) {
       case _CommandDebugMenuMode.background:
         return _showBackgroundGridMenu;
+      case _CommandDebugMenuMode.canvas:
+        return _showCanvasGridMenu;
       case _CommandDebugMenuMode.music:
         return _showMusicGridMenu;
       case _CommandDebugMenuMode.expression:
@@ -619,6 +637,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           break;
         case _CommandDebugMenuMode.background:
           unawaited(_openBackgroundGridIfPossible());
+          break;
+        case _CommandDebugMenuMode.canvas:
+          _openCanvasGridIfPossible();
           break;
         case _CommandDebugMenuMode.music:
           unawaited(_openMusicGridIfPossible());
@@ -671,6 +692,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     _setStateIfMounted(() {
       _showExpressionWheel = false;
       _showBackgroundGridMenu = false;
+      _showCanvasGridMenu = false;
       _showMusicGridMenu = false;
       _expressionWheelSpeakerInfo = null;
       _expressionWheelExpressions = const [];
@@ -723,6 +745,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     _setStateIfMounted(() {
       _showExpressionWheel = false;
       _showCharacterWheel = false;
+      _showCanvasGridMenu = false;
       _showMusicGridMenu = false;
       _expressionWheelSpeakerInfo = null;
       _expressionWheelExpressions = const [];
@@ -739,6 +762,67 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     if (kSakiDiagnosticLogs) {
       print(
         'ExpressionWheel: background grid opened options=${options.length}, current=$_backgroundGridCurrentId',
+      );
+    }
+  }
+
+  void _openCanvasGridIfPossible() {
+    if (!mounted) {
+      return;
+    }
+    if (!_canShowExpressionWheel()) {
+      if (kSakiDiagnosticLogs) {
+        print('ExpressionWheel: canvas open blocked by overlays');
+      }
+      return;
+    }
+
+    final module = widget.gameModule ?? DefaultGameModule();
+    final options =
+        module.scriptCanvases
+            .where((registration) => registration.id.trim().isNotEmpty)
+            .map(
+              (registration) => CommandWheelOption(
+                id: registration.id.trim(),
+                label: registration.displayName.trim().isEmpty
+                    ? registration.id.trim()
+                    : registration.displayName.trim(),
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.label.compareTo(b.label));
+    if (options.isEmpty) {
+      _showNotificationMessage('当前项目没有注册 Canvas');
+      return;
+    }
+
+    final originalId = _gameManager.currentState.scriptCanvasId;
+    final currentId = options.any((option) => option.id == originalId)
+        ? originalId
+        : null;
+    final highlightedId = currentId ?? options.first.id;
+    _setStateIfMounted(() {
+      _showExpressionWheel = false;
+      _showCharacterWheel = false;
+      _showBackgroundGridMenu = false;
+      _showMusicGridMenu = false;
+      _expressionWheelSpeakerInfo = null;
+      _expressionWheelExpressions = const [];
+      _expressionWheelImagePaths = const {};
+      _expressionWheelHighlightedExpression = null;
+
+      _canvasGridOptions = options;
+      _canvasGridCurrentId = currentId;
+      _canvasGridHighlightedId = highlightedId;
+      _canvasGridOriginalId = originalId;
+      _expressionWheelCenter = _lastPointerPosition;
+      _showCanvasGridMenu = true;
+      _activeCommandMenuMode = _CommandDebugMenuMode.canvas;
+    });
+    _previewCanvasSelection(highlightedId);
+    if (kSakiDiagnosticLogs) {
+      print(
+        'ExpressionWheel: canvas grid opened options=${options.length}, current=$currentId',
       );
     }
   }
@@ -773,6 +857,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _showExpressionWheel = false;
       _showCharacterWheel = false;
       _showBackgroundGridMenu = false;
+      _showCanvasGridMenu = false;
       _expressionWheelSpeakerInfo = null;
       _expressionWheelExpressions = const [];
       _expressionWheelImagePaths = const {};
@@ -887,6 +972,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _backgroundGridOptions = const [];
       _backgroundGridCurrentId = null;
       _backgroundGridHighlightedId = null;
+      _canvasGridOptions = const [];
+      _canvasGridCurrentId = null;
+      _canvasGridHighlightedId = null;
+      _canvasGridOriginalId = null;
       _musicGridOptions = const [];
       _musicGridCurrentId = null;
       _musicGridHighlightedId = null;
@@ -894,6 +983,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       _showExpressionWheel = true;
       _showCharacterWheel = false;
       _showBackgroundGridMenu = false;
+      _showCanvasGridMenu = false;
       _showMusicGridMenu = false;
       _activeCommandMenuMode = _CommandDebugMenuMode.expression;
     });
@@ -1448,6 +1538,52 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     }
   }
 
+  void _previewCanvasSelection(String canvasId) {
+    if (!_showCanvasGridMenu || canvasId.trim().isEmpty) {
+      return;
+    }
+    if (_gameManager.currentState.scriptCanvasId == canvasId &&
+        _gameManager.currentState.scriptCanvasDurationSeconds <= 0) {
+      return;
+    }
+    _gameManager.applyDebugCanvasImmediately(canvasId);
+  }
+
+  void _restoreCanvasPreviewIfNeeded() {
+    if (!_showCanvasGridMenu) {
+      return;
+    }
+    final originalId = _canvasGridOriginalId;
+    if (_gameManager.currentState.scriptCanvasId == originalId &&
+        _gameManager.currentState.scriptCanvasDurationSeconds <= 0) {
+      return;
+    }
+    _gameManager.applyDebugCanvasImmediately(originalId);
+  }
+
+  Future<void> _applyCanvasGridSelectionAndClose() async {
+    final selectedCanvas = _canvasGridHighlightedId;
+    if (selectedCanvas == null || selectedCanvas.isEmpty) {
+      _clearCommandMenuState();
+      return;
+    }
+
+    final previousCanvas = _canvasGridOriginalId;
+    // Treat the selected canvas as the new restore target while the source
+    // rewrite and hot reload complete.
+    _canvasGridOriginalId = selectedCanvas;
+    _clearCommandMenuState();
+    final success = await _applyCanvasChangeForCurrentDialogue(selectedCanvas);
+    if (success) {
+      _gameManager.applyDebugCanvasImmediately(selectedCanvas);
+      _showNotificationMessage('已放置 Canvas: $selectedCanvas');
+      await _handleHotReload();
+    } else {
+      _gameManager.applyDebugCanvasImmediately(previousCanvas);
+      _showNotificationMessage('Canvas 放置失败');
+    }
+  }
+
   Future<void> _applyMusicGridSelectionAndClose() async {
     final selectedMusic = _musicGridHighlightedId;
     final currentMusic = _musicGridCurrentId;
@@ -1586,8 +1722,28 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     );
   }
 
+  Future<bool> _applyCanvasChangeForCurrentDialogue(String canvasId) async {
+    final sourceScriptFile = _gameManager.currentDialogueSourceScriptFile;
+    final scriptFileForWrite =
+        (sourceScriptFile != null && sourceScriptFile.trim().isNotEmpty)
+        ? sourceScriptFile
+        : _gameManager.currentScriptFile;
+    final scriptPath = await ScriptContentModifier.getCurrentScriptFilePath(
+      scriptFileForWrite,
+    );
+    if (scriptPath == null) {
+      return false;
+    }
+    return ScriptContentModifier.modifyCanvasNearDialogue(
+      scriptFilePath: scriptPath,
+      targetLineNumber: _gameManager.currentDialogueSourceLine,
+      canvasId: canvasId,
+    );
+  }
+
   void _clearCommandMenuState() {
     _expressionWheelOpenTimer?.cancel();
+    _restoreCanvasPreviewIfNeeded();
     _setStateIfMounted(_resetCommandMenuFields);
     if (kSakiDiagnosticLogs) {
       print('ExpressionWheel: state cleared');
@@ -1605,6 +1761,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     _showExpressionWheel = false;
     _showCharacterWheel = false;
     _showBackgroundGridMenu = false;
+    _showCanvasGridMenu = false;
     _showMusicGridMenu = false;
     _activeCommandMenuMode = null;
     _expressionWheelSpeakerInfo = null;
@@ -1617,6 +1774,10 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
     _backgroundGridOptions = const [];
     _backgroundGridCurrentId = null;
     _backgroundGridHighlightedId = null;
+    _canvasGridOptions = const [];
+    _canvasGridCurrentId = null;
+    _canvasGridHighlightedId = null;
+    _canvasGridOriginalId = null;
     _musicGridOptions = const [];
     _musicGridCurrentId = null;
     _musicGridHighlightedId = null;

@@ -131,7 +131,7 @@
             "patterns": [
                 {
                     "name": "keyword.control.sks",
-                    "match": "\\b(label|scene|show|at|menu|endmenu|jump|if|else|endif|return|nvl|endnvl|nvlm|endnvlm|timer|fx|with|an|play|stop|anime|cg)\\b"
+                    "match": "\\b(label|scene|show|canvas|at|menu|endmenu|jump|if|else|endif|return|nvl|endnvl|nvlm|endnvlm|timer|fx|with|an|play|stop|anime|cg)\\b"
                 },
                 {
                     "include": "#scene-syntax"

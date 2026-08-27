@@ -221,18 +221,29 @@ abstract class GameModule {
     return null;
   }
 
-  /// Resolves artwork for an active `api canvas.play` performance.
+  /// Resolves artwork for an active `canvas <id>` effect or
+  /// `api canvas.play` performance.
   ///
   /// The engine supplies a full-screen [Canvas], its exact [Size], and a
-  /// normalized 0–1 timeline through [ScriptCanvasDefinition]. Projects only
-  /// register named artwork here; timing and input blocking stay in Engine.
+  /// normalized 0–1 timeline through [ScriptCanvasDefinition]. Projects
+  /// register named artwork here; the engine owns scene placement, lifecycle,
+  /// and cinematic input blocking.
   ScriptCanvasDefinition? resolveScriptCanvas({
     required String canvasId,
     required GameState gameState,
     required int scriptIndex,
   }) {
+    final normalizedId = canvasId.trim();
+    for (final registration in scriptCanvases) {
+      if (registration.id == normalizedId) {
+        return registration.definition;
+      }
+    }
     return null;
   }
+
+  /// Named canvas effects available to `canvas <id>` and Shift+V tooling.
+  List<ScriptCanvasRegistration> get scriptCanvases => const [];
 
   /// 创建自定义状态指示器层（如快进/自动播放/暂停）。
   /// 返回 `null` 时使用引擎默认处理。
@@ -655,8 +666,17 @@ class DefaultGameModule implements GameModule {
     required GameState gameState,
     required int scriptIndex,
   }) {
+    final normalizedId = canvasId.trim();
+    for (final registration in scriptCanvases) {
+      if (registration.id == normalizedId) {
+        return registration.definition;
+      }
+    }
     return null;
   }
+
+  @override
+  List<ScriptCanvasRegistration> get scriptCanvases => const [];
 
   @override
   Widget? createStatusIndicatorLayer({

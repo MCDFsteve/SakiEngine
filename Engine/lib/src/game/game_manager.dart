@@ -1215,6 +1215,25 @@ class GameManager {
     _gameStateController.add(_currentState);
   }
 
+  /// Debug: previews or clears one persistent canvas without advancing SKS.
+  void applyDebugCanvasImmediately(String? canvasId) {
+    final normalized = canvasId?.trim();
+    final shouldClear = normalized == null || normalized.isEmpty;
+    if (kEngineDebugMode) {
+      print(
+        '[GameManager] Debug canvas: ${shouldClear ? 'clear' : normalized}',
+      );
+    }
+    _currentState = _currentState.copyWith(
+      scriptCanvasId: shouldClear ? null : normalized,
+      scriptCanvasDurationSeconds: 0,
+      scriptCanvasRevision: _currentState.scriptCanvasRevision + 1,
+      clearScriptCanvas: shouldClear,
+      everShownCharacters: _everShownCharacters,
+    );
+    _gameStateController.add(_currentState);
+  }
+
   /// 分析脚本中CG差分的表达式变化
   /// 查找指定resourceId和pose在当前位置附近的所有表达式
   List<String> analyzeCgExpressions(
@@ -2890,6 +2909,29 @@ class GameManager {
           clearAnimeOverlay: true,
           animeLoop: false,
           animeKeep: false,
+          everShownCharacters: _everShownCharacters,
+        );
+        _gameStateController.add(_currentState);
+        _scriptIndex++;
+        continue;
+      }
+
+      if (node is CanvasNode) {
+        _currentState = _currentState.copyWith(
+          scriptCanvasId: node.canvasId,
+          scriptCanvasDurationSeconds: 0,
+          scriptCanvasRevision: _currentState.scriptCanvasRevision + 1,
+          everShownCharacters: _everShownCharacters,
+        );
+        _gameStateController.add(_currentState);
+        _scriptIndex++;
+        continue;
+      }
+
+      if (node is HideCanvasNode) {
+        _currentState = _currentState.copyWith(
+          clearScriptCanvas: true,
+          scriptCanvasRevision: _currentState.scriptCanvasRevision + 1,
           everShownCharacters: _everShownCharacters,
         );
         _gameStateController.add(_currentState);

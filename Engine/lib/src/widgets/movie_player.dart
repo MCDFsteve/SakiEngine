@@ -1,7 +1,7 @@
 import 'dart:async';
+
+import 'package:erika_flutter/erika_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/utils/smart_asset_image.dart';
 
@@ -12,7 +12,7 @@ class MoviePlayer extends StatefulWidget {
   final ValueChanged<Duration>? onPositionChanged;
   final bool autoPlay;
   final bool looping;
-  final int? repeatCount; // null 表示仅播放一次
+  final int? repeatCount;
   final Duration? loopStart;
   final bool backgroundMode;
   final bool pingPongLoop;
@@ -22,6 +22,8 @@ class MoviePlayer extends StatefulWidget {
   final BoxFit fit;
   final Alignment alignment;
   final String? placeholderImageAssetName;
+  final double playbackRate;
+  final Color backgroundColor;
 
   const MoviePlayer({
     super.key,
@@ -41,85 +43,66 @@ class MoviePlayer extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
     this.placeholderImageAssetName,
-  });
+    this.playbackRate = 1.0,
+    this.backgroundColor = Colors.black,
+  }) : assert(playbackRate > 0);
 
   @override
   State<MoviePlayer> createState() => _MoviePlayerState();
 }
 
 class _MoviePlayerState extends State<MoviePlayer> {
-  static const Duration _pingPongReverseEntryOffset =
-      Duration(milliseconds: 120);
-  static const Duration _pingPongReversePrewarmLead = Duration(seconds: 5);
+  ErikaPlayer? _player;
+  ErikaPlayer? _secondaryPlayer;
+  StreamSubscription<ErikaPlayerEvent>? _eventSubscription;
+  StreamSubscription<ErikaPlayerEvent>? _secondaryEventSubscription;
 
-  Player? _player;
-  VideoController? _videoController;
-  Player? _reversePlayer;
-  VideoController? _reverseVideoController;
-  StreamSubscription<bool>? _completedSubscription;
-  StreamSubscription<bool>? _bufferingSubscription;
-  StreamSubscription<String>? _errorSubscription;
-  StreamSubscription<Duration>? _durationSubscription;
-  StreamSubscription<Duration>? _positionSubscription;
-  StreamSubscription<int?>? _widthSubscription;
-  StreamSubscription<bool>? _reverseCompletedSubscription;
-  StreamSubscription<String>? _reverseErrorSubscription;
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
   bool _hasReportedReady = false;
+  bool _surfaceAttached = false;
+  bool _hasVideoParams = false;
+  bool _hasStartedPlayback = false;
+  bool _secondaryHasStartedPlayback = false;
+  bool _showSecondaryPlayer = false;
+  bool _handlingPrimaryCompletion = false;
+  bool _handlingSecondaryCompletion = false;
   bool _hasCalledOnEnd = false;
   int _currentPlayCount = 0;
-  Duration _mediaDuration = Duration.zero;
-  bool _isBuffering = true;
-  bool _hasVideoSize = false;
-  bool _hasRenderedFirstFrame = false;
-  bool _isPingPongReversePhase = false;
-  bool _isPingPongTransitioning = false;
-  bool _reversePrewarmStarted = false;
-  bool _reversePlayerReady = false;
-  bool _showReversePlayer = false;
-  bool _pendingSwitchToReversePlayer = false;
-  String? _primaryMediaSource;
-  String? _pingPongReverseMediaSource;
-
-  bool get _isPingPongLoopEnabled =>
-      widget.pingPongLoop && widget.loopStart != null;
+  int _initializationGeneration = 0;
+  int _videoWidth = 0;
+  int _videoHeight = 0;
+  ErikaPlaybackState _playbackState = ErikaPlaybackState.idle;
+  Completer<void>? _surfaceAttachedCompleter;
+  Completer<void>? _secondarySurfaceAttachedCompleter;
 
   bool get _hasSequentialFollowUp =>
-      widget.sequentialMovieFile != null &&
-      widget.sequentialMovieFile!.trim().isNotEmpty;
+      widget.sequentialMovieFile?.trim().isNotEmpty == true;
 
-  bool get _hasPreparedPingPongReverseSource =>
-      (_isPingPongLoopEnabled || _hasSequentialFollowUp) &&
-      _primaryMediaSource != null &&
-      _pingPongReverseMediaSource != null;
-
-  Duration? _currentDuration() {
-    if (_mediaDuration > Duration.zero) {
-      return _mediaDuration;
-    }
-    final duration = _player?.state.duration ?? Duration.zero;
-    if (duration > Duration.zero) {
-      return duration;
-    }
-    return null;
-  }
+  bool get _hasSecondaryMedia =>
+      widget.pingPongReverseMovieFile?.trim().isNotEmpty == true ||
+      _hasSequentialFollowUp;
 
   bool get _hasPlaceholderImage =>
-      widget.placeholderImageAssetName != null &&
-      widget.placeholderImageAssetName!.trim().isNotEmpty;
+      widget.placeholderImageAssetName?.trim().isNotEmpty == true;
+
+  bool get _playbackCanBeReportedReady =>
+      _playbackState == ErikaPlaybackState.ready ||
+      _playbackState == ErikaPlaybackState.playing ||
+      _playbackState == ErikaPlaybackState.paused;
 
   @override
   void initState() {
     super.initState();
-    _initializeVideo();
+    unawaited(_initializeVideo());
   }
 
   @override
-  void didUpdateWidget(MoviePlayer oldWidget) {
+  void didUpdateWidget(covariant MoviePlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final shouldReinitialize = oldWidget.movieFile != widget.movieFile ||
+    final shouldReinitialize =
+        oldWidget.movieFile != widget.movieFile ||
         oldWidget.looping != widget.looping ||
         oldWidget.loopStart != widget.loopStart ||
         oldWidget.backgroundMode != widget.backgroundMode ||
@@ -128,582 +111,376 @@ class _MoviePlayerState extends State<MoviePlayer> {
         oldWidget.sequentialMovieFile != widget.sequentialMovieFile ||
         oldWidget.sequentialLooping != widget.sequentialLooping;
     if (shouldReinitialize) {
-      _initializeVideo();
+      unawaited(_initializeVideo());
       return;
     }
-
     if (oldWidget.autoPlay != widget.autoPlay) {
       unawaited(_syncPlaybackWithAutoPlay());
+    }
+    if (oldWidget.playbackRate != widget.playbackRate) {
+      unawaited(_applyPlaybackRate());
     }
   }
 
   Future<void> _initializeVideo() async {
-    await _disposePlayer();
-    await _disposeReversePlayer();
+    final generation = ++_initializationGeneration;
+    await _disposePlayers();
+    if (!mounted || generation != _initializationGeneration) {
+      return;
+    }
+
+    if (widget.movieFile.trim().isEmpty) {
+      _setError('视频文件名为空');
+      return;
+    }
+
+    setState(() {
+      _isInitialized = false;
+      _hasError = false;
+      _errorMessage = null;
+      _hasReportedReady = false;
+      _surfaceAttached = false;
+      _hasVideoParams = false;
+      _hasStartedPlayback = false;
+      _secondaryHasStartedPlayback = false;
+      _showSecondaryPlayer = false;
+      _handlingPrimaryCompletion = false;
+      _handlingSecondaryCompletion = false;
+      _hasCalledOnEnd = false;
+      _currentPlayCount = 0;
+      _videoWidth = 0;
+      _videoHeight = 0;
+      _playbackState = ErikaPlaybackState.idle;
+    });
+    final surfaceAttachedCompleter = Completer<void>();
+    _surfaceAttachedCompleter = surfaceAttachedCompleter;
 
     try {
-      if (widget.movieFile.isEmpty) {
-        _setError('视频文件名为空');
+      final videoPath = await _resolveMoviePath(widget.movieFile);
+      if (!mounted || generation != _initializationGeneration) {
         return;
       }
-
-      setState(() {
-        _isInitialized = false;
-        _hasError = false;
-        _errorMessage = null;
-        _hasReportedReady = false;
-        _hasCalledOnEnd = false;
-        _currentPlayCount = 0;
-        _mediaDuration = Duration.zero;
-        _isBuffering = true;
-        _hasVideoSize = false;
-        _hasRenderedFirstFrame = false;
-        _isPingPongReversePhase = false;
-        _isPingPongTransitioning = false;
-        _reversePrewarmStarted = false;
-        _reversePlayerReady = false;
-        _showReversePlayer = false;
-        _pendingSwitchToReversePlayer = false;
-      });
-      _primaryMediaSource = null;
-      _pingPongReverseMediaSource = null;
-
-      final videoPath = await _resolveMoviePath(widget.movieFile);
-
-      if (!mounted) return;
-
       if (videoPath == null) {
         _setError('找不到视频文件: ${widget.movieFile}');
         return;
       }
 
-      final reverseMovieFile = widget.pingPongReverseMovieFile?.trim();
-      final sequentialMovieFile = widget.sequentialMovieFile?.trim();
-      String? reverseVideoPath;
-      if (reverseMovieFile != null && reverseMovieFile.isNotEmpty) {
-        reverseVideoPath = await _resolveMoviePath(reverseMovieFile);
-
-        if (!mounted) return;
-
-        if (reverseVideoPath == null) {
-          _setError('找不到反向视频文件: $reverseMovieFile');
+      String? secondaryPath;
+      final secondaryMovieFile =
+          widget.pingPongReverseMovieFile?.trim().isNotEmpty == true
+          ? widget.pingPongReverseMovieFile!.trim()
+          : widget.sequentialMovieFile?.trim();
+      if (_hasSecondaryMedia && secondaryMovieFile != null) {
+        secondaryPath = await _resolveMoviePath(secondaryMovieFile);
+        if (!mounted || generation != _initializationGeneration) {
           return;
         }
-      } else if (_hasSequentialFollowUp &&
-          sequentialMovieFile != null &&
-          sequentialMovieFile.isNotEmpty) {
-        reverseVideoPath = await _resolveMoviePath(sequentialMovieFile);
-
-        if (!mounted) return;
-
-        if (reverseVideoPath == null) {
-          _setError('找不到后续视频文件: $sequentialMovieFile');
+        if (secondaryPath == null) {
+          _setError('找不到后续视频文件: $secondaryMovieFile');
           return;
         }
       }
 
-      _player = Player();
-      _videoController = VideoController(_player!);
-      _listenPlayerEvents();
+      final player = ErikaPlayer(
+        allowBackgroundPlayback: widget.backgroundMode,
+      );
+      _player = player;
+      _eventSubscription = player.events.listen(
+        (event) => _handlePrimaryEvent(player, event),
+        onError: (Object error, StackTrace stackTrace) {
+          if (_player == player) {
+            _setError('视频事件流出错: $error');
+          }
+        },
+      );
 
-      final playlistMode = _isPingPongLoopEnabled
-          ? PlaylistMode.none
-          : (widget.looping && widget.loopStart == null
-              ? PlaylistMode.loop
-              : PlaylistMode.none);
-      await _player!.setPlaylistMode(playlistMode);
-      await _applyBackgroundVolume();
-
-      final mediaSource = _buildMediaSource(videoPath);
-      _primaryMediaSource = mediaSource;
-      _pingPongReverseMediaSource =
-          reverseVideoPath == null ? null : _buildMediaSource(reverseVideoPath);
-      await _player!.open(Media(mediaSource), play: widget.autoPlay);
-      await _applyBackgroundVolume();
-
-      if (!mounted) return;
-      setState(() {
-        _isInitialized = true;
-      });
-      _isBuffering = _player?.state.buffering ?? _isBuffering;
-      _hasVideoSize = _hasVideoSize || (_player?.state.width != null);
-      unawaited(_waitUntilPrimaryFirstFrameRendered(_videoController!));
-      _maybeReportVideoReady();
-    } catch (e) {
-      _setError('视频初始化失败: $e');
-    }
-  }
-
-  Future<void> _waitUntilPrimaryFirstFrameRendered(
-      VideoController controller) async {
-    try {
-      await controller.waitUntilFirstFrameRendered;
-    } catch (_) {}
-
-    if (!mounted || _videoController != controller) {
-      return;
-    }
-
-    setState(() {
-      _hasRenderedFirstFrame = true;
-    });
-    _maybeReportVideoReady();
-  }
-
-  void _listenPlayerEvents() {
-    if (_player == null) return;
-
-    _completedSubscription = _player!.stream.completed.listen((completed) {
-      if (completed) {
-        _handlePlaybackCompleted();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
       }
-    });
 
-    _bufferingSubscription = _player!.stream.buffering.listen((buffering) {
-      _isBuffering = buffering;
-      _maybeReportVideoReady();
-    });
-
-    _durationSubscription = _player!.stream.duration.listen((duration) {
-      _mediaDuration = duration;
-      _maybeReportVideoReady();
-    });
-
-    _positionSubscription = _player!.stream.position.listen((position) {
-      widget.onPositionChanged?.call(position);
-      _handlePingPongPosition(position);
-    });
-
-    _widthSubscription = _player!.stream.width.listen((width) {
-      if (width != null && width > 0) {
-        _hasVideoSize = true;
-        _maybeReportVideoReady();
+      await player.open(videoPath);
+      await surfaceAttachedCompleter.future.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () {},
+      );
+      if (!mounted || generation != _initializationGeneration) {
+        return;
       }
-    });
-
-    _errorSubscription = _player!.stream.error.listen((message) {
-      if (message.isNotEmpty) {
-        _setError('视频播放出错: $message');
+      await player.setPlaybackRate(widget.playbackRate);
+      if (widget.backgroundMode) {
+        await player.setVolume(0.0);
       }
-    });
-  }
+      if (widget.autoPlay) {
+        await player.play();
+      }
 
-  void _handlePingPongPosition(Duration position) {
-    if ((!_isPingPongLoopEnabled && !_hasSequentialFollowUp) ||
-        _isPingPongTransitioning) {
-      return;
-    }
-
-    if (_hasPreparedPingPongReverseSource) {
-      _maybePrewarmPreparedPingPongReverse(position);
-      return;
-    }
-
-    final loopStart = widget.loopStart;
-    if (loopStart == null) {
-      return;
-    }
-
-    const threshold = Duration(milliseconds: 120);
-    if (_isPingPongReversePhase) {
-      if (position <= loopStart + threshold) {
-        unawaited(_switchPingPongToForward());
+      if (secondaryPath != null &&
+          mounted &&
+          generation == _initializationGeneration) {
+        await _initializeSecondaryPlayer(secondaryPath, generation);
+      }
+    } catch (error) {
+      if (mounted && generation == _initializationGeneration) {
+        _setError('视频初始化失败: $error');
       }
     }
   }
 
-  void _maybePrewarmPreparedPingPongReverse(Duration position) {
-    if (_reversePrewarmStarted || _reversePlayerReady) {
-      return;
-    }
-
-    if (_hasSequentialFollowUp && !_isPingPongLoopEnabled) {
-      unawaited(_prewarmPreparedPingPongReversePlayer());
-      return;
-    }
-
-    final duration = _currentDuration();
-    if (duration == null || duration <= Duration.zero) {
-      return;
-    }
-
-    final remaining = duration - position;
-    if (remaining <= _pingPongReversePrewarmLead) {
-      unawaited(_prewarmPreparedPingPongReversePlayer());
-    }
-  }
-
-  Future<void> _prewarmPreparedPingPongReversePlayer() async {
-    final reverseSource = _pingPongReverseMediaSource;
-    if (!_hasPreparedPingPongReverseSource ||
-        reverseSource == null ||
-        _reversePrewarmStarted) {
-      return;
-    }
-
-    _reversePrewarmStarted = true;
-    final player = Player();
-    final controller = VideoController(player);
-
-    _reversePlayer = player;
-    _reverseVideoController = controller;
-    _listenReversePlayerEvents();
-
+  Future<void> _initializeSecondaryPlayer(String path, int generation) async {
+    final player = ErikaPlayer(allowBackgroundPlayback: widget.backgroundMode);
+    _secondaryPlayer = player;
+    _secondarySurfaceAttachedCompleter = Completer<void>();
+    _secondaryEventSubscription = player.events.listen(
+      (event) => _handleSecondaryEvent(player, event),
+      onError: (Object _, StackTrace _) {},
+    );
     if (mounted) {
       setState(() {});
     }
-
-    try {
-      await player.setPlaylistMode(PlaylistMode.none);
-      await _applyBackgroundVolume(player);
-      await player.open(Media(reverseSource), play: false);
-      await _applyBackgroundVolume(player);
-      await controller.waitUntilFirstFrameRendered;
-
-      if (!mounted || _reversePlayer != player) {
-        return;
-      }
-
-      setState(() {
-        _reversePlayerReady = true;
-      });
-
-      if (_pendingSwitchToReversePlayer) {
-        _pendingSwitchToReversePlayer = false;
-        unawaited(_switchPingPongToReversePlayer());
-      }
-    } catch (_) {
-      if (_reversePlayer == player) {
-        await _disposeReversePlayer();
-      } else {
-        await player.dispose();
-      }
+    await player.open(path);
+    await player.setPlaybackRate(widget.playbackRate);
+    if (widget.backgroundMode) {
+      await player.setVolume(0.0);
+    }
+    if (!mounted || generation != _initializationGeneration) {
+      return;
     }
   }
 
-  void _listenReversePlayerEvents() {
-    final player = _reversePlayer;
-    if (player == null) return;
+  void _handlePrimaryEvent(ErikaPlayer player, ErikaPlayerEvent event) {
+    if (!mounted || _player != player) {
+      return;
+    }
+    switch (event.kind) {
+      case ErikaEventKind.stateChanged:
+        _playbackState = event.state;
+        if (event.state == ErikaPlaybackState.playing) {
+          _hasStartedPlayback = true;
+        } else if (event.state == ErikaPlaybackState.stopped &&
+            _hasStartedPlayback) {
+          unawaited(_handlePrimaryPlaybackCompleted());
+        } else if (event.state == ErikaPlaybackState.error) {
+          _setError(event.message ?? event.error ?? '视频播放出错');
+          return;
+        }
+        break;
+      case ErikaEventKind.positionChanged:
+        widget.onPositionChanged?.call(event.position);
+        break;
+      case ErikaEventKind.bufferingChanged:
+        break;
+      case ErikaEventKind.videoParamsChanged:
+        if (event.video.width > 0 && event.video.height > 0) {
+          _hasVideoParams = true;
+          if (_videoWidth != event.video.width ||
+              _videoHeight != event.video.height) {
+            setState(() {
+              _videoWidth = event.video.width;
+              _videoHeight = event.video.height;
+            });
+          }
+        }
+        break;
+      case ErikaEventKind.surfaceAttached:
+        _surfaceAttached = true;
+        final completer = _surfaceAttachedCompleter;
+        if (completer != null && !completer.isCompleted) {
+          completer.complete();
+        }
+        break;
+      case ErikaEventKind.error:
+        _setError(event.message ?? event.error ?? '视频播放出错');
+        return;
+      default:
+        break;
+    }
+    _maybeReportVideoReady();
+  }
 
-    _reverseCompletedSubscription = player.stream.completed.listen((completed) {
-      if (completed) {
-        unawaited(_handleReversePlaybackCompleted());
+  void _handleSecondaryEvent(ErikaPlayer player, ErikaPlayerEvent event) {
+    if (!mounted || _secondaryPlayer != player) {
+      return;
+    }
+    if (event.kind == ErikaEventKind.stateChanged) {
+      if (event.state == ErikaPlaybackState.playing) {
+        _secondaryHasStartedPlayback = true;
+      } else if (event.state == ErikaPlaybackState.stopped &&
+          _secondaryHasStartedPlayback) {
+        unawaited(_handleSecondaryPlaybackCompleted());
       }
-    });
-
-    _reverseErrorSubscription = player.stream.error.listen((message) {
-      if (message.isNotEmpty) {
-        unawaited(_disposeReversePlayer());
+    } else if (event.kind == ErikaEventKind.surfaceAttached) {
+      final completer = _secondarySurfaceAttachedCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete();
       }
-    });
+    }
   }
 
   void _maybeReportVideoReady() {
-    if (_hasReportedReady || !_isInitialized || _hasError) {
+    if (_hasReportedReady ||
+        !_isInitialized ||
+        _hasError ||
+        !_surfaceAttached ||
+        !_hasVideoParams ||
+        !_playbackCanBeReportedReady) {
       return;
     }
-
-    final hasDuration = _mediaDuration > Duration.zero ||
-        (_player?.state.duration ?? Duration.zero) > Duration.zero;
-    final hasVideoSize = _hasVideoSize || (_player?.state.width != null);
-    final isBuffering = _isBuffering || (_player?.state.buffering ?? false);
-    if (!_hasRenderedFirstFrame ||
-        isBuffering ||
-        (!hasDuration && !hasVideoSize)) {
-      return;
-    }
-
     _hasReportedReady = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
+      if (mounted) {
+        widget.onVideoReady?.call();
+      }
+    });
+  }
+
+  Future<void> _handlePrimaryPlaybackCompleted() async {
+    final player = _player;
+    if (player == null || _handlingPrimaryCompletion) {
+      return;
+    }
+    _handlingPrimaryCompletion = true;
+    _hasStartedPlayback = false;
+    try {
+      final secondaryPlayer = _secondaryPlayer;
+      if (secondaryPlayer != null &&
+          (widget.pingPongLoop || _hasSequentialFollowUp)) {
+        if (mounted) {
+          setState(() {
+            _showSecondaryPlayer = true;
+          });
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        await _secondarySurfaceAttachedCompleter?.future.timeout(
+          const Duration(seconds: 1),
+          onTimeout: () {},
+        );
+        if (!mounted || _player != player) {
+          return;
+        }
+        await secondaryPlayer.seek(Duration.zero);
+        if (widget.autoPlay) {
+          await secondaryPlayer.play();
+        }
         return;
       }
-      widget.onVideoReady?.call();
+
+      if (widget.looping || widget.pingPongLoop) {
+        await player.seek(widget.loopStart ?? Duration.zero);
+        if (widget.autoPlay) {
+          await player.play();
+        }
+        return;
+      }
+
+      _currentPlayCount++;
+      final targetRepeatCount = widget.repeatCount ?? 1;
+      if (_currentPlayCount < targetRepeatCount) {
+        await player.seek(Duration.zero);
+        if (widget.autoPlay) {
+          await player.play();
+        }
+        return;
+      }
+      _reportVideoEnd();
+    } catch (_) {
+      _reportVideoEnd();
+    } finally {
+      _handlingPrimaryCompletion = false;
+    }
+  }
+
+  Future<void> _handleSecondaryPlaybackCompleted() async {
+    final secondaryPlayer = _secondaryPlayer;
+    if (secondaryPlayer == null || _handlingSecondaryCompletion) {
+      return;
+    }
+    _handlingSecondaryCompletion = true;
+    _secondaryHasStartedPlayback = false;
+    try {
+      if (_hasSequentialFollowUp) {
+        if (widget.sequentialLooping) {
+          await secondaryPlayer.seek(Duration.zero);
+          if (widget.autoPlay) {
+            await secondaryPlayer.play();
+          }
+        } else {
+          _reportVideoEnd();
+        }
+        return;
+      }
+
+      final primaryPlayer = _player;
+      if (widget.pingPongLoop && primaryPlayer != null) {
+        await secondaryPlayer.pause();
+        await secondaryPlayer.seek(Duration.zero);
+        await primaryPlayer.seek(widget.loopStart ?? Duration.zero);
+        if (mounted) {
+          setState(() {
+            _showSecondaryPlayer = false;
+          });
+        }
+        if (widget.autoPlay) {
+          await primaryPlayer.play();
+        }
+      }
+    } finally {
+      _handlingSecondaryCompletion = false;
+    }
+  }
+
+  void _reportVideoEnd() {
+    if (_hasCalledOnEnd) {
+      return;
+    }
+    _hasCalledOnEnd = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        widget.onVideoEnd?.call();
+      }
     });
   }
 
   Future<void> _syncPlaybackWithAutoPlay() async {
-    if (_player == null || !_isInitialized) {
-      return;
-    }
-
+    final activePlayer = _showSecondaryPlayer ? _secondaryPlayer : _player;
+    final inactivePlayer = _showSecondaryPlayer ? _player : _secondaryPlayer;
     try {
       if (widget.autoPlay) {
-        final activePlayer = _showReversePlayer ? _reversePlayer : _player;
-        final inactivePlayer = _showReversePlayer ? _player : _reversePlayer;
-        await inactivePlayer?.pause();
         await activePlayer?.play();
+        await inactivePlayer?.pause();
       } else {
         await _player?.pause();
-        await _reversePlayer?.pause();
+        await _secondaryPlayer?.pause();
       }
-      await _applyBackgroundVolume(_player);
-      await _applyBackgroundVolume(_reversePlayer);
     } catch (_) {}
   }
 
-  Future<void> _switchPingPongToReversePlayer() async {
-    final reversePlayer = _reversePlayer;
-    if (reversePlayer == null || !_reversePlayerReady) {
-      _pendingSwitchToReversePlayer = true;
-      if (!_reversePrewarmStarted) {
-        unawaited(_prewarmPreparedPingPongReversePlayer());
-      }
-      return;
-    }
-    if (_isPingPongTransitioning) {
-      _pendingSwitchToReversePlayer = true;
-      return;
-    }
-
-    _isPingPongTransitioning = true;
+  Future<void> _applyPlaybackRate() async {
     try {
-      await _player?.pause();
-      if (!mounted) return;
-      setState(() {
-        _showReversePlayer = true;
-        _isPingPongReversePhase = true;
-      });
-      if (widget.autoPlay) {
-        await reversePlayer.play();
-      }
-      await _applyBackgroundVolume(reversePlayer);
-    } catch (_) {
-    } finally {
-      _isPingPongTransitioning = false;
-    }
-  }
-
-  Future<void> _handleReversePlaybackCompleted() async {
-    final player = _player;
-    final reversePlayer = _reversePlayer;
-    final loopStart = widget.loopStart;
-    if (!_showReversePlayer ||
-        player == null ||
-        reversePlayer == null ||
-        _isPingPongTransitioning) {
-      return;
-    }
-
-    if (_hasSequentialFollowUp) {
-      if (widget.sequentialLooping) {
-        try {
-          await reversePlayer.seek(Duration.zero);
-          if (widget.autoPlay) {
-            await reversePlayer.play();
-          }
-          await _applyBackgroundVolume(reversePlayer);
-        } catch (_) {}
-      }
-      return;
-    }
-
-    if (!_isPingPongLoopEnabled || loopStart == null) {
-      return;
-    }
-
-    _isPingPongTransitioning = true;
-    try {
-      await player.pause();
-      await player.seek(loopStart);
-      if (!mounted) return;
-      setState(() {
-        _showReversePlayer = false;
-        _isPingPongReversePhase = false;
-      });
-      if (widget.autoPlay) {
-        await player.play();
-      }
-      await _applyBackgroundVolume(player);
-      if (_isPingPongLoopEnabled) {
-        unawaited(_prepareReversePlayerForNextCycle());
-      }
-    } catch (_) {
-    } finally {
-      _isPingPongTransitioning = false;
-    }
-  }
-
-  Future<void> _prepareReversePlayerForNextCycle() async {
-    final reversePlayer = _reversePlayer;
-    if (reversePlayer == null) {
-      return;
-    }
-
-    try {
-      await reversePlayer.pause();
-      await reversePlayer.seek(Duration.zero);
-      await _applyBackgroundVolume(reversePlayer);
+      await Future.wait<void>([
+        if (_player != null) _player!.setPlaybackRate(widget.playbackRate),
+        if (_secondaryPlayer != null)
+          _secondaryPlayer!.setPlaybackRate(widget.playbackRate),
+      ]);
     } catch (_) {}
   }
 
-  Future<void> _startPingPongReverse() async {
-    final player = _player;
-    final loopStart = widget.loopStart;
-    if (player == null || loopStart == null) {
-      return;
-    }
-
-    final duration = _currentDuration();
-    if (duration == null || duration <= loopStart) {
-      return;
-    }
-
-    final reverseSeekTarget = duration - _pingPongReverseEntryOffset > loopStart
-        ? duration - _pingPongReverseEntryOffset
-        : duration - const Duration(milliseconds: 1);
-
-    _isPingPongTransitioning = true;
-    try {
-      await player.setPlaybackDirection(PlaybackDirection.backward);
-      await player.seek(reverseSeekTarget);
-      _isPingPongReversePhase = true;
-      await player.play();
-    } on UnsupportedError {
-      _isPingPongReversePhase = false;
-      try {
-        await player.seek(loopStart);
-        await player.play();
-      } catch (_) {}
-    } catch (_) {
-    } finally {
-      _isPingPongTransitioning = false;
-    }
-  }
-
-  Future<void> _switchPingPongToForward() async {
-    final player = _player;
-    final loopStart = widget.loopStart;
-    if (player == null || loopStart == null) {
-      return;
-    }
-    if (_isPingPongTransitioning) {
-      return;
-    }
-
-    _isPingPongTransitioning = true;
-    try {
-      await player.setPlaybackDirection(PlaybackDirection.forward);
-      await player.seek(loopStart);
-      _isPingPongReversePhase = false;
-      await player.play();
-    } on UnsupportedError {
-      _isPingPongReversePhase = false;
-      try {
-        await player.seek(loopStart);
-        await player.play();
-      } catch (_) {}
-    } catch (_) {
-    } finally {
-      _isPingPongTransitioning = false;
-    }
-  }
-
-  void _handlePlaybackCompleted() async {
-    final player = _player;
-    if (player == null) {
-      return;
-    }
-
-    if (_isPingPongLoopEnabled) {
-      if (_hasPreparedPingPongReverseSource) {
-        if (_isPingPongTransitioning) {
-          return;
-        }
-        if (!_reversePrewarmStarted) {
-          unawaited(_prewarmPreparedPingPongReversePlayer());
-        }
-        if (_reversePlayerReady) {
-          await _switchPingPongToReversePlayer();
-        } else {
-          _pendingSwitchToReversePlayer = true;
-        }
-        return;
-      }
-      if (_isPingPongTransitioning) {
-        return;
-      }
-      if (_isPingPongReversePhase) {
-        await _switchPingPongToForward();
-      } else {
-        await _startPingPongReverse();
-      }
-      return;
-    }
-
-    if (_hasSequentialFollowUp) {
-      if (_hasPreparedPingPongReverseSource) {
-        if (_isPingPongTransitioning) {
-          return;
-        }
-        if (!_reversePrewarmStarted) {
-          unawaited(_prewarmPreparedPingPongReversePlayer());
-        }
-        if (_reversePlayerReady) {
-          await _switchPingPongToReversePlayer();
-        } else {
-          _pendingSwitchToReversePlayer = true;
-        }
-      }
-      return;
-    }
-
-    if (_hasCalledOnEnd || widget.looping) {
-      if (widget.looping && widget.loopStart != null) {
-        try {
-          await _player!.seek(widget.loopStart!);
-          await _player!.play();
-        } catch (_) {}
-      }
-      return;
-    }
-
-    _currentPlayCount++;
-    final targetRepeatCount = widget.repeatCount ?? 1;
-
-    if (_currentPlayCount < targetRepeatCount) {
-      try {
-        await _player!.seek(Duration.zero);
-        await _player!.play();
-      } catch (_) {}
-    } else {
-      _hasCalledOnEnd = true;
-      if (widget.onVideoEnd != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            widget.onVideoEnd!();
-          }
-        });
-      }
-    }
-  }
-
-  String _buildMediaSource(String path) {
-    final trimmed = path.trim();
-    final lower = trimmed.toLowerCase();
-
-    if (trimmed.startsWith('asset:///')) {
-      return trimmed;
-    }
-
-    if (lower.startsWith('assets/') || lower.startsWith('packages/')) {
-      return 'asset:///$trimmed';
-    }
-
-    final uri = Uri.tryParse(trimmed);
-    if (uri != null && uri.hasScheme) {
-      return trimmed;
-    }
-
-    if (trimmed.startsWith('/')) {
-      return Uri.file(trimmed).toString();
-    }
-
-    return 'asset:///Assets/$trimmed';
+  Future<String?> _resolveMoviePath(String movieFile) async {
+    String? videoPath = await AssetManager().findNativeMediaAsset(movieFile);
+    videoPath ??= await AssetManager().findNativeMediaAsset(
+      'videos/$movieFile',
+    );
+    videoPath ??= await AssetManager().findNativeMediaAsset(
+      'movies/$movieFile',
+    );
+    return videoPath;
   }
 
   void _setError(String message) {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _hasError = true;
       _errorMessage = message;
@@ -711,98 +488,57 @@ class _MoviePlayerState extends State<MoviePlayer> {
     });
   }
 
-  Future<void> _disposePlayer() async {
-    await _completedSubscription?.cancel();
-    await _bufferingSubscription?.cancel();
-    await _durationSubscription?.cancel();
-    await _positionSubscription?.cancel();
-    await _widthSubscription?.cancel();
-    await _errorSubscription?.cancel();
-    _completedSubscription = null;
-    _bufferingSubscription = null;
-    _durationSubscription = null;
-    _positionSubscription = null;
-    _widthSubscription = null;
-    _errorSubscription = null;
-
+  Future<void> _disposePlayers() async {
+    await _eventSubscription?.cancel();
+    await _secondaryEventSubscription?.cancel();
+    _eventSubscription = null;
+    _secondaryEventSubscription = null;
+    _surfaceAttachedCompleter = null;
+    _secondarySurfaceAttachedCompleter = null;
     final player = _player;
+    final secondaryPlayer = _secondaryPlayer;
     _player = null;
-    _videoController = null;
-    _hasReportedReady = false;
-    _hasCalledOnEnd = false;
-    _currentPlayCount = 0;
-    _mediaDuration = Duration.zero;
-    _isBuffering = true;
-    _hasVideoSize = false;
-    _hasRenderedFirstFrame = false;
-    _isPingPongReversePhase = false;
-    _isPingPongTransitioning = false;
-    _showReversePlayer = false;
-    _pendingSwitchToReversePlayer = false;
-    _primaryMediaSource = null;
-    _pingPongReverseMediaSource = null;
-
-    await player?.dispose();
-  }
-
-  Future<void> _disposeReversePlayer() async {
-    await _reverseCompletedSubscription?.cancel();
-    await _reverseErrorSubscription?.cancel();
-    _reverseCompletedSubscription = null;
-    _reverseErrorSubscription = null;
-
-    final reversePlayer = _reversePlayer;
-    _reversePlayer = null;
-    _reverseVideoController = null;
-    _reversePrewarmStarted = false;
-    _reversePlayerReady = false;
-    _showReversePlayer = false;
-    _pendingSwitchToReversePlayer = false;
-
-    await reversePlayer?.dispose();
-  }
-
-  Future<String?> _resolveMoviePath(String movieFile) async {
-    String? videoPath = await AssetManager().findAsset(movieFile);
-    videoPath ??= await AssetManager().findAsset('videos/$movieFile');
-    videoPath ??= await AssetManager().findAsset('movies/$movieFile');
-    return videoPath;
-  }
-
-  Future<void> _applyBackgroundVolume([Player? player]) async {
-    if (!widget.backgroundMode) {
-      return;
-    }
-    await (player ?? _player)?.setVolume(0.0);
+    _secondaryPlayer = null;
+    await Future.wait<void>([
+      if (player != null) player.dispose(),
+      if (secondaryPlayer != null) secondaryPlayer.dispose(),
+    ]);
   }
 
   @override
   void dispose() {
-    unawaited(_disposePlayer());
-    unawaited(_disposeReversePlayer());
+    _initializationGeneration++;
+    unawaited(_disposePlayers());
     super.dispose();
   }
 
-  Widget _buildVideoLayer(VideoController controller) {
-    return Video(
-      controller: controller,
+  Widget _buildVideoLayer(BuildContext context, ErikaPlayer player) {
+    final texture = ErikaTextureVideoView(player: player);
+    if (_videoWidth <= 0 || _videoHeight <= 0) {
+      return SizedBox.expand(child: texture);
+    }
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    return FittedBox(
       fit: widget.fit,
       alignment: widget.alignment,
-      controls: null,
-      fill: _hasPlaceholderImage ? Colors.transparent : Colors.black,
+      clipBehavior: Clip.hardEdge,
+      child: SizedBox(
+        width: _videoWidth / pixelRatio,
+        height: _videoHeight / pixelRatio,
+        child: texture,
+      ),
     );
   }
 
   Widget _buildPlaceholderLayer() {
     final assetName = widget.placeholderImageAssetName?.trim();
     if (assetName == null || assetName.isEmpty) {
-      return const ColoredBox(color: Colors.black);
+      return ColoredBox(color: widget.backgroundColor);
     }
-
     return SmartAssetImage(
       assetName: assetName,
       fit: widget.fit,
-      errorWidget: const ColoredBox(color: Colors.black),
+      errorWidget: ColoredBox(color: widget.backgroundColor),
     );
   }
 
@@ -810,67 +546,44 @@ class _MoviePlayerState extends State<MoviePlayer> {
   Widget build(BuildContext context) {
     if (_hasError) {
       if (widget.backgroundMode) {
-        return SizedBox.expand(
-          child: _buildPlaceholderLayer(),
-        );
+        return SizedBox.expand(child: _buildPlaceholderLayer());
       }
-
       if (_errorMessage?.contains('视频文件名为空') == true) {
         return const SizedBox.shrink();
       }
-
-      return Container(
-        color: Colors.black,
+      return ColoredBox(
+        color: widget.backgroundColor,
         child: Center(
           child: Text(
             _errorMessage ?? '视频加载失败',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-            ),
+            style: const TextStyle(color: Colors.white, fontSize: 16),
           ),
         ),
       );
     }
 
-    if (!_isInitialized || _videoController == null) {
+    final player = _player;
+    if (!_isInitialized || player == null) {
       if (widget.backgroundMode) {
-        return SizedBox.expand(
-          child: _buildPlaceholderLayer(),
-        );
+        return SizedBox.expand(child: _buildPlaceholderLayer());
       }
-
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(
-            color: Colors.black,
-          ),
-        ),
+      return ColoredBox(
+        color: widget.backgroundColor,
+        child: const Center(child: CircularProgressIndicator()),
       );
     }
 
-    final reverseVideoController = _reverseVideoController;
-    final shouldShowPrimaryVideo =
-        !_hasPlaceholderImage || _hasRenderedFirstFrame;
-    final videoLayers = <Widget>[
-      if (shouldShowPrimaryVideo) ...[
-        if (reverseVideoController != null && !_showReversePlayer)
-          _buildVideoLayer(reverseVideoController),
-        _buildVideoLayer(_videoController!),
-        if (reverseVideoController != null && _showReversePlayer)
-          _buildVideoLayer(reverseVideoController),
-      ],
-    ];
-
+    final secondaryPlayer = _secondaryPlayer;
     return SizedBox.expand(
       child: ColoredBox(
-        color: _hasPlaceholderImage ? Colors.transparent : Colors.black,
+        color: widget.backgroundColor,
         child: Stack(
           fit: StackFit.expand,
           children: [
             if (_hasPlaceholderImage) _buildPlaceholderLayer(),
-            ...videoLayers,
+            _buildVideoLayer(context, player),
+            if (secondaryPlayer != null && _showSecondaryPlayer)
+              _buildVideoLayer(context, secondaryPlayer),
           ],
         ),
       ),

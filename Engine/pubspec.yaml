@@ -49,11 +49,8 @@ dependencies:
   hotkey_manager: ^0.2.3
   flutter_avif: ^3.0.0
   flutter_svg: ^2.0.10
-  media_kit: ^1.1.10
-  media_kit_video: ^1.1.10
-  media_kit_libs_android_video: ^1.3.7
-  media_kit_libs_ios_video: ^1.1.4
-  media_kit_libs_macos_video: ^1.1.4
+  erika_flutter:
+    path: ../../../RustProject/Erika/packages/erika_flutter
   media_kit_libs_windows_video: ^1.0.10
   media_kit_libs_linux: ^1.1.4
   just_audio: ^0.9.46
@@ -77,14 +74,6 @@ dev_dependencies:
 dependency_overrides:
   media_kit:
     path: ../third_party/media_kit_hotfix
-  media_kit_video:
-    path: ../third_party/media_kit_video_hotfix
-  media_kit_libs_android_video:
-    path: ../third_party/media_kit_libs_android_video_hotfix
-  media_kit_libs_ios_video:
-    path: ../third_party/media_kit_libs_ios_video_hotfix
-  media_kit_libs_macos_video:
-    path: ../third_party/media_kit_libs_macos_video_hotfix
   media_kit_libs_windows_video:
     path: ../third_party/media_kit_libs_windows_video_hotfix
   media_kit_libs_linux:

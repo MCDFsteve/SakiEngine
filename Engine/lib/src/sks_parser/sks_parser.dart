@@ -778,6 +778,15 @@ class SksParser {
             ),
           );
           break;
+        case 'canvas':
+          // canvas命令：canvas <project-registered-id>
+          if (parts.length >= 2) {
+            final canvasId = parts.sublist(1).join(' ').trim();
+            if (canvasId.isNotEmpty) {
+              nodes.add(CanvasNode(canvasId));
+            }
+          }
+          break;
         case 'show':
           //print('[SksParser] 解析show命令: $trimmedLine');
           final character = parts[1];
@@ -975,6 +984,10 @@ class SksParser {
           );
           break;
         case 'hide':
+          if (parts.length >= 2 && parts[1].toLowerCase() == 'canvas') {
+            nodes.add(HideCanvasNode());
+            break;
+          }
           final immediate =
               parts.length > 2 && parts[2].toLowerCase() == 'immediate';
           nodes.add(HideNode(parts[1], immediate: immediate));

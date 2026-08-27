@@ -364,6 +364,10 @@ class ScriptMerger {
       return 'Say: $speaker"${node.dialogue}"';
     } else if (node is BackgroundNode) {
       return 'Background: ${node.background}';
+    } else if (node is CanvasNode) {
+      return 'Canvas: ${node.canvasId}';
+    } else if (node is HideCanvasNode) {
+      return 'Canvas: hidden';
     } else if (node is ShowNode) {
       return 'Show: ${node.character} (${node.pose ?? 'default'}, ${node.expression ?? 'default'})';
     } else if (node is CgNode) {

@@ -36,6 +36,7 @@ class AssetManager {
 
   Map<String, dynamic>? _assetManifest;
   final Map<String, String> _imageCache = {};
+  final Map<String, String> _nativeMediaCache = {};
   final Set<String> _imageMissCache = <String>{};
   Future<bool>? _nativeCatalogInitialization;
   List<RustAssetEntry> _nativeAssetEntries = const <RustAssetEntry>[];
@@ -568,6 +569,77 @@ class AssetManager {
     _imageMissCache.add(name);
 
     return null;
+  }
+
+  /// Resolves an asset to a path that can be opened by a native media engine.
+  ///
+  /// Debug filesystem assets and SakiPak entries already resolve to files. A
+  /// Flutter bundle entry is materialized once into the process temp directory
+  /// because native decoders cannot read Flutter's virtual asset namespace.
+  Future<String?> findNativeMediaAsset(String name) async {
+    final cached = _nativeMediaCache[name];
+    if (cached != null && await File(cached).exists()) {
+      return cached;
+    }
+
+    final trimmed = name.trim();
+    final directUri = Uri.tryParse(trimmed);
+    if (directUri != null &&
+        directUri.hasScheme &&
+        directUri.scheme != 'asset' &&
+        directUri.scheme != 'file') {
+      return trimmed;
+    }
+
+    final resolved = await findAsset(trimmed);
+    if (resolved == null) {
+      return null;
+    }
+
+    final resolvedUri = Uri.tryParse(resolved);
+    if (resolvedUri != null && resolvedUri.scheme == 'file') {
+      final filePath = resolvedUri.toFilePath();
+      if (await File(filePath).exists()) {
+        _nativeMediaCache[name] = filePath;
+        return filePath;
+      }
+    }
+
+    final directFile = File(resolved);
+    if (directFile.isAbsolute && await directFile.exists()) {
+      final filePath = p.normalize(directFile.path);
+      _nativeMediaCache[name] = filePath;
+      return filePath;
+    }
+
+    try {
+      final data = await rootBundle.load(resolved);
+      final bytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      final cacheDirectory = Directory(
+        p.join(Directory.systemTemp.path, 'sakiengine_native_media_v1'),
+      );
+      await cacheDirectory.create(recursive: true);
+      final safeBaseName = p
+          .basename(resolved)
+          .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final cacheKey = resolved.hashCode.toUnsigned(32).toRadixString(16);
+      final output = File(
+        p.join(cacheDirectory.path, '${cacheKey}_$safeBaseName'),
+      );
+      if (!await output.exists() || await output.length() != bytes.length) {
+        await output.writeAsBytes(bytes, flush: true);
+      }
+      _nativeMediaCache[name] = output.path;
+      return output.path;
+    } catch (error) {
+      if (kEngineDebugMode) {
+        print('[AssetManager] 无法为原生媒体栈落盘 $resolved: $error');
+      }
+      return null;
+    }
   }
 
   Future<String?> _findAssetInBundle(String name) async {

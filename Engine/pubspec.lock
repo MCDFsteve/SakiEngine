@@ -97,14 +97,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.8"
-  dbus:
-    dependency: transitive
+  erika_flutter:
+    dependency: "direct main"
     description:
-      name: dbus
-      sha256: "79e0c23480ff85dc68de79e2cd6334add97e48f7f4865d17686dd6ea81a47e8c"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.11"
+      path: "../../../RustProject/Erika/packages/erika_flutter"
+      relative: true
+    source: path
+    version: "0.1.7"
   exif:
     dependency: transitive
     description:
@@ -243,6 +242,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_plugin_android_lifecycle:
+    dependency: transitive
+    description:
+      name: flutter_plugin_android_lifecycle
+      sha256: "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.35"
   flutter_rust_bridge:
     dependency: transitive
     description:
@@ -462,26 +469,12 @@ packages:
     source: hosted
     version: "0.13.0"
   media_kit:
-    dependency: "direct main"
+    dependency: "direct overridden"
     description:
       path: "../third_party/media_kit_hotfix"
       relative: true
     source: path
     version: "1.2.6"
-  media_kit_libs_android_video:
-    dependency: "direct main"
-    description:
-      path: "../third_party/media_kit_libs_android_video_hotfix"
-      relative: true
-    source: path
-    version: "1.3.7"
-  media_kit_libs_ios_video:
-    dependency: "direct main"
-    description:
-      path: "../third_party/media_kit_libs_ios_video_hotfix"
-      relative: true
-    source: path
-    version: "1.1.4"
   media_kit_libs_linux:
     dependency: "direct main"
     description:
@@ -489,13 +482,6 @@ packages:
       relative: true
     source: path
     version: "1.2.1"
-  media_kit_libs_macos_video:
-    dependency: "direct main"
-    description:
-      path: "../third_party/media_kit_libs_macos_video_hotfix"
-      relative: true
-    source: path
-    version: "1.1.4"
   media_kit_libs_windows_video:
     dependency: "direct main"
     description:
@@ -503,13 +489,6 @@ packages:
       relative: true
     source: path
     version: "1.0.11"
-  media_kit_video:
-    dependency: "direct main"
-    description:
-      path: "../third_party/media_kit_video_hotfix"
-      relative: true
-    source: path
-    version: "1.3.1"
   meta:
     dependency: transitive
     description:
@@ -526,22 +505,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
-  package_info_plus:
-    dependency: transitive
-    description:
-      name: package_info_plus
-      sha256: f69da0d3189a4b4ceaeb1a3defb0f329b3b352517f52bed4290f83d4f06bc08d
-      url: "https://pub.dev"
-    source: hosted
-    version: "9.0.0"
-  package_info_plus_platform_interface:
-    dependency: transitive
-    description:
-      name: package_info_plus_platform_interface
-      sha256: "202a487f08836a592a6bd4f901ac69b3a8f146af552bbd14407b6b41e1c3f086"
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.2.1"
   path:
     dependency: "direct main"
     description:
@@ -677,22 +640,6 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
-  screen_brightness_android:
-    dependency: transitive
-    description:
-      name: screen_brightness_android
-      sha256: d34f5321abd03bc3474f4c381f53d189117eba0b039eac1916aa92cca5fd0a96
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.1.3"
-  screen_brightness_platform_interface:
-    dependency: transitive
-    description:
-      name: screen_brightness_platform_interface
-      sha256: "737bd47b57746bc4291cab1b8a5843ee881af499514881b0247ec77447ee769c"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.1.0"
   screen_retriever:
     dependency: "direct main"
     description:
@@ -922,30 +869,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "14.3.1"
-  volume_controller:
-    dependency: transitive
-    description:
-      name: volume_controller
-      sha256: d75039e69c0d90e7810bfd47e3eedf29ff8543ea7a10392792e81f9bded7edf5
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.4.0"
-  wakelock_plus:
-    dependency: transitive
-    description:
-      name: wakelock_plus
-      sha256: "9296d40c9adbedaba95d1e704f4e0b434be446e2792948d0e4aa977048104228"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.4.0"
-  wakelock_plus_platform_interface:
-    dependency: transitive
-    description:
-      name: wakelock_plus_platform_interface
-      sha256: "036deb14cd62f558ca3b73006d52ce049fabcdcb2eddfe0bf0fe4e8a943b5cf2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.3.0"
   web:
     dependency: transitive
     description:
@@ -954,14 +877,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
-  win32:
-    dependency: transitive
-    description:
-      name: win32
-      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.15.0"
   window_manager:
     dependency: "direct main"
     description:
@@ -988,4 +903,4 @@ packages:
     version: "6.5.0"
 sdks:
   dart: ">=3.10.0 <4.0.0"
-  flutter: ">=3.27.0"
+  flutter: ">=3.38.0"

@@ -160,7 +160,8 @@ class GameUILayerState extends State<GameUILayer> {
         widget.showExpressionSelector ||
         // 轮盘由外层 GamePlayScreen 控制并阻断输入，UI层无需额外状态字段。
         widget.gameState.movieFile != null ||
-        widget.gameState.scriptCanvasId != null;
+        (widget.gameState.scriptCanvasId != null &&
+            widget.gameState.scriptCanvasDurationSeconds > 0);
   }
 
   @override
@@ -202,7 +203,8 @@ class GameUILayerState extends State<GameUILayer> {
     final shouldShowQuickMenu =
         widget.gameModule.showQuickMenu &&
         widget.gameState.movieFile == null &&
-        widget.gameState.scriptCanvasId == null &&
+        !(widget.gameState.scriptCanvasId != null &&
+            widget.gameState.scriptCanvasDurationSeconds > 0) &&
         !widget.gameManager.isCurrentSceneChapter;
     final quickMenuAreaWidth = shouldShowQuickMenu
         ? 100.0 * uiScale + (isMobile ? mediaPadding.left : 0.0)

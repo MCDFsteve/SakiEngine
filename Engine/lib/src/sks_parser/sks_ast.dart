@@ -29,6 +29,19 @@ class AnimeNode implements SksNode {
 /// Clears the currently active full-screen anime overlay.
 class StopAnimeNode implements SksNode {}
 
+/// Shows one project-registered, full-screen custom-painted scene overlay.
+class CanvasNode implements SksNode {
+  final String canvasId;
+
+  CanvasNode(this.canvasId);
+
+  @override
+  String toString() => 'CanvasNode(canvasId: $canvasId)';
+}
+
+/// Clears the currently active project canvas overlay.
+class HideCanvasNode implements SksNode {}
+
 class ShowNode implements SksNode {
   final String character;
   final String? pose;
