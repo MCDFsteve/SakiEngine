@@ -1,0 +1,14 @@
+{
+  "targetPlatform": "windows-x64",
+  "runnerExecutable": "SakiEngine.exe",
+  "nativePlugins": [
+    "erika_flutter",
+    "flutter_avif_windows",
+    "flutter_steamworks",
+    "hotkey_manager_windows",
+    "media_kit_libs_windows_video",
+    "saki_native",
+    "screen_retriever_windows",
+    "window_manager"
+  ]
+}

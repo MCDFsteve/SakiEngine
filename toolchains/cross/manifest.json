@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "flutterVersion": "3.44.0",
+  "engineRevision": "4c525dac5ebe5971c5708ef73558ed8edcf4a362",
+  "host": "darwin",
+  "hostArchitectures": [
+    "arm64",
+    "x64"
+  ],
+  "flutterSnapshotDirectory": "darwin-x64-release",
+  "snapshotter": "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/snapshotter/gen_snapshot",
+  "targets": {
+    "linux": {
+      "targetPlatform": "linux-x64",
+      "flutterSnapshotDirectory": "linux-x64-release",
+      "template": "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template",
+      "runnerExecutable": "SakiEngine",
+      "nativePlugins": [
+        "flutter_avif_linux",
+        "flutter_steamworks",
+        "hotkey_manager_linux",
+        "media_kit_libs_linux",
+        "saki_native",
+        "screen_retriever_linux",
+        "window_manager"
+      ],
+      "output": "build/linux/x64/release/bundle",
+      "assetsDestination": "data/flutter_assets",
+      "aotDestination": "lib/libapp.so"
+    },
+    "windows": {
+      "targetPlatform": "windows-x64",
+      "flutterSnapshotDirectory": "windows-x64-release",
+      "template": "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template",
+      "runnerExecutable": "SakiEngine.exe",
+      "nativePlugins": [
+        "erika_flutter",
+        "flutter_avif_windows",
+        "flutter_steamworks",
+        "hotkey_manager_windows",
+        "media_kit_libs_windows_video",
+        "saki_native",
+        "screen_retriever_windows",
+        "window_manager"
+      ],
+      "output": "build/windows/x64/runner/Release",
+      "assetsDestination": "data/flutter_assets",
+      "aotDestination": "data/app.so"
+    }
+  },
+  "checksums": {
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/SakiEngine": "1f86099412c920a197a3feb5fd8e519edcd99649e7cd7b387dc9827cddb068b0",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/data/icudtl.dat": "998367809a821d595928089c197b3f7959f0420f81f79d4d0daee53378492ed5",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libflutter_avif.so": "6d7f94356eb4256ce7ec7b43aac38027fd9f817bb77361930db5f197e81d7b19",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libflutter_avif_linux_plugin.so": "766ccba990d8d37d14eb08588e15758bd7632822aa4ca2669578470f787754db",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libflutter_linux_gtk.so": "88a520b9543a2c32048868692dac3f930137d8dd1783b79787c7c4c5c49074cb",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libflutter_steamworks_plugin.so": "32f3a4df377c1fbd3153bd70c9500e97a04737976904e560b05a5c36d5c4c708",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libhotkey_manager_linux_plugin.so": "82a92ec116a23296258e4e8bd8b87cca7cebb6e2c884cf4238bcb25bce6e6aa0",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libmedia_kit_libs_linux_plugin.so": "13632538bd06d950ffd7ad3a6e15af466e707b4c6aa810c5f1189ce7048b42be",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libsaki_native.so": "afd3ffe73f2df14199575ada9d186416c0cce74dfc3517d142c638592c6ed2d1",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libscreen_retriever_linux_plugin.so": "eacf5c408efee48372c3feae7fdc16fe341330bc6d26af9fc28d84821ab2b28a",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/linux-x64/template/lib/libwindow_manager_plugin.so": "cd32b19e6f3571d4adbf8eb3b6ef5854a78fdd41c4e5775dfd5da24570366d45",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/snapshotter/gen_snapshot": "baca6f772b577df87b93d4b26a2dec31989ec35a860d74a5805962d56a4814d1",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/SakiEngine.exe": "57725ad4f7dbb22912a1637905fa64fcb41cb6621ea3081f6027f20feaab4579",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/d3dcompiler_47.dll": "5653bc7b0e2701561464ef36602ff6171c96bffe96e4c3597359cd7addcba88a",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/data/icudtl.dat": "998367809a821d595928089c197b3f7959f0420f81f79d4d0daee53378492ed5",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/erika_capi.dll": "6c328865d050212c92c81ce202d48d024b4f667b1bb7da7ac23f7c3b084e6847",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/erika_flutter_plugin.dll": "ca54be385d9e8dc63a8e3d29a7a97848d57f7532e64e5efd420751dd884db094",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/flutter_avif.dll": "cde05e5440e7b0f7ede06a02d171fbb1d88284ee4a7d1f746add93ec2dd88ed8",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/flutter_avif_windows_plugin.dll": "773ab8141ef377c7246752d43dcce25c7822a7d9b74dcf138433283917499a65",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/flutter_steamworks_plugin.dll": "c26fa7047f7e25933425ab71354701e3d9857713a1e170284ec2b024747f0568",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/flutter_windows.dll": "3168c546aeb0b0e6a77abc97e0de95b45d13ada150faaad6de75e79acaf3b050",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/hotkey_manager_windows_plugin.dll": "b3d6094513be0f38b451382bc7e36797bb9cd456b43f4fc0ef497ac59f546625",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/libEGL.dll": "b2590bd0692f0381fc45c20bf1c7f7f713c9ea19c7ea6bab62efdd1fadc4eaac",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/libGLESv2.dll": "620bb6e38d7ed6c760a0cf4a8eb6a8f64b259b96ff286551cd32cefc6c35ca39",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/libmpv-2.dll": "d5f0694b08c124e785d858d00082f3e3b158dd9138bfc48c0382bf1eb443a5fc",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/media_kit_libs_windows_video_plugin.dll": "5236ee1c52fc24b72661567b5214ed1d9d4af75a2d8117dd862e884f85f598f2",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/saki_native.dll": "b0c3be3f1d11e9917ee9f8f02b35f73a5db4df0138e282a69b191d6fff64089b",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/screen_retriever_windows_plugin.dll": "0e3bd21a65ca04e613534d6d4f29d777fb0f998cf8f568da93065e41f4472ca8",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/vk_swiftshader.dll": "4f33eea716491972cb1ad123a78acef485f852581130d3f3a98a1981009004f2",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/vulkan-1.dll": "3be9a95dd9019aa1aca47ade26f5c1c7c0047f3cf6f633d586c9ec0d3b459566",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/window_manager_plugin.dll": "d5a31d4e6feb16881a861f9724057743efe50cd5e577120c1c0525c7f0cf26d2",
+    "toolchains/cross/packs/3.44.0-4c525dac5ebe5971c5708ef73558ed8edcf4a362/windows-x64/template/zlib.dll": "82d5bf175cf882ac9afc1558b416e674606d055966bc09529076b28a498fc0e4"
+  }
+}
