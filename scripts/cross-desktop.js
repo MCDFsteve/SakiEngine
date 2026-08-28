@@ -200,11 +200,14 @@ function writeLinuxCompilerProbe(outputDir) {
 
 function withFlutterOverlay(flutter, manifest, target, callback) {
   const engineCache = path.join(flutter.flutterRoot, 'bin', 'cache');
+  const targetConfig = manifest.targets[target];
+  const snapshotDirectory =
+    targetConfig.flutterSnapshotDirectory || `${targetConfig.targetPlatform}-release`;
   const snapshotDestination = path.join(
     engineCache,
     'artifacts',
     'engine',
-    manifest.flutterSnapshotDirectory,
+    snapshotDirectory,
     'gen_snapshot',
   );
   const stampPath = path.join(engineCache, `${target}-sdk.stamp`);

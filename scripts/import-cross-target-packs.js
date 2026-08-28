@@ -96,6 +96,7 @@ function main() {
     targets: {
       linux: {
         targetPlatform: linuxMetadata.targetPlatform,
+        flutterSnapshotDirectory: 'linux-x64-release',
         template: `${rootRelative}/linux-x64/template`,
         runnerExecutable: linuxMetadata.runnerExecutable,
         nativePlugins: linuxMetadata.nativePlugins,
@@ -105,6 +106,7 @@ function main() {
       },
       windows: {
         targetPlatform: windowsMetadata.targetPlatform,
+        flutterSnapshotDirectory: 'windows-x64-release',
         template: `${rootRelative}/windows-x64/template`,
         runnerExecutable: windowsMetadata.runnerExecutable,
         nativePlugins: windowsMetadata.nativePlugins,

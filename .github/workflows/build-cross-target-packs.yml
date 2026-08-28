@@ -11,6 +11,11 @@ on:
         description: Erika source revision used by the Flutter plugin
         required: true
         default: 'codex/transparent-video-composition'
+      erika_source_build:
+        description: Rebuild Erika C API from source instead of its verified release bundle
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - codex/cross-compilation
@@ -23,6 +28,7 @@ permissions:
 env:
   FLUTTER_VERSION: ${{ inputs.flutter_version || '3.44.0' }}
   ERIKA_REF: ${{ inputs.erika_ref || 'codex/transparent-video-composition' }}
+  ERIKA_FORCE_SOURCE_BUILD: ${{ inputs.erika_source_build && '1' || '0' }}
 
 jobs:
   snapshotter:
@@ -101,14 +107,17 @@ jobs:
         run: |
           set -euo pipefail
           source_dir=build/linux/x64/release/bundle
-          test -x "$source_dir/saki_engine_demo"
+          runner_path="$(find "$source_dir" -maxdepth 1 -type f -perm -111 -print -quit)"
+          test -n "$runner_path"
+          runner_executable="$(basename "$runner_path")"
           mkdir -p ../../cross-pack/linux-x64/template
           cp -a "$source_dir/." ../../cross-pack/linux-x64/template/
           rm -rf ../../cross-pack/linux-x64/template/data/flutter_assets
           rm -f ../../cross-pack/linux-x64/template/lib/libapp.so
           jq -n \
+            --arg runnerExecutable "$runner_executable" \
             --argjson plugins "$(jq '[.plugins.linux[] | select(.native_build == true and .dev_dependency != true) | .name] | sort' .flutter-plugins-dependencies)" \
-            '{targetPlatform:"linux-x64",runnerExecutable:"saki_engine_demo",nativePlugins:$plugins}' \
+            '{targetPlatform:"linux-x64",runnerExecutable:$runnerExecutable,nativePlugins:$plugins}' \
             > ../../cross-pack/linux-x64/metadata.json
           find ../../cross-pack/linux-x64/template -type f -maxdepth 4 -print
       - uses: actions/upload-artifact@v4
@@ -162,11 +171,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - name: Build native runner, plugins, and Erika from source
+      - name: Build native runner and plugins
         working-directory: Game/SakiEngine
         shell: bash
         env:
-          ERIKA_FORCE_SOURCE_BUILD: '1'
+          ERIKA_FORCE_SOURCE_BUILD: ${{ env.ERIKA_FORCE_SOURCE_BUILD }}
           ERIKA_NATIVE_PROFILE: lgpl
           ERIKA_NATIVE_TARGET: x86_64-pc-windows-msvc
         run: |
@@ -180,14 +189,17 @@ jobs:
         run: |
           set -euo pipefail
           source_dir=build/windows/x64/runner/Release
-          test -f "$source_dir/saki_engine_demo.exe"
+          runner_path="$(find "$source_dir" -maxdepth 1 -type f -iname '*.exe' -print -quit)"
+          test -n "$runner_path"
+          runner_executable="$(basename "$runner_path")"
           mkdir -p ../../cross-pack/windows-x64/template
           cp -a "$source_dir/." ../../cross-pack/windows-x64/template/
           rm -rf ../../cross-pack/windows-x64/template/data/flutter_assets
           rm -f ../../cross-pack/windows-x64/template/data/app.so
           jq -n \
+            --arg runnerExecutable "$runner_executable" \
             --argjson plugins "$(jq '[.plugins.windows[] | select(.native_build == true and .dev_dependency != true) | .name] | sort' .flutter-plugins-dependencies)" \
-            '{targetPlatform:"windows-x64",runnerExecutable:"saki_engine_demo.exe",nativePlugins:$plugins}' \
+            '{targetPlatform:"windows-x64",runnerExecutable:$runnerExecutable,nativePlugins:$plugins}' \
             > ../../cross-pack/windows-x64/metadata.json
           find ../../cross-pack/windows-x64/template -type f -maxdepth 4 -print
       - uses: actions/upload-artifact@v4
