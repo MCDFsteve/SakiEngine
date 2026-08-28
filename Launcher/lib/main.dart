@@ -318,7 +318,9 @@ CompiledSksBundle? loadGeneratedCompiledSksBundle() {
   }
 
   List<String> get _buildTargets {
-    if (Platform.isMacOS) return <String>['macos', 'ios', 'android', 'web'];
+    if (Platform.isMacOS) {
+      return <String>['macos', 'linux', 'windows', 'ios', 'android', 'web'];
+    }
     if (Platform.isLinux) return <String>['linux', 'android', 'web'];
     if (Platform.isWindows) return <String>['windows', 'android', 'web'];
     return _allBuildTargets;
@@ -2009,12 +2011,37 @@ CompiledSksBundle? loadGeneratedCompiledSksBundle() {
         }
       }
 
-      final buildArgs = _buildArgsFor(platform, _buildMode, game);
-      final buildCode = await _runCommand(
-        executable: 'flutter',
-        arguments: buildArgs,
-        workingDirectory: gameDir.path,
-      );
+      final useOfflineDesktopCrossCompiler =
+          Platform.isMacOS && (platform == 'linux' || platform == 'windows');
+      final int buildCode;
+      if (useOfflineDesktopCrossCompiler) {
+        final crossArgs = <String>[
+          'scripts/cross-desktop.js',
+          '--game-dir',
+          gameDir.path,
+          '--target',
+          platform,
+          if (_buildMode == BuildMode.showcase) ...<String>[
+            '--dart-define',
+            'SAKI_SHOW_MODE=true',
+            '--dart-define',
+            'SAKI_SHOWCASE_GAME_DIR=Game/$game',
+          ],
+        ];
+        _appendLog('使用仓库内置离线目标包交叉编译 $platform');
+        buildCode = await _runCommand(
+          executable: Platform.environment['SAKI_NODE_BIN'] ?? 'node',
+          arguments: crossArgs,
+          workingDirectory: _repoRoot.path,
+        );
+      } else {
+        final buildArgs = _buildArgsFor(platform, _buildMode, game);
+        buildCode = await _runCommand(
+          executable: 'flutter',
+          arguments: buildArgs,
+          workingDirectory: gameDir.path,
+        );
+      }
 
       if (buildCode != 0) {
         throw _TaskFailure('flutter build 失败');
