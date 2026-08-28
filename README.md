@@ -170,6 +170,38 @@ flutter run -d macos --dart-define=SAKI_GAME_PATH="$PWD"
 - 不带 `[build]` 的提交不会触发构建
 - 如果仓库不是独立游戏项目仓库，流程会自动跳过构建/发布
 
+#### macOS 单机交叉构建桌面发布版
+
+SakiEngine 的命令行和 Launcher 支持在一台 macOS 设备上生成三种桌面发布包：
+
+- macOS：使用 Flutter/Xcode 原生构建。
+- Linux x64：使用仓库内置 Linux Runner、原生插件和 macOS AOT snapshotter。
+- Windows x64：使用仓库内置 Windows Runner、原生插件和 macOS AOT snapshotter。
+
+Linux/Windows 交叉构建不会下载目标 Runner、Flutter Embedder、插件 DLL/SO 或 Erika
+运行库；缺少文件或 SHA-256 不匹配时会直接失败。Erika 的 C API 由目标包工作流从源码构建，
+其产物随目标包进入仓库。构建机仍需预先具备清单指定的 Flutter SDK 和已经解析好的 Dart
+依赖，目标包会严格检查 Flutter Engine revision，不能混用其他 Flutter 版本。
+
+当前内置目标包架构为 Linux x64 和 Windows x64。游戏若新增桌面原生插件，构建器会拒绝
+复用旧 Runner，并提示维护者重新运行
+`.github/workflows/build-cross-target-packs.yml`，避免生成启动后缺插件的静默坏包。
+
+命令行示例：
+
+```bash
+# 以下三条命令均可在 macOS 上执行
+./build.sh SakiEngine macos
+./build.sh SakiEngine linux
+./build.sh SakiEngine windows
+```
+
+Launcher 在 macOS 上也会同时显示 macOS、Linux、Windows；Linux/Windows 自动进入离线
+交叉编译路径，输出位置与 Flutter 原生构建保持一致：
+
+- `Game/<项目>/build/linux/x64/release/bundle`
+- `Game/<项目>/build/windows/x64/runner/Release`
+
 #### 本地构建
 
 ```bash

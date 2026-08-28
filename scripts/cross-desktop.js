@@ -315,13 +315,21 @@ function buildCrossDesktop({
   fs.mkdirSync(assembleOutput, { recursive: true });
   if (target === 'linux') writeLinuxCompilerProbe(assembleOutput);
 
-  const env = { ...process.env, SAKI_CROSS_OFFLINE: '1' };
+  const env = {
+    ...process.env,
+    SAKI_CROSS_OFFLINE: '1',
+    FLUTTER_DISABLE_ANALYTICS: 'true',
+    // A missing embedded artifact must fail instead of silently reaching the network.
+    FLUTTER_STORAGE_BASE_URL: 'https://127.0.0.1:9',
+  };
   if (target === 'windows' && !env['PROGRAMFILES(X86)']) {
     const emptyProgramFiles = path.join(repoRoot, '.saki_toolchain', 'empty-program-files-x86');
     fs.mkdirSync(emptyProgramFiles, { recursive: true });
     env['PROGRAMFILES(X86)'] = emptyProgramFiles;
   }
   const args = [
+    '--no-version-check',
+    '--suppress-analytics',
     'assemble',
     `--output=${assembleOutput}`,
     `-dTargetPlatform=${targetPlatform}`,

@@ -10,7 +10,7 @@ on:
       erika_ref:
         description: Erika source revision used by the Flutter plugin
         required: true
-        default: 'v0.1.7'
+        default: 'codex/transparent-video-composition'
   push:
     branches:
       - codex/cross-compilation
@@ -22,7 +22,7 @@ permissions:
 
 env:
   FLUTTER_VERSION: ${{ inputs.flutter_version || '3.44.0' }}
-  ERIKA_REF: ${{ inputs.erika_ref || 'v0.1.7' }}
+  ERIKA_REF: ${{ inputs.erika_ref || 'codex/transparent-video-composition' }}
 
 jobs:
   snapshotter:
