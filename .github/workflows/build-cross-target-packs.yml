@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
           erika_macos=third_party/erika_flutter/native/macos/liberika_capi.dylib
           test -f "$erika_macos"
-          lipo -verify_arch arm64 x86_64 "$erika_macos"
+          lipo "$erika_macos" -verify_arch arm64 x86_64
           flutter precache --macos
           flutter_root="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
           engine_revision="$(tr -d '\r\n' < "$flutter_root/bin/cache/engine.stamp")"
