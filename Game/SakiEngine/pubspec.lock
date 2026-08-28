@@ -41,6 +41,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
+  build_cli_annotations:
+    dependency: transitive
+    description:
+      name: build_cli_annotations
+      sha256: e563c2e01de8974566a1998410d3f6f03521788160a02503b0b1f1a46c7b3d95
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.1"
   characters:
     dependency: transitive
     description:
@@ -121,6 +129,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.12"
+  erika_flutter:
+    dependency: transitive
+    description:
+      path: "../../third_party/erika_flutter"
+      relative: true
+    source: path
+    version: "0.1.7"
   exif:
     dependency: transitive
     description:
@@ -267,6 +282,22 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_plugin_android_lifecycle:
+    dependency: transitive
+    description:
+      name: flutter_plugin_android_lifecycle
+      sha256: "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.35"
+  flutter_rust_bridge:
+    dependency: transitive
+    description:
+      name: flutter_rust_bridge
+      sha256: e87d6b9ee934dcd24a128ccb2bd91905d2d5fe5c06245d6a8f5477d4907a437a
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.12.0"
   flutter_screenutil:
     dependency: transitive
     description:
@@ -726,6 +757,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.3"
+  saki_native:
+    dependency: transitive
+    description:
+      path: "../../Engine/packages/saki_native"
+      relative: true
+    source: path
+    version: "0.1.0"
   sakiengine:
     dependency: "direct main"
     description:

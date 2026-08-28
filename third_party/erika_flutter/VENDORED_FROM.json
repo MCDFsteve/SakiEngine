@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.1.7",
+  "erikaRevision": "5fe65df33caf9dffdaa7edd65bd4711316800e76",
+  "runtimes": {
+    "macosUniversal": {
+      "path": "native/macos/liberika_capi.dylib",
+      "sha256": "0a52f3a242f30a6451083fcc66bc81cf51e94da7c0619f9463a32d177696a66b"
+    },
+    "windowsX64": {
+      "path": "native/windows/x64/erika_capi.dll",
+      "sha256": "6c328865d050212c92c81ce202d48d024b4f667b1bb7da7ac23f7c3b084e6847"
+    }
+  }
+}

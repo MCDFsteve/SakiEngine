@@ -45,7 +45,7 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos
 
 SPEC CHECKSUMS:
-  erika_flutter: fa36a42d5824de56fd91cc80c500ce60582d07f7
+  erika_flutter: 524bfa291bf2311d40eeef4cd12f572f3e7f1311
   flutter_avif_macos: 9ed61d67adfbd6964eccb59971020fb55c31fc11
   flutter_steamworks: 24d022b3907352a560fb585b4951e09ce9a031d0
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1

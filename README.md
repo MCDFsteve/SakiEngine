@@ -184,6 +184,11 @@ Linux/Windows 交叉构建不会下载目标 Runner、Flutter Embedder、插件 
 交叉构建链从源码重建。构建机仍需预先具备清单指定的 Flutter SDK 和已经解析好的 Dart
 依赖，目标包会严格检查 Flutter Engine revision，不能混用其他 Flutter 版本。
 
+`erika_flutter` 桥接源码也已固定在 `third_party/erika_flutter`，其中包含经过 SHA-256
+校验的 macOS universal 与 Windows x64 Erika 运行库。普通桌面构建只会使用这些仓库内文件，
+不会退回在线下载；维护者更新 Erika 时可运行 `scripts/vendor-erika-flutter.js` 重新导入桥接层
+与许可证文件。macOS 运行库同时包含 arm64/x86_64，Windows 与交叉目标包当前为 x64。
+
 当前内置目标包架构为 Linux x64 和 Windows x64。游戏若新增桌面原生插件，构建器会拒绝
 复用旧 Runner，并提示维护者重新运行
 `.github/workflows/build-cross-target-packs.yml`，避免生成启动后缺插件的静默坏包。

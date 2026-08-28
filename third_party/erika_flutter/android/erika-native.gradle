@@ -1,0 +1,523 @@
+import java.util.Locale
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import org.gradle.process.ExecOperations
+
+def execOperations = project.services.get(ExecOperations)
+
+def artifactPropertiesFile = new File(project.projectDir.parentFile, "native_artifacts.properties")
+if (!artifactPropertiesFile.isFile()) {
+    throw new GradleException("Erika native artifact manifest is missing: $artifactPropertiesFile")
+}
+def artifactProperties = new Properties()
+artifactPropertiesFile.withInputStream { artifactProperties.load(it) }
+def nativeVersion = artifactProperties.getProperty("ERIKA_NATIVE_VERSION")
+def defaultPrebuiltTag = "v$nativeVersion"
+if (nativeVersion == null) {
+    throw new GradleException("Erika native artifact manifest is incomplete: $artifactPropertiesFile")
+}
+
+def sha256 = { File input ->
+    def digest = MessageDigest.getInstance("SHA-256")
+    input.withInputStream { stream ->
+        byte[] buffer = new byte[1024 * 1024]
+        int read
+        while ((read = stream.read(buffer)) != -1) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+
+def findErikaRepoRoot = {
+    def configured = System.getenv("ERIKA_REPO_ROOT")
+    if (configured != null && !configured.trim().isEmpty()) {
+        def root = file(configured)
+        if (new File(root, "crates/erika_capi/Cargo.toml").isFile()) {
+            return root
+        }
+        throw new GradleException("ERIKA_REPO_ROOT does not point to an Erika checkout: $root")
+    }
+
+    def cursor = project.projectDir
+    while (cursor != null) {
+        if (new File(cursor, "crates/erika_capi/Cargo.toml").isFile()) {
+            return cursor
+        }
+        cursor = cursor.parentFile
+    }
+    throw new GradleException(
+        "Unable to locate the Erika repository from ${project.projectDir}; set ERIKA_REPO_ROOT",
+    )
+}
+
+def abiDefinitions = [
+    "arm64-v8a": [
+        rustTarget: "aarch64-linux-android",
+        clangTarget: "aarch64-linux-android",
+        cxxRuntimeTarget: "aarch64-linux-android",
+        shaProperty: "ERIKA_ANDROID_ARM64_V8A_SHA256",
+    ],
+    "armeabi-v7a": [
+        rustTarget: "armv7-linux-androideabi",
+        clangTarget: "armv7a-linux-androideabi",
+        cxxRuntimeTarget: "arm-linux-androideabi",
+        shaProperty: "ERIKA_ANDROID_ARMEABI_V7A_SHA256",
+    ],
+    "x86_64": [
+        rustTarget: "x86_64-linux-android",
+        clangTarget: "x86_64-linux-android",
+        cxxRuntimeTarget: "x86_64-linux-android",
+        shaProperty: "ERIKA_ANDROID_X86_64_SHA256",
+    ],
+    "x86": [
+        rustTarget: "i686-linux-android",
+        clangTarget: "i686-linux-android",
+        cxxRuntimeTarget: "i686-linux-android",
+        shaProperty: "ERIKA_ANDROID_X86_SHA256",
+    ],
+]
+
+def flutterTargetToAbi = [
+    "android-arm": "armeabi-v7a",
+    "android-arm64": "arm64-v8a",
+    "android-x64": "x86_64",
+    "android-x86": "x86",
+]
+
+def requestedAbis = {
+    def explicit = project.findProperty("erikaAndroidAbis") ?: System.getenv("ERIKA_ANDROID_ABIS")
+    if (explicit != null && !explicit.toString().trim().isEmpty()) {
+        return explicit.toString().split(/[,;\s]+/).findAll { !it.isEmpty() }.unique()
+    }
+
+    def injectedAbi = project.findProperty("android.injected.build.abi")
+    if (injectedAbi != null && abiDefinitions.containsKey(injectedAbi.toString())) {
+        return [injectedAbi.toString()]
+    }
+
+    def flutterTarget = project.findProperty("target-platform")
+    if (flutterTarget != null) {
+        def mapped = flutterTarget.toString()
+            .split(/[,;\s]+/)
+            .collect { flutterTargetToAbi[it] }
+            .findAll { it != null }
+            .unique()
+        if (!mapped.isEmpty()) {
+            return mapped
+        }
+    }
+
+    return ["arm64-v8a", "x86_64"]
+}
+
+def selectedAbis = requestedAbis()
+selectedAbis.each { abi ->
+    if (!abiDefinitions.containsKey(abi)) {
+        throw new GradleException(
+            "Unsupported Erika Android ABI '$abi'; expected one of ${abiDefinitions.keySet()}",
+        )
+    }
+    def shaProperty = abiDefinitions[abi].shaProperty
+    if (artifactProperties.getProperty(shaProperty) == null) {
+        throw new GradleException(
+            "Erika native artifact manifest is missing $shaProperty: $artifactPropertiesFile",
+        )
+    }
+}
+def skipNativeBuild = (project.findProperty("erikaSkipNativeBuild")
+    ?: System.getenv("ERIKA_ANDROID_SKIP_NATIVE_BUILD")
+    ?: "false").toString().toBoolean()
+def forceSourceBuild = (System.getenv("ERIKA_FORCE_SOURCE_BUILD") ?: "0") == "1"
+def usePrebuilt = !forceSourceBuild
+def prebuiltTag = System.getenv("ERIKA_PREBUILT_TAG") ?: defaultPrebuiltTag
+def configuredPrebuiltSha256 = System.getenv("ERIKA_PREBUILT_SHA256")
+def prebuiltCacheKey = prebuiltTag.replaceAll(/[^A-Za-z0-9._-]/, "_")
+def prebuiltCacheDirectory = new File(
+    gradle.gradleUserHomeDir,
+    "caches/erika/$prebuiltCacheKey",
+)
+def prebuiltSha256ForAbi = { String abi ->
+    def abiKey = abi.toUpperCase(Locale.ROOT).replaceAll(/[^A-Z0-9]/, "_")
+    def configuredForAbi = System.getenv("ERIKA_PREBUILT_SHA256_$abiKey")
+    if (configuredForAbi != null && !configuredForAbi.trim().isEmpty()) {
+        return configuredForAbi
+    }
+    if (selectedAbis.size() == 1 && configuredPrebuiltSha256 != null &&
+        !configuredPrebuiltSha256.trim().isEmpty()) {
+        return configuredPrebuiltSha256
+    }
+    if (prebuiltTag == defaultPrebuiltTag) {
+        return artifactProperties.getProperty(abiDefinitions[abi].shaProperty)
+    }
+    throw new GradleException(
+        "ERIKA_PREBUILT_SHA256_$abiKey is required when ERIKA_PREBUILT_TAG " +
+            "overrides $defaultPrebuiltTag for $abi",
+    )
+}
+
+android.defaultConfig.ndk.abiFilters.addAll(selectedAbis)
+
+def generatedJniLibs = layout.buildDirectory.dir("generated/erika/jniLibs")
+android.sourceSets.main.jniLibs.srcDir(generatedJniLibs.get().asFile)
+
+def hostIsWindows = System.getProperty("os.name")
+    .toLowerCase(Locale.ROOT)
+    .contains("windows")
+
+def executableIn = { File directory, String base, boolean clangWrapper ->
+    def candidates = hostIsWindows
+        ? (clangWrapper ? ["${base}.cmd", "${base}.exe", base] : ["${base}.exe", base])
+        : [base]
+    def resolved = candidates.collect { new File(directory, it) }.find { it.isFile() }
+    if (resolved == null) {
+        throw new GradleException("Android NDK tool was not found under $directory: $base")
+    }
+    return resolved
+}
+
+def containsLibclang = { File directory ->
+    directory.isDirectory() && (directory.listFiles()?.any { candidate ->
+        def name = candidate.name
+        candidate.isFile() && (
+            name == "libclang.dll" ||
+            name == "libclang.dylib" ||
+            name == "libclang.so" ||
+            name.startsWith("libclang.so.")
+        )
+    } ?: false)
+}
+
+def resolveLibclangDirectory = { File toolchainRoot ->
+    def configured = System.getenv("LIBCLANG_PATH")
+    if (configured != null && !configured.trim().isEmpty()) {
+        def directory = file(configured)
+        if (containsLibclang(directory)) {
+            return directory
+        }
+        throw new GradleException("LIBCLANG_PATH does not contain libclang: $directory")
+    }
+    def directory = [
+        new File(toolchainRoot, "bin"),
+        new File(toolchainRoot, "lib64"),
+        new File(toolchainRoot, "lib"),
+    ].find(containsLibclang)
+    if (directory == null) {
+        throw new GradleException("libclang was not found under Android NDK toolchain $toolchainRoot")
+    }
+    return directory
+}
+
+def ndkContainsLibclang = { File ndk ->
+    def prebuiltRoot = new File(ndk, "toolchains/llvm/prebuilt")
+    return prebuiltRoot.listFiles()?.any { hostToolchain ->
+        ["bin", "lib64", "lib"].any { child ->
+            containsLibclang(new File(hostToolchain, child))
+        }
+    } ?: false
+}
+
+def resolveNdkDirectory = {
+    def configured = System.getenv("ANDROID_NDK_HOME") ?: System.getenv("ANDROID_NDK_ROOT")
+    if (configured != null && !configured.trim().isEmpty()) {
+        def ndk = file(configured)
+        if (ndk.isDirectory() && ndkContainsLibclang(ndk)) {
+            return ndk
+        }
+        throw new GradleException(
+            "Configured Android NDK does not contain the libclang required by bindgen: $ndk",
+        )
+    }
+
+    def agpNdk = android.ndkDirectory
+    if (agpNdk != null && agpNdk.isDirectory() && ndkContainsLibclang(agpNdk)) {
+        return agpNdk
+    }
+
+    def ndkRoot = new File(android.sdkDirectory, "ndk")
+    def installed = ndkRoot.listFiles()
+        ?.findAll { it.isDirectory() && ndkContainsLibclang(it) }
+        ?.sort { left, right -> right.name <=> left.name }
+    if (installed != null && !installed.isEmpty()) {
+        return installed.first()
+    }
+    throw new GradleException(
+        "No installed Android NDK contains the libclang required by bindgen; " +
+            "set ANDROID_NDK_HOME to a complete NDK or install one through the Android SDK manager",
+    )
+}
+
+def resolveCargoTargetDirectory = { File repoRoot ->
+    def configured = System.getenv("CARGO_TARGET_DIR")
+    if (configured == null || configured.trim().isEmpty()) {
+        return new File(repoRoot, "target")
+    }
+    def target = new File(configured)
+    return target.isAbsolute() ? target : new File(repoRoot, configured)
+}
+
+def hostTag = {
+    def os = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+    if (os.contains("windows")) {
+        return "windows-x86_64"
+    }
+    if (os.contains("mac")) {
+        return "darwin-x86_64"
+    }
+    return "linux-x86_64"
+}
+
+tasks.register("buildErikaAndroidRuntime") {
+    group = "build"
+    description = "Stage a prebuilt or source-built Erika runtime for the selected Android ABIs"
+    outputs.dir(generatedJniLibs)
+    // Cargo and xtask own their incremental caches. Always enter the native
+    // build so Rust/source or ABI changes cannot leave stale packaged .so files.
+    outputs.upToDateWhen { false }
+    onlyIf {
+        if (skipNativeBuild) {
+            logger.lifecycle("Skipping Erika Android native build by explicit request")
+            return false
+        }
+        return true
+    }
+
+    doLast {
+        project.delete(generatedJniLibs.get().asFile)
+
+        if (usePrebuilt) {
+            try {
+                prebuiltCacheDirectory.mkdirs()
+                selectedAbis.each { abi ->
+                    def prebuiltSha256 = prebuiltSha256ForAbi(abi)
+                    def prebuiltName = "erika-flutter-android-$abi"
+                    def prebuiltArchive = new File(
+                        prebuiltCacheDirectory,
+                        "${prebuiltName}.zip",
+                    )
+                    def prebuiltUrl =
+                        "https://github.com/AimesSoft/Erika/releases/download/" +
+                        "$prebuiltTag/${prebuiltName}.zip"
+                    if (prebuiltArchive.isFile()) {
+                        def cachedSha256 = sha256(prebuiltArchive)
+                        if (!cachedSha256.equalsIgnoreCase(prebuiltSha256)) {
+                            logger.warn(
+                                "Discarding Erika Android prebuilt with invalid checksum: $prebuiltArchive",
+                            )
+                            project.delete(prebuiltArchive)
+                        }
+                    }
+                    if (!prebuiltArchive.isFile()) {
+                        def temporaryArchive = new File(
+                            prebuiltCacheDirectory,
+                            "${prebuiltArchive.name}.part",
+                        )
+                        project.delete(temporaryArchive)
+                        logger.lifecycle(
+                            "Downloading Erika Android $abi prebuilt $prebuiltTag from $prebuiltUrl",
+                        )
+                        ant.get(
+                            src: prebuiltUrl,
+                            dest: temporaryArchive,
+                            verbose: true,
+                            retries: 3,
+                        )
+                        try {
+                            Files.move(
+                                temporaryArchive.toPath(),
+                                prebuiltArchive.toPath(),
+                                StandardCopyOption.REPLACE_EXISTING,
+                                StandardCopyOption.ATOMIC_MOVE,
+                            )
+                        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                            Files.move(
+                                temporaryArchive.toPath(),
+                                prebuiltArchive.toPath(),
+                                StandardCopyOption.REPLACE_EXISTING,
+                            )
+                        }
+                    } else {
+                        logger.lifecycle(
+                            "Using cached Erika Android $abi prebuilt $prebuiltTag from $prebuiltArchive",
+                        )
+                    }
+
+                    def actualSha256 = sha256(prebuiltArchive)
+                    if (!actualSha256.equalsIgnoreCase(prebuiltSha256)) {
+                        project.delete(prebuiltArchive)
+                        throw new GradleException(
+                            "Erika Android $abi prebuilt checksum mismatch: " +
+                                "expected $prebuiltSha256, got $actualSha256",
+                        )
+                    }
+
+                    def destination = generatedJniLibs.get().dir(abi).asFile
+                    project.copy {
+                        from(project.zipTree(prebuiltArchive)) {
+                            include "lib/liberika_capi.so"
+                            include "lib/libc++_shared.so"
+                            include "${prebuiltName}/lib/liberika_capi.so"
+                            include "${prebuiltName}/lib/libc++_shared.so"
+                            eachFile { details -> details.path = details.name }
+                            includeEmptyDirs = false
+                        }
+                        into destination
+                    }
+                    ["liberika_capi.so", "libc++_shared.so"].each { library ->
+                        def staged = new File(destination, library)
+                        if (!staged.isFile() || staged.length() == 0L) {
+                            throw new GradleException(
+                                "Erika Android prebuilt $prebuiltTag is missing $abi/$library",
+                            )
+                        }
+                    }
+                }
+
+                logger.lifecycle(
+                    "Staged Erika Android prebuilt $prebuiltTag for ${selectedAbis.join(', ')}",
+                )
+                return
+            } catch (Exception error) {
+                project.delete(generatedJniLibs.get().asFile)
+                throw new GradleException(
+                    "Unable to use Erika Android prebuilt $prebuiltTag. " +
+                        "Set ERIKA_FORCE_SOURCE_BUILD=1 only when building from an Erika checkout. " +
+                        "Cause: ${error.message}",
+                    error,
+                )
+            }
+        }
+
+        def repoRoot = findErikaRepoRoot()
+        def cargoTargetDirectory = resolveCargoTargetDirectory(repoRoot)
+        def ndkDirectory = resolveNdkDirectory()
+        def toolchainBin = new File(
+            ndkDirectory,
+            "toolchains/llvm/prebuilt/${hostTag()}/bin",
+        )
+        if (!toolchainBin.isDirectory()) {
+            throw new GradleException("Android NDK LLVM toolchain was not found: $toolchainBin")
+        }
+        def toolchainRoot = toolchainBin.parentFile
+        def sysroot = new File(toolchainRoot, "sysroot")
+        def libclangDirectory = resolveLibclangDirectory(toolchainRoot)
+
+        logger.lifecycle(
+            "Using Android NDK ${ndkDirectory.name} from ${ndkDirectory.absolutePath} " +
+                "with libclang at ${libclangDirectory.absolutePath}",
+        )
+
+        def configuredMinSdk = android.defaultConfig.minSdk
+        def minSdkLevel = configuredMinSdk instanceof Number
+            ? configuredMinSdk.intValue()
+            : configuredMinSdk.apiLevel
+        def apiLevel = Math.max(26, minSdkLevel)
+        def nativeProfile = System.getenv("ERIKA_NATIVE_PROFILE") ?: "lgpl"
+        def cargo = System.getenv("CARGO") ?: (hostIsWindows ? "cargo.exe" : "cargo")
+
+        selectedAbis.each { abi ->
+            def definition = abiDefinitions[abi]
+            def rustTarget = definition.rustTarget
+            def targetKey = rustTarget.toUpperCase(Locale.ROOT).replace('-', '_')
+            def clang = executableIn(
+                toolchainBin,
+                "${definition.clangTarget}${apiLevel}-clang",
+                true,
+            )
+            def clangxx = executableIn(
+                toolchainBin,
+                "${definition.clangTarget}${apiLevel}-clang++",
+                true,
+            )
+            def llvmAr = executableIn(toolchainBin, "llvm-ar", false)
+            def llvmRanlib = executableIn(toolchainBin, "llvm-ranlib", false)
+            def llvmStrip = executableIn(toolchainBin, "llvm-strip", false)
+            def targetEnvKey = rustTarget.replace('-', '_')
+            def bindgenKey = "BINDGEN_EXTRA_CLANG_ARGS_${targetEnvKey}"
+            def cflagsKey = "CFLAGS_${targetEnvKey}"
+            def cxxflagsKey = "CXXFLAGS_${targetEnvKey}"
+            def nativeEnvironment = [
+                "ANDROID_NDK_HOME": ndkDirectory.absolutePath,
+                "ANDROID_NDK_ROOT": ndkDirectory.absolutePath,
+                "ANDROID_API_LEVEL": apiLevel.toString(),
+                "ERIKA_NATIVE_TARGET": rustTarget,
+                "ERIKA_NATIVE_PROFILE": nativeProfile,
+                "CARGO_TARGET_DIR": cargoTargetDirectory.absolutePath,
+                "LIBCLANG_PATH": libclangDirectory.absolutePath,
+                "PATH": toolchainBin.absolutePath + File.pathSeparator + System.getenv("PATH"),
+                (bindgenKey): System.getenv(bindgenKey)
+                    ?: "--target=${definition.clangTarget}${apiLevel} --sysroot=\"${sysroot.absolutePath}\"",
+                "CARGO_TARGET_${targetKey}_LINKER": clang.absolutePath,
+                "CC_${targetEnvKey}": clang.absolutePath,
+                "CXX_${targetEnvKey}": clangxx.absolutePath,
+                "AR_${targetEnvKey}": llvmAr.absolutePath,
+                "RANLIB_${targetEnvKey}": llvmRanlib.absolutePath,
+                "STRIP_${targetEnvKey}": llvmStrip.absolutePath,
+                (cflagsKey): System.getenv(cflagsKey) ?: "-fPIC",
+                (cxxflagsKey): System.getenv(cxxflagsKey) ?: "-fPIC",
+            ].collectEntries { key, value ->
+                [(key.toString()): value.toString()]
+            }
+
+            logger.lifecycle("Building Erika Android native dependencies for $abi ($rustTarget)")
+            execOperations.exec {
+                workingDir repoRoot
+                environment(nativeEnvironment)
+                commandLine(
+                    cargo,
+                    "run",
+                    "-p",
+                    "xtask",
+                    "--",
+                    "deps",
+                    "build",
+                    "--all",
+                    "--profile",
+                    nativeProfile,
+                    "--target",
+                    rustTarget,
+                )
+            }.assertNormalExitValue()
+
+            logger.lifecycle("Building erika_capi for $abi ($rustTarget)")
+            execOperations.exec {
+                workingDir repoRoot
+                environment(nativeEnvironment)
+                commandLine(
+                    cargo,
+                    "build",
+                    "-p",
+                    "erika_capi",
+                    "--release",
+                    "--target",
+                    rustTarget,
+                )
+            }.assertNormalExitValue()
+
+            def source = new File(
+                cargoTargetDirectory,
+                "$rustTarget/release/liberika_capi.so",
+            )
+            if (!source.isFile()) {
+                throw new GradleException("Erika Android runtime was not produced: $source")
+            }
+            def destination = generatedJniLibs.get().dir(abi).asFile
+            def cxxRuntime = new File(
+                toolchainRoot,
+                "sysroot/usr/lib/${definition.cxxRuntimeTarget}/libc++_shared.so",
+            )
+            if (!cxxRuntime.isFile()) {
+                throw new GradleException("Android NDK C++ runtime was not found: $cxxRuntime")
+            }
+            project.copy {
+                from source, cxxRuntime
+                into destination
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(tasks.named("buildErikaAndroidRuntime"))
+}

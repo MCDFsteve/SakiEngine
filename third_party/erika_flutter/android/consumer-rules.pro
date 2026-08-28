@@ -1,0 +1,1 @@
+-keep class dev.aimesoft.erika_flutter.ErikaNative { *; }

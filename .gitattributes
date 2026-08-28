@@ -1,3 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 toolchains/cross/packs/** -diff
+third_party/erika_flutter/native/macos/** -diff
+third_party/erika_flutter/native/windows/** -diff

@@ -1,0 +1,45 @@
+name: erika_flutter
+description: Cross-platform Flutter media player powered by Erika, with hardware decoding, HDR video, ASS subtitles, danmaku, and system media controls.
+version: 0.1.7
+
+homepage: https://github.com/AimesSoft/Erika
+repository: https://github.com/AimesSoft/Erika
+issue_tracker: https://github.com/AimesSoft/Erika/issues
+documentation: https://github.com/AimesSoft/Erika/tree/main/docs
+
+topics:
+  - video-player
+  - media-player
+  - ffmpeg
+  - rust
+  - hdr
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_plugin_android_lifecycle: ^2.0.26
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.aimesoft.erika_flutter
+        pluginClass: ErikaFlutterPlugin
+      ios:
+        pluginClass: ErikaFlutterPlugin
+      tvos:
+        pluginClass: ErikaFlutterPlugin
+      macos:
+        pluginClass: ErikaFlutterPlugin
+      windows:
+        pluginClass: ErikaFlutterPluginCApi
+      ohos:
+        pluginClass: ErikaFlutterPlugin
