@@ -1647,6 +1647,9 @@ class GameManager {
   }
 
   void _applyScriptApiStateAfterWait(GameState stateAfterWait) {
+    if (_disposed) {
+      return;
+    }
     _currentState = stateAfterWait.copyWith(
       // `stateAfterWait` is created before the wait starts. During that wait a
       // renderer may finish an asynchronous character/CG fade and remove the
@@ -1662,7 +1665,7 @@ class GameManager {
   }
 
   bool _completeCurrentTimerWait() {
-    if (!_isWaitingForTimer) {
+    if (_disposed || !_isWaitingForTimer) {
       return false;
     }
 
@@ -2575,14 +2578,28 @@ class GameManager {
   }
 
   Future<void> _executeScript() async {
-    if (_isProcessing || _isWaitingForTimer) {
+    if (_disposed || _isProcessing || _isWaitingForTimer) {
       return;
     }
     _isProcessing = true;
 
+    try {
+      await _processScriptNodes();
+    } finally {
+      // Rendering/cache failures must never leave input permanently locked.
+      _isProcessing = false;
+    }
+  }
+
+  Future<void> _processScriptNodes() async {
+
     //print('🎮 开始处理脚本，当前索引: $_scriptIndex');
 
-    while (_scriptIndex < _script.children.length) {
+    // Async media, save, transition, and project API work can finish after the
+    // owning GamePlayScreen has been removed. Re-check the lifecycle at every
+    // node boundary so a stale execution cannot resume into a closed state
+    // stream after dispose.
+    while (!_disposed && _scriptIndex < _script.children.length) {
       final node = _script.children[_scriptIndex];
       final currentNodeIndex = _scriptIndex; // 保存当前节点索引
 
@@ -4345,6 +4362,9 @@ class GameManager {
 
         // 启动计时器，震动结束后清除震动状态
         Timer(Duration(milliseconds: (duration * 1000).round()), () {
+          if (_disposed) {
+            return;
+          }
           _currentState = _currentState.copyWith(
             isShaking: false,
             shakeTarget: null,
@@ -4359,7 +4379,6 @@ class GameManager {
         continue;
       }
     }
-    _isProcessing = false;
   }
 
   GameStateSnapshot saveStateSnapshot() {
@@ -4821,6 +4840,9 @@ class GameManager {
 
   /// 启动场景计时器
   void _startSceneTimer(double seconds) {
+    if (_disposed) {
+      return;
+    }
     // 取消之前的计时器（如果存在）
     _currentTimer?.cancel();
     _currentTimerCompletion = null;
@@ -4828,6 +4850,9 @@ class GameManager {
     final durationMs = (seconds * 1000).round();
 
     _currentTimer = Timer(Duration(milliseconds: durationMs), () async {
+      if (_disposed) {
+        return;
+      }
       // 检查计时器是否仍然有效（防止已被取消的计时器执行）
       if (_isWaitingForTimer &&
           _currentTimer != null &&
@@ -4862,6 +4887,9 @@ class GameManager {
     final delayMs = (delay * 1000).round();
 
     Timer(Duration(milliseconds: delayMs), () {
+      if (_disposed) {
+        return;
+      }
       // 检查角色是否仍然存在
       final currentCharacter = _currentState.characters[characterKey];
       if (currentCharacter != null) {
@@ -5723,6 +5751,8 @@ class GameManager {
       return;
     }
     _disposed = true;
+    _isProcessing = false;
+    _isWaitingForTimer = false;
     final ownsGlobalResources = _resourceSessionId == _latestResourceSessionId;
     LocalizationManager().removeListener(_languageListener);
     _currentTimer?.cancel(); // 取消活跃的计时器

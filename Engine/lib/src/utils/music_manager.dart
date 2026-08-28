@@ -888,7 +888,22 @@ class MusicManager extends ChangeNotifier {
     if (sessionGeneration != _audioSessionGeneration) {
       return;
     }
-    await player.play();
+    // `AudioPlayer.play()` completes when playback finishes or is interrupted
+    // on the native just_audio backends. Awaiting it would therefore block the
+    // SKS executor for the full duration of a one-shot sound, and forever for a
+    // looping ambience cue. Only source/setup work belongs to this Future; keep
+    // actual playback detached, matching the music and voice channels.
+    final playFuture = player.play();
+    unawaited(
+      playFuture.catchError((Object error, StackTrace stackTrace) {
+        if (kEngineDebugMode) {
+          print(
+            '[MusicManager] sound.play async failed: $assetPath, error=$error',
+          );
+          print(stackTrace);
+        }
+      }),
+    );
 
     if (fadeTransition) {
       // 音效淡入（通常时间较短）

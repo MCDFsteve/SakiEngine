@@ -178,6 +178,8 @@ private struct ErikaTrackInfoC {
 private struct ErikaPresenterConfigC {
   var outputMode: Int32 = 0
   var edrHeadroom: Float = 1.0
+  var lumaUpscaler: Int32 = 0
+  var videoAlphaMode: Int32 = 0
 
   static let sdr = ErikaPresenterConfigC()
 

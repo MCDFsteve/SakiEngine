@@ -764,9 +764,10 @@ char *erika_presenter_render_tick_json(
     double time_seconds);
 char *erika_presenter_poll_event_json(ErikaPresenterHandle *handle);
 
-/* Screenshot: render the current composited frame (video + subtitle + danmaku)
- * off-screen into a caller-allocated RGBA8 buffer at the requested size.
- * out_capacity must be >= width*height*4. Fails if no frame is available yet. */
+/* Screenshot: render the current composited frame (video + subtitle, no
+ * danmaku) off-screen into a caller-allocated RGBA8 buffer at the requested
+ * size. out_capacity must be >= width*height*4. Fails if no frame is
+ * available yet. */
 ErikaStatus erika_presenter_capture_frame_rgba(
     ErikaPresenterHandle *handle,
     uint32_t width,

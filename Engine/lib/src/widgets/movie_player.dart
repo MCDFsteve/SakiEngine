@@ -5,6 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/utils/smart_asset_image.dart';
 
+enum MovieVideoAlphaMode { opaque, packedAlphaRight }
+
+extension on MovieVideoAlphaMode {
+  ErikaVideoAlphaMode get erikaValue => switch (this) {
+    MovieVideoAlphaMode.opaque => ErikaVideoAlphaMode.opaque,
+    MovieVideoAlphaMode.packedAlphaRight =>
+      ErikaVideoAlphaMode.packedAlphaRight,
+  };
+}
+
 class MoviePlayer extends StatefulWidget {
   final String movieFile;
   final VoidCallback? onVideoEnd;
@@ -24,6 +34,9 @@ class MoviePlayer extends StatefulWidget {
   final String? placeholderImageAssetName;
   final double playbackRate;
   final Color backgroundColor;
+  final MovieVideoAlphaMode videoAlphaMode;
+  final BlendMode videoBlendMode;
+  final double videoOpacity;
 
   const MoviePlayer({
     super.key,
@@ -45,7 +58,11 @@ class MoviePlayer extends StatefulWidget {
     this.placeholderImageAssetName,
     this.playbackRate = 1.0,
     this.backgroundColor = Colors.black,
-  }) : assert(playbackRate > 0);
+    this.videoAlphaMode = MovieVideoAlphaMode.opaque,
+    this.videoBlendMode = BlendMode.srcOver,
+    this.videoOpacity = 1.0,
+  }) : assert(playbackRate > 0),
+       assert(videoOpacity >= 0.0 && videoOpacity <= 1.0);
 
   @override
   State<MoviePlayer> createState() => _MoviePlayerState();
@@ -109,7 +126,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
         oldWidget.pingPongLoop != widget.pingPongLoop ||
         oldWidget.pingPongReverseMovieFile != widget.pingPongReverseMovieFile ||
         oldWidget.sequentialMovieFile != widget.sequentialMovieFile ||
-        oldWidget.sequentialLooping != widget.sequentialLooping;
+        oldWidget.sequentialLooping != widget.sequentialLooping ||
+        oldWidget.videoAlphaMode != widget.videoAlphaMode;
     if (shouldReinitialize) {
       unawaited(_initializeVideo());
       return;
@@ -183,6 +201,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
       final player = ErikaPlayer(
         allowBackgroundPlayback: widget.backgroundMode,
+        videoAlphaMode: widget.videoAlphaMode.erikaValue,
       );
       _player = player;
       _eventSubscription = player.events.listen(
@@ -229,7 +248,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   Future<void> _initializeSecondaryPlayer(String path, int generation) async {
-    final player = ErikaPlayer(allowBackgroundPlayback: widget.backgroundMode);
+    final player = ErikaPlayer(
+      allowBackgroundPlayback: widget.backgroundMode,
+      videoAlphaMode: widget.videoAlphaMode.erikaValue,
+    );
     _secondaryPlayer = player;
     _secondarySurfaceAttachedCompleter = Completer<void>();
     _secondaryEventSubscription = player.events.listen(
@@ -274,10 +296,14 @@ class _MoviePlayerState extends State<MoviePlayer> {
       case ErikaEventKind.videoParamsChanged:
         if (event.video.width > 0 && event.video.height > 0) {
           _hasVideoParams = true;
-          if (_videoWidth != event.video.width ||
+          final logicalWidth =
+              widget.videoAlphaMode == MovieVideoAlphaMode.packedAlphaRight
+              ? event.video.width ~/ 2
+              : event.video.width;
+          if (_videoWidth != logicalWidth ||
               _videoHeight != event.video.height) {
             setState(() {
-              _videoWidth = event.video.width;
+              _videoWidth = logicalWidth;
               _videoHeight = event.video.height;
             });
           }
@@ -513,7 +539,11 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   Widget _buildVideoLayer(BuildContext context, ErikaPlayer player) {
-    final texture = ErikaTextureVideoView(player: player);
+    final texture = ErikaTextureVideoView(
+      player: player,
+      blendMode: widget.videoBlendMode,
+      opacity: widget.videoOpacity,
+    );
     if (_videoWidth <= 0 || _videoHeight <= 0) {
       return SizedBox.expand(child: texture);
     }

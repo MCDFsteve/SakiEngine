@@ -1,0 +1,87 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sakiengine/src/rendering/composite_cg_renderer.dart';
+import 'package:sakiengine/src/screens/game_play_screen.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  Future<ui.Image> createImage(Color color) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawRect(const Rect.fromLTWH(0, 0, 4, 4), Paint()..color = color);
+    return recorder.endRecording().toImage(4, 4);
+  }
+
+  Widget buildSprite({
+    required ui.Image image,
+    required String resourceId,
+    String characterKey = 'slot:aru',
+  }) {
+    return MaterialApp(
+      home: Center(
+        child: SizedBox(
+          width: 100,
+          height: 100,
+          child: KeyedSubtree(
+            key: characterPositionedRenderKey(characterKey),
+            child: DirectCgDisplay(
+              key: characterCompositeRenderKey(characterKey),
+              image: image,
+              resourceId: resourceId,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets(
+    'different resources in the same character slot reuse the dissolve state',
+    (tester) async {
+      final firstImage = await createImage(Colors.pink);
+      final secondImage = await createImage(Colors.purple);
+      addTearDown(firstImage.dispose);
+      addTearDown(secondImage.dispose);
+
+      await tester.pumpWidget(
+        buildSprite(image: firstImage, resourceId: 'aru'),
+      );
+      await tester.pumpAndSettle();
+      final firstState = tester.state(find.byType(DirectCgDisplay));
+
+      await tester.pumpWidget(
+        buildSprite(image: secondImage, resourceId: 'aru3'),
+      );
+      await tester.pump();
+
+      expect(tester.state(find.byType(DirectCgDisplay)), same(firstState));
+
+      await tester.pump(const Duration(milliseconds: 300));
+    },
+  );
+
+  testWidgets('different character slots keep independent render state', (
+    tester,
+  ) async {
+    final image = await createImage(Colors.pink);
+    addTearDown(image.dispose);
+
+    await tester.pumpWidget(buildSprite(image: image, resourceId: 'aru'));
+    await tester.pumpAndSettle();
+    final aruState = tester.state(find.byType(DirectCgDisplay));
+
+    await tester.pumpWidget(
+      buildSprite(
+        image: image,
+        resourceId: 'aru',
+        characterKey: 'slot:aru_shadow_1',
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.state(find.byType(DirectCgDisplay)), isNot(same(aruState)));
+  });
+}

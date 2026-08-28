@@ -82,6 +82,19 @@ typedef InitialLoadingOverlayBuilder =
 typedef SaveLoadTransitionOverlayBuilder =
     Widget Function(BuildContext context, VoidCallback onCompleted);
 
+/// Stable identity for a character's stage slot.
+///
+/// A slot can switch between multiple resource IDs (for example `aru`, `aru2`,
+/// and `aru3`). Keeping the widget keyed to the slot lets the existing
+/// [DirectCgDisplay] retain its previous image and dissolve to the new one.
+@visibleForTesting
+Key characterCompositeRenderKey(String characterKey) =>
+    ValueKey('composite-$characterKey');
+
+@visibleForTesting
+Key characterPositionedRenderKey(String characterKey) =>
+    ValueKey('positioned-$characterKey');
+
 enum _CommandDebugMenuMode { expression, character, background, canvas, music }
 
 class GamePlayScreen extends StatefulWidget {
@@ -1551,7 +1564,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                       milliseconds:
                           ((gameState.shakeDuration ?? 1.0) * 1000).round(),
                     ),
-                    child: _wrapWithParallax(widget, 0.55),
+                    child: _wrapWithParallax(widget, 0.55, reserveBleed: true),
                   ),
                 ),
           ],
@@ -1886,7 +1899,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       }
 
       final characterWidget = _CompositeCharacterWidget(
-        key: ValueKey('composite-${characterState.resourceId}'),
+        key: characterCompositeRenderKey(characterId),
         characterKey: characterId,
         resourceId: characterState.resourceId,
         pose: characterState.pose ?? 'pose1',
@@ -1939,7 +1952,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
       finalWidget = _wrapWithParallax(finalWidget, 0.65);
 
       return Positioned(
-        key: ValueKey('positioned-${characterState.resourceId}'),
+        key: characterPositionedRenderKey(characterId),
         left: finalXCenter * MediaQuery.of(context).size.width,
         top: finalYCenter * MediaQuery.of(context).size.height,
         child: FractionalTranslation(
@@ -1966,7 +1979,12 @@ class _GamePlayScreenState extends State<GamePlayScreen>
     }
   }
 
-  Widget _wrapWithParallax(Widget widget, double depth, {bool invert = true}) {
+  Widget _wrapWithParallax(
+    Widget widget,
+    double depth, {
+    bool invert = true,
+    bool reserveBleed = false,
+  }) {
     if (depth == 0) {
       return widget;
     }
@@ -1983,9 +2001,10 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         width: widget.width,
         height: widget.height,
         child: _wrapWithParallax(
-          widget.child ?? const SizedBox.shrink(),
+          widget.child,
           depth,
           invert: invert,
+          reserveBleed: reserveBleed,
         ),
       );
     }
@@ -1999,13 +2018,19 @@ class _GamePlayScreenState extends State<GamePlayScreen>
         width: widget.width,
         height: widget.height,
         child: _wrapWithParallax(
-          widget.child ?? const SizedBox.shrink(),
+          widget.child,
           depth,
           invert: invert,
+          reserveBleed: reserveBleed,
         ),
       );
     }
-    return ParallaxAware(depth: depth, invert: invert, child: widget);
+    return ParallaxAware(
+      depth: depth,
+      invert: invert,
+      reserveBleed: reserveBleed,
+      child: widget,
+    );
   }
 }
 

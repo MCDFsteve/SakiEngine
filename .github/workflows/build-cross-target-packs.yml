@@ -10,7 +10,7 @@ on:
       erika_ref:
         description: Erika source revision used by the Flutter plugin
         required: true
-        default: 'codex/transparent-video-composition'
+        default: 'main'
       erika_source_build:
         description: Rebuild Erika C API from source instead of its verified release bundle
         required: true
@@ -27,7 +27,7 @@ permissions:
 
 env:
   FLUTTER_VERSION: ${{ inputs.flutter_version || '3.44.0' }}
-  ERIKA_REF: ${{ inputs.erika_ref || 'codex/transparent-video-composition' }}
+  ERIKA_REF: ${{ inputs.erika_ref || 'main' }}
   ERIKA_FORCE_SOURCE_BUILD: ${{ inputs.erika_source_build && '1' || '0' }}
 
 jobs:

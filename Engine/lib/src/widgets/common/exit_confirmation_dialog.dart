@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sakiengine/src/localization/localization_manager.dart';
 import 'package:sakiengine/src/utils/music_manager.dart';
@@ -16,10 +16,28 @@ class ExitConfirmationDialog {
         MusicManager().shutdown(),
         UISoundManager().shutdown(),
       ]);
-      await PlatformWindowManager.setPreventClose(false);
-      await PlatformWindowManager.close();
     } catch (_) {
-      SystemNavigator.pop();
+      // Audio cleanup must not prevent the application from terminating.
+    }
+
+    try {
+      await PlatformWindowManager.setPreventClose(false);
+    } catch (_) {}
+
+    try {
+      // This method exits the application, rather than merely asking the
+      // current window to perform its native close action. In particular,
+      // performClose is rejected with a system beep by borderless macOS
+      // windows that draw their own chrome.
+      await PlatformWindowManager.destroy();
+      return;
+    } catch (_) {}
+
+    try {
+      await PlatformWindowManager.close();
+      return;
+    } catch (_) {
+      await SystemNavigator.pop();
     }
   }
 
@@ -46,7 +64,9 @@ class ExitConfirmationDialog {
     return shouldExit ?? false;
   }
 
-  static Future<void> showExitConfirmationAndDestroy(BuildContext context) async {
+  static Future<void> showExitConfirmationAndDestroy(
+    BuildContext context,
+  ) async {
     final localization = LocalizationManager();
     final title = localization.t('dialog.exit.title');
     final content = localization.t('dialog.exit.contentSimple');

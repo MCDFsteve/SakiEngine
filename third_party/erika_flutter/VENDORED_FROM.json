@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageVersion": "0.1.7",
-  "erikaRevision": "5fe65df33caf9dffdaa7edd65bd4711316800e76",
+  "erikaRevision": "5c1bb1001def9fe348262dd9860b115d05bebae9",
   "runtimes": {
     "macosUniversal": {
       "path": "native/macos/liberika_capi.dylib",

@@ -55,6 +55,13 @@ function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function requireBinarySymbol(filePath, symbol) {
+  const binary = fs.readFileSync(filePath);
+  if (!binary.includes(Buffer.from(symbol, 'ascii'))) {
+    fail(`原生运行库缺少必需导出 ${symbol}: ${filePath}`);
+  }
+}
+
 function patchMacosPodspec(expectedSha256) {
   const podspecPath = path.join(destination, 'macos', 'erika_flutter.podspec');
   const podspec = fs.readFileSync(podspecPath, 'utf8');
@@ -124,6 +131,14 @@ function gitRevision(erikaRoot) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  requireBinarySymbol(
+    args['macos-runtime'],
+    'erika_presenter_attach_flutter_texture',
+  );
+  requireBinarySymbol(
+    args['windows-runtime'],
+    'erika_presenter_windows_composition_swapchain_iunknown',
+  );
   const items = [
     'CHANGELOG.md',
     'LICENSE',
