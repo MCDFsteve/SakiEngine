@@ -98,6 +98,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Git does not retain the empty asset directories declared by the
+          # engine template, while Flutter validates every pubspec entry.
+          mkdir -p Assets/gui Assets/images/cg/chapter1 Assets/images/items \
+            Assets/music Assets/sound Assets/voice
           flutter config --enable-linux-desktop
           flutter pub get
           flutter build linux --release
@@ -180,6 +184,10 @@ jobs:
           ERIKA_NATIVE_TARGET: x86_64-pc-windows-msvc
         run: |
           set -euo pipefail
+          # Git does not retain the empty asset directories declared by the
+          # engine template, while Flutter validates every pubspec entry.
+          mkdir -p Assets/gui Assets/images/cg/chapter1 Assets/images/items \
+            Assets/music Assets/sound Assets/voice
           flutter config --enable-windows-desktop
           flutter pub get
           flutter build windows --release
