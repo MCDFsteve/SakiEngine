@@ -4,29 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sakiengine/src/rendering/composite_cg_renderer.dart';
 import 'package:sakiengine/src/screens/game_play_screen.dart';
+import 'package:sakiengine/src/utils/engine_asset_loader.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('different sprite canvas ratios cannot share dissolve UVs', () {
-    expect(
-      canShareDissolveUvRect(
-        fromWidth: 423,
-        fromHeight: 1049,
-        toWidth: 299,
-        toHeight: 1048,
-      ),
-      isFalse,
+  test('different sprite ratios keep independent dissolve geometry', () {
+    const canvasSize = Size(299, 1048);
+    final fromRect = calculateDissolveCoverRect(canvasSize, 423, 1049);
+    final toRect = calculateDissolveCoverRect(canvasSize, 299, 1048);
+
+    expect(fromRect.width / fromRect.height, closeTo(423 / 1049, 0.000001));
+    expect(toRect.width / toRect.height, closeTo(299 / 1048, 0.000001));
+    expect(fromRect.width, greaterThan(toRect.width));
+  });
+
+  test('aspect-preserving dissolve shader compiles', () async {
+    final program = await EngineAssetLoader.loadFragmentProgram(
+      'assets/shaders/dissolve.frag',
     );
-    expect(
-      canShareDissolveUvRect(
-        fromWidth: 1920,
-        fromHeight: 1080,
-        toWidth: 1280,
-        toHeight: 720,
-      ),
-      isTrue,
-    );
+    expect(program, isNotNull);
   });
 
   Future<ui.Image> createImage(Color color) async {

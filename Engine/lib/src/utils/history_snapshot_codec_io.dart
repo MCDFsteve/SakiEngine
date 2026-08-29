@@ -14,9 +14,9 @@ class HistorySnapshotCodec {
       if (compressed != null && compressed.length + 1 < bytes.length) {
         final result = Uint8List(compressed.length + 1)..[0] = _lz4;
         result.setRange(1, result.length, compressed);
-        if (kEngineDebugMode && !_loggedNativeCodec) {
+        if (!_loggedNativeCodec) {
           _loggedNativeCodec = true;
-          print(
+          sakiDiagnosticLog(
             '[SAKI_NATIVE][HISTORY] LZ4 active '
             'raw=${bytes.length}B packed=${result.length}B',
           );

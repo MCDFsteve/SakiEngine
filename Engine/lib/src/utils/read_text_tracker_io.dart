@@ -289,13 +289,11 @@ class ReadTextTracker extends ChangeNotifier {
           _readDialogues.addAll(
             snapshot.legacyHashes.map((hash) => hash.toString()),
           );
-          if (kEngineDebugMode) {
-            print(
-              '[SAKI_NATIVE][READ] stable=${_stableReadHashes.length} '
-              'legacy=${_readDialogues.length} '
-              'migrated=${snapshot.migratedLegacyFile}',
-            );
-          }
+          sakiDiagnosticLog(
+            '[SAKI_NATIVE][READ] stable=${_stableReadHashes.length} '
+            'legacy=${_readDialogues.length} '
+            'migrated=${snapshot.migratedLegacyFile}',
+          );
           return;
         } catch (error, stackTrace) {
           if (kEngineDebugMode) {
