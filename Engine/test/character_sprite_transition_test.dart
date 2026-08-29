@@ -8,6 +8,27 @@ import 'package:sakiengine/src/screens/game_play_screen.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('different sprite canvas ratios cannot share dissolve UVs', () {
+    expect(
+      canShareDissolveUvRect(
+        fromWidth: 423,
+        fromHeight: 1049,
+        toWidth: 299,
+        toHeight: 1048,
+      ),
+      isFalse,
+    );
+    expect(
+      canShareDissolveUvRect(
+        fromWidth: 1920,
+        fromHeight: 1080,
+        toWidth: 1280,
+        toHeight: 720,
+      ),
+      isTrue,
+    );
+  });
+
   Future<ui.Image> createImage(Color color) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
