@@ -50,7 +50,7 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
 target_include_directories(${PLUGIN_NAME} PRIVATE
   "${ERIKA_NATIVE_HEADER_DIR}")
 target_link_libraries(${PLUGIN_NAME} PRIVATE
-  flutter flutter_wrapper_plugin runtimeobject windowsapp dcomp shcore shlwapi)
+  flutter flutter_wrapper_plugin runtimeobject windowsapp d3d11 dxgi dcomp shcore shlwapi)
 
 set(ERIKA_WINDOWS_ARCH "" CACHE STRING
   "Erika Windows architecture: x64, x86_64, arm64, or aarch64")

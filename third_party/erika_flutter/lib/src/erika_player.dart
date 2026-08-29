@@ -21,11 +21,11 @@ class ErikaMediaMetadata {
   final Uint8List? artwork;
 
   Map<String, Object> toMap() => <String, Object>{
-        'title': title,
-        if (artist != null) 'artist': artist!,
-        if (album != null) 'album': album!,
-        if (artwork != null) 'artwork': artwork!,
-      };
+    'title': title,
+    if (artist != null) 'artist': artist!,
+    if (album != null) 'album': album!,
+    if (artwork != null) 'artwork': artwork!,
+  };
 }
 
 /// Subtitle text colour Erika falls back to, as `0xRRGGBBAA`: opaque white.
@@ -48,7 +48,8 @@ const int kErikaSubtitleOverrideBorder = 1 << 6;
 const int kErikaSubtitleOverrideAlignment = 1 << 7;
 const int kErikaSubtitleOverrideMargins = 1 << 8;
 const int kErikaSubtitleOverrideBlur = 1 << 11;
-const int kErikaSubtitleOverrideAll = kErikaSubtitleOverrideFontSizeFields |
+const int kErikaSubtitleOverrideAll =
+    kErikaSubtitleOverrideFontSizeFields |
     kErikaSubtitleOverrideFontName |
     kErikaSubtitleOverrideColors |
     kErikaSubtitleOverrideAttributes |
@@ -273,9 +274,7 @@ class ErikaPresenterResourceStatus {
       danmakuVertexBufferBytes: value('danmakuVertexBufferBytes'),
       upscalerBytes: value('upscalerBytes'),
       rendererTrackedBytes: value('rendererTrackedBytes'),
-      presenterCpuDanmakuAtlasBytes: value(
-        'presenterCpuDanmakuAtlasBytes',
-      ),
+      presenterCpuDanmakuAtlasBytes: value('presenterCpuDanmakuAtlasBytes'),
       drawableCount: value('drawableCount'),
       outputModeSwitches: value('outputModeSwitches'),
     );
@@ -614,8 +613,9 @@ class _ErikaDanmakuConfigPatch {
     this.blockBottom,
     this.blockScroll,
     List<String>? blockWords,
-  }) : blockWords =
-            blockWords == null ? null : List<String>.unmodifiable(blockWords);
+  }) : blockWords = blockWords == null
+           ? null
+           : List<String>.unmodifiable(blockWords);
 
   final bool? enabled;
   final double? fontSize;
@@ -697,36 +697,39 @@ class _ErikaDanmakuConfigPatch {
       enabled: _changed(enabled, previous?.enabled) ? enabled : null,
       fontSize: _changed(fontSize, previous?.fontSize) ? fontSize : null,
       opacity: _changed(opacity, previous?.opacity) ? opacity : null,
-      displayArea:
-          _changed(displayArea, previous?.displayArea) ? displayArea : null,
+      displayArea: _changed(displayArea, previous?.displayArea)
+          ? displayArea
+          : null,
       scrollDurationSeconds:
           _changed(scrollDurationSeconds, previous?.scrollDurationSeconds)
-              ? scrollDurationSeconds
-              : null,
+          ? scrollDurationSeconds
+          : null,
       scrollSpeedFactor:
           _changed(scrollSpeedFactor, previous?.scrollSpeedFactor)
-              ? scrollSpeedFactor
-              : null,
+          ? scrollSpeedFactor
+          : null,
       trackGapRatio: _changed(trackGapRatio, previous?.trackGapRatio)
           ? trackGapRatio
           : null,
-      outlineWidth:
-          _changed(outlineWidth, previous?.outlineWidth) ? outlineWidth : null,
+      outlineWidth: _changed(outlineWidth, previous?.outlineWidth)
+          ? outlineWidth
+          : null,
       shadowOffsetX: _changed(shadowOffsetX, previous?.shadowOffsetX)
           ? shadowOffsetX
           : null,
       shadowOffsetY: _changed(shadowOffsetY, previous?.shadowOffsetY)
           ? shadowOffsetY
           : null,
-      shadowStyle:
-          _changed(shadowStyle, previous?.shadowStyle) ? shadowStyle : null,
+      shadowStyle: _changed(shadowStyle, previous?.shadowStyle)
+          ? shadowStyle
+          : null,
       customFontFamily: _changed(customFontFamily, previous?.customFontFamily)
           ? customFontFamily
           : null,
       customFontFilePath:
           _changed(customFontFilePath, previous?.customFontFilePath)
-              ? customFontFilePath
-              : null,
+          ? customFontFilePath
+          : null,
       mergeDuplicates: _changed(mergeDuplicates, previous?.mergeDuplicates)
           ? mergeDuplicates
           : null,
@@ -735,20 +738,24 @@ class _ErikaDanmakuConfigPatch {
           : null,
       allowScrollOverwrite:
           _changed(allowScrollOverwrite, previous?.allowScrollOverwrite)
-              ? allowScrollOverwrite
-              : null,
-      maxQuantity:
-          _changed(maxQuantity, previous?.maxQuantity) ? maxQuantity : null,
+          ? allowScrollOverwrite
+          : null,
+      maxQuantity: _changed(maxQuantity, previous?.maxQuantity)
+          ? maxQuantity
+          : null,
       maxLinesPerMode: _changed(maxLinesPerMode, previous?.maxLinesPerMode)
           ? maxLinesPerMode
           : null,
       blockTop: _changed(blockTop, previous?.blockTop) ? blockTop : null,
-      blockBottom:
-          _changed(blockBottom, previous?.blockBottom) ? blockBottom : null,
-      blockScroll:
-          _changed(blockScroll, previous?.blockScroll) ? blockScroll : null,
-      blockWords:
-          _changedList(blockWords, previous?.blockWords) ? blockWords : null,
+      blockBottom: _changed(blockBottom, previous?.blockBottom)
+          ? blockBottom
+          : null,
+      blockScroll: _changed(blockScroll, previous?.blockScroll)
+          ? blockScroll
+          : null,
+      blockWords: _changedList(blockWords, previous?.blockWords)
+          ? blockWords
+          : null,
     );
   }
 
@@ -985,7 +992,8 @@ class ErikaPlayer {
     );
     if (fontId == null) {
       throw StateError(
-          'Erika subtitle memory font registration returned null.');
+        'Erika subtitle memory font registration returned null.',
+      );
     }
     return fontId;
   }
@@ -994,7 +1002,10 @@ class ErikaPlayer {
     final ids = List<int>.unmodifiable(fontIds);
     if (ids.any((id) => id <= 0) || ids.toSet().length != ids.length) {
       throw ArgumentError.value(
-          fontIds, 'fontIds', 'must contain unique positive IDs');
+        fontIds,
+        'fontIds',
+        'must contain unique positive IDs',
+      );
     }
     final playerId = await ensureCreated();
     await _invoke('selectSubtitleMemoryFonts', <String, Object?>{
@@ -1248,11 +1259,11 @@ class ErikaPlayer {
     final playerId = await ensureCreated();
     final trackId = await _channel
         .invokeMethod<int>('addDanmakuTrackFile', <String, Object?>{
-      'playerId': playerId,
-      'uri': uri,
-      if (name != null) 'name': name,
-      'offsetMicros': offset.inMicroseconds,
-    });
+          'playerId': playerId,
+          'uri': uri,
+          if (name != null) 'name': name,
+          'offsetMicros': offset.inMicroseconds,
+        });
     if (trackId == null || trackId <= 0) {
       throw StateError('Erika danmaku track add returned no track id.');
     }
@@ -1267,11 +1278,11 @@ class ErikaPlayer {
     final playerId = await ensureCreated();
     final trackId = await _channel
         .invokeMethod<int>('addDanmakuTrackJson', <String, Object?>{
-      'playerId': playerId,
-      'json': json,
-      if (name != null) 'name': name,
-      'offsetMicros': offset.inMicroseconds,
-    });
+          'playerId': playerId,
+          'json': json,
+          if (name != null) 'name': name,
+          'offsetMicros': offset.inMicroseconds,
+        });
     if (trackId == null || trackId <= 0) {
       throw StateError('Erika danmaku track add returned no track id.');
     }
@@ -1526,10 +1537,10 @@ class ErikaPlayer {
     });
   }
 
-  /// Allocates a Flutter texture backed by an OpenHarmony SurfaceProducer.
+  /// Allocates a native GPU surface exposed through a Flutter texture.
   ///
-  /// This is used by [ErikaVideoView] on HarmonyOS; other embedders normally
-  /// attach their platform view directly.
+  /// This is used on Windows, macOS, and HarmonyOS when the embedder supports
+  /// compositor-owned texture surfaces.
   Future<int> createTextureSurface({
     required int width,
     required int height,
@@ -1537,11 +1548,7 @@ class ErikaPlayer {
   }) async {
     final textureId = await _channel.invokeMethod<int>(
       'createTexture',
-      <String, Object?>{
-        'width': width,
-        'height': height,
-        'scale': scale,
-      },
+      <String, Object?>{'width': width, 'height': height, 'scale': scale},
     );
     if (textureId == null || textureId < 0) {
       throw StateError('Erika texture allocation failed.');
@@ -1564,9 +1571,7 @@ class ErikaPlayer {
   }
 
   Future<void> releaseTextureSurface(int textureId) {
-    return _invoke('releaseTexture', <String, Object?>{
-      'textureId': textureId,
-    });
+    return _invoke('releaseTexture', <String, Object?>{'textureId': textureId});
   }
 
   /// Attaches the shared native overlay to this player.
@@ -1580,16 +1585,14 @@ class ErikaPlayer {
     double opacity = 1.0,
   }) async {
     final playerId = await ensureCreated();
-    final viewId = await _channel.invokeMethod<int>(
-      'attachOverlay',
-      <String, Object?>{
-        'playerId': playerId,
-        if (flutterViewId != null) 'flutterViewId': flutterViewId,
-        'secondaryWindow': secondaryWindow,
-        if (blendMode != 'srcOver') 'blendMode': blendMode,
-        if (opacity != 1.0) 'opacity': opacity,
-      },
-    );
+    final viewId = await _channel
+        .invokeMethod<int>('attachOverlay', <String, Object?>{
+          'playerId': playerId,
+          if (flutterViewId != null) 'flutterViewId': flutterViewId,
+          'secondaryWindow': secondaryWindow,
+          if (blendMode != 'srcOver') 'blendMode': blendMode,
+          if (opacity != 1.0) 'opacity': opacity,
+        });
     return viewId ?? windowOverlayViewId;
   }
 
@@ -1677,7 +1680,8 @@ class ErikaPlayer {
   }
 
   Future<int> _create() async {
-    final requestedHeadroom = edrHeadroom ??
+    final requestedHeadroom =
+        edrHeadroom ??
         (outputMode == ErikaOutputMode.extendedLinear ? 4.0 : null);
     final arguments = <String, Object?>{
       if (outputMode case final mode?) 'outputMode': mode.nativeValue,

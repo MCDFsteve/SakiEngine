@@ -67,6 +67,7 @@ class ErikaFlutterPlugin : public flutter::Plugin {
  private:
   struct ErikaNativeLibrary;
   struct ErikaOverlayWindow;
+  struct ErikaFlutterTexture;
   struct PlayerHost;
 
   friend class ErikaEventStreamHandler;
@@ -97,6 +98,9 @@ class ErikaFlutterPlugin : public flutter::Plugin {
   HWND RequestedOverlayFlutterWindow() const;
   void UpdateOverlayTarget(const flutter::EncodableMap& args);
   PlayerHost& PlayerFromArgs(const flutter::EncodableMap& args);
+  ErikaFlutterTexture& TextureFromArgs(const flutter::EncodableMap& args);
+  int64_t CreateTexture(const flutter::EncodableMap& args);
+  void ReleaseTexture(int64_t texture_id);
   void ResizeAttachedOverlay();
   int64_t CreatePlayer(const flutter::EncodableValue* arguments);
   void RemovePlayer(int64_t player_id);
@@ -111,6 +115,7 @@ class ErikaFlutterPlugin : public flutter::Plugin {
       event_channel_;
   std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> event_sink_;
   std::unordered_map<int64_t, std::unique_ptr<PlayerHost>> players_;
+  std::unordered_map<int64_t, std::shared_ptr<ErikaFlutterTexture>> textures_;
   std::unique_ptr<ErikaOverlayWindow> overlay_window_;
   std::unique_ptr<ErikaWindowsSmtc> smtc_;
   int64_t active_player_id_ = 0;

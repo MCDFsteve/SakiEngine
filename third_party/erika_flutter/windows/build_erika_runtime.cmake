@@ -21,7 +21,7 @@ if(NOT "$ENV{ERIKA_FORCE_SOURCE_BUILD}" STREQUAL "1")
   if(ERIKA_NATIVE_TARGET STREQUAL "x86_64-pc-windows-msvc")
     set(ERIKA_BUNDLED_RUNTIME
       "${ERIKA_PACKAGE_ROOT}/native/windows/x64/erika_capi.dll")
-    set(ERIKA_BUNDLED_SHA256 "6c328865d050212c92c81ce202d48d024b4f667b1bb7da7ac23f7c3b084e6847")
+    set(ERIKA_BUNDLED_SHA256 "afe81cf758d2c38de73ab434c738f8cf0af0e310723717c8ca544b666b13136e")
   else()
     set(ERIKA_BUNDLED_RUNTIME
       "${ERIKA_PACKAGE_ROOT}/native/windows/arm64/erika_capi.dll")
