@@ -20,6 +20,18 @@ ui.FilterQuality _resolveFilterQuality(bool preferSpeed) {
   );
 }
 
+/// Whether two images can safely use the same UV rectangle in the dissolve
+/// shader without changing either image's aspect ratio.
+@visibleForTesting
+bool canShareDissolveUvRect({
+  required int fromWidth,
+  required int fromHeight,
+  required int toWidth,
+  required int toHeight,
+}) {
+  return fromWidth * toHeight == toWidth * fromHeight;
+}
+
 /// 基于预合成图像的CG角色渲染器
 ///
 /// 替代原有的多层实时渲染方式，直接使用预合成的单张图像
@@ -1980,6 +1992,20 @@ class _DissolveShaderPainter extends CustomPainter {
   void paint(ui.Canvas canvas, ui.Size size) {
     if (size.isEmpty) return;
 
+    // The shader uses one UV rectangle for both images. Character resource
+    // sets can have different canvas ratios (for example aru and aru3), so
+    // sharing that rectangle would horizontally stretch the outgoing sprite.
+    // Cross-fade those cases with an independently fitted rect per image.
+    if (!canShareDissolveUvRect(
+      fromWidth: fromImage.width,
+      fromHeight: fromImage.height,
+      toWidth: toImage.width,
+      toHeight: toImage.height,
+    )) {
+      _paintAspectPreservingCrossFade(canvas, size);
+      return;
+    }
+
     final targetRect = _calculateCoverRect(size, toImage.width, toImage.height);
 
     final shader = program.fragmentShader();
@@ -2007,6 +2033,50 @@ class _DissolveShaderPainter extends CustomPainter {
     final paint = ui.Paint()..shader = shader;
 
     canvas.drawRect(targetRect, paint);
+  }
+
+  void _paintAspectPreservingCrossFade(ui.Canvas canvas, ui.Size size) {
+    final transitionProgress = progress.clamp(0.0, 1.0);
+    final overallOpacity = opacity.clamp(0.0, 1.0);
+
+    canvas.saveLayer(null, ui.Paint());
+    _drawAspectPreservingImage(
+      canvas,
+      size,
+      fromImage,
+      (1.0 - transitionProgress) * overallOpacity,
+    );
+    _drawAspectPreservingImage(
+      canvas,
+      size,
+      toImage,
+      transitionProgress * overallOpacity,
+    );
+    canvas.restore();
+  }
+
+  void _drawAspectPreservingImage(
+    ui.Canvas canvas,
+    ui.Size size,
+    ui.Image image,
+    double imageOpacity,
+  ) {
+    if (imageOpacity <= 0) return;
+
+    final targetRect = _calculateCoverRect(size, image.width, image.height);
+    final paint = ui.Paint()
+      ..color = ui.Color.fromRGBO(255, 255, 255, imageOpacity.clamp(0.0, 1.0))
+      ..isAntiAlias = true
+      ..filterQuality = ImageSamplingManager().resolveCanvasFilterQuality(
+        defaultQuality: ui.FilterQuality.high,
+      );
+
+    canvas.drawImageRect(
+      image,
+      ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      targetRect,
+      paint,
+    );
   }
 
   @override
