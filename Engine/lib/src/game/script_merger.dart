@@ -115,21 +115,21 @@ class ScriptMerger {
       }
       _mergedScript = script;
       _publishSharedScript();
-      if (kEngineDebugMode) {
-        print(
-          '[SAKI_NATIVE][SKS] files=${compiled.orderedFiles.length} '
-          'nodes=${script.children.length} '
-          'native=${compiled.elapsedMicros / 1000.0}ms',
+      sakiDiagnosticLog(
+        '[SAKI_NATIVE][SKS] files=${compiled.orderedFiles.length} '
+        'nodes=${script.children.length} '
+        'native=${compiled.elapsedMicros / 1000.0}ms',
+      );
+      final runtime = _nativeRuntimeIndex;
+      if (runtime != null) {
+        sakiDiagnosticLog(
+          '[SAKI_NATIVE][RUNTIME] labels=${runtime.labelIndices.length} '
+          'flow=${runtime.flowNodes.length} '
+          'compact=${runtime.compactBytes}B '
+          'native=${runtime.elapsedMicros / 1000.0}ms',
         );
-        final runtime = _nativeRuntimeIndex;
-        if (runtime != null) {
-          print(
-            '[SAKI_NATIVE][RUNTIME] labels=${runtime.labelIndices.length} '
-            'flow=${runtime.flowNodes.length} '
-            'compact=${runtime.compactBytes}B '
-            'native=${runtime.elapsedMicros / 1000.0}ms',
-          );
-        }
+      }
+      if (kEngineDebugMode) {
         for (final diagnostic in compiled.diagnostics) {
           print('[SAKI_NATIVE][SKS] $diagnostic');
         }

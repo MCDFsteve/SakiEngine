@@ -20,17 +20,12 @@ ui.FilterQuality _resolveFilterQuality(bool preferSpeed) {
   );
 }
 
-/// Whether two images can safely use the same UV rectangle in the dissolve
-/// shader without changing either image's aspect ratio.
 @visibleForTesting
-bool canShareDissolveUvRect({
-  required int fromWidth,
-  required int fromHeight,
-  required int toWidth,
-  required int toHeight,
-}) {
-  return fromWidth * toHeight == toWidth * fromHeight;
-}
+ui.Rect calculateDissolveCoverRect(
+  ui.Size canvasSize,
+  int imageWidth,
+  int imageHeight,
+) => _calculateCoverRect(canvasSize, imageWidth, imageHeight);
 
 /// 基于预合成图像的CG角色渲染器
 ///
@@ -1992,34 +1987,37 @@ class _DissolveShaderPainter extends CustomPainter {
   void paint(ui.Canvas canvas, ui.Size size) {
     if (size.isEmpty) return;
 
-    // The shader uses one UV rectangle for both images. Character resource
-    // sets can have different canvas ratios (for example aru and aru3), so
-    // sharing that rectangle would horizontally stretch the outgoing sprite.
-    // Cross-fade those cases with an independently fitted rect per image.
-    if (!canShareDissolveUvRect(
-      fromWidth: fromImage.width,
-      fromHeight: fromImage.height,
-      toWidth: toImage.width,
-      toHeight: toImage.height,
-    )) {
-      _paintAspectPreservingCrossFade(canvas, size);
-      return;
-    }
-
-    final targetRect = _calculateCoverRect(size, toImage.width, toImage.height);
+    // Each image gets its own aspect-preserving rectangle. The shader still
+    // performs the exact same per-pixel mix used by ordinary expression diffs,
+    // but resource sets with different canvas ratios no longer stretch the
+    // outgoing image into the incoming image's bounds.
+    final fromRect = calculateDissolveCoverRect(
+      size,
+      fromImage.width,
+      fromImage.height,
+    );
+    final toRect = calculateDissolveCoverRect(
+      size,
+      toImage.width,
+      toImage.height,
+    );
 
     final shader = program.fragmentShader();
     shader
       ..setFloat(0, progress.clamp(0.0, 1.0))
-      ..setFloat(1, targetRect.width)
-      ..setFloat(2, targetRect.height)
+      ..setFloat(1, fromRect.width)
+      ..setFloat(2, fromRect.height)
       ..setFloat(3, fromImage.width.toDouble())
       ..setFloat(4, fromImage.height.toDouble())
-      ..setFloat(5, toImage.width.toDouble())
-      ..setFloat(6, toImage.height.toDouble())
-      ..setFloat(7, targetRect.left)
-      ..setFloat(8, targetRect.top)
-      ..setFloat(9, opacity.clamp(0.0, 1.0));
+      ..setFloat(5, toRect.width)
+      ..setFloat(6, toRect.height)
+      ..setFloat(7, toImage.width.toDouble())
+      ..setFloat(8, toImage.height.toDouble())
+      ..setFloat(9, fromRect.left)
+      ..setFloat(10, fromRect.top)
+      ..setFloat(11, toRect.left)
+      ..setFloat(12, toRect.top)
+      ..setFloat(13, opacity.clamp(0.0, 1.0));
 
     // 让 shader 采样跟随引擎的最近邻配置（像素风立绘）。
     // dissolve.frag 使用单点 texture() 采样，插值方式由 sampler 决定。
@@ -2032,51 +2030,10 @@ class _DissolveShaderPainter extends CustomPainter {
 
     final paint = ui.Paint()..shader = shader;
 
-    canvas.drawRect(targetRect, paint);
-  }
-
-  void _paintAspectPreservingCrossFade(ui.Canvas canvas, ui.Size size) {
-    final transitionProgress = progress.clamp(0.0, 1.0);
-    final overallOpacity = opacity.clamp(0.0, 1.0);
-
-    canvas.saveLayer(null, ui.Paint());
-    _drawAspectPreservingImage(
-      canvas,
-      size,
-      fromImage,
-      (1.0 - transitionProgress) * overallOpacity,
-    );
-    _drawAspectPreservingImage(
-      canvas,
-      size,
-      toImage,
-      transitionProgress * overallOpacity,
-    );
-    canvas.restore();
-  }
-
-  void _drawAspectPreservingImage(
-    ui.Canvas canvas,
-    ui.Size size,
-    ui.Image image,
-    double imageOpacity,
-  ) {
-    if (imageOpacity <= 0) return;
-
-    final targetRect = _calculateCoverRect(size, image.width, image.height);
-    final paint = ui.Paint()
-      ..color = ui.Color.fromRGBO(255, 255, 255, imageOpacity.clamp(0.0, 1.0))
-      ..isAntiAlias = true
-      ..filterQuality = ImageSamplingManager().resolveCanvasFilterQuality(
-        defaultQuality: ui.FilterQuality.high,
-      );
-
-    canvas.drawImageRect(
-      image,
-      ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-      targetRect,
-      paint,
-    );
+    // Paint the union rather than clipping to the incoming image's widget
+    // bounds. The shader makes pixels outside each image rect transparent, so
+    // a wider outgoing sprite remains fully visible during the dissolve.
+    canvas.drawRect(fromRect.expandToInclude(toRect), paint);
   }
 
   @override

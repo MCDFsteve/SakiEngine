@@ -21,10 +21,9 @@ class AssetManager {
   static final AssetManager _instance = AssetManager._internal();
   factory AssetManager() => _instance;
   AssetManager._internal() {
-    // Print the CWD at initialization
     if (_shouldLoadFromExternal()) {
-      print("AssetManager CWD: ${Directory.current.path}");
-      print(
+      sakiDiagnosticLog("AssetManager CWD: ${Directory.current.path}");
+      sakiDiagnosticLog(
         "Game path hint: ${GamePathResolver.configuredGamePathHint() ?? ''}",
       );
     }
@@ -99,13 +98,11 @@ class AssetManager {
                 .toLowerCase()] =
             entry;
       }
-      if (kEngineDebugMode) {
-        print(
-          '[SAKI_NATIVE][ASSETS] indexed=${catalog.entries.length} '
-          'root=${catalog.rootPath} '
-          'time=${catalog.elapsedMicros.toDouble() / 1000.0}ms',
-        );
-      }
+      sakiDiagnosticLog(
+        '[SAKI_NATIVE][ASSETS] indexed=${catalog.entries.length} '
+        'root=${catalog.rootPath} '
+        'time=${catalog.elapsedMicros.toDouble() / 1000.0}ms',
+      );
       return true;
     } catch (error, stackTrace) {
       if (kEngineDebugMode) {
