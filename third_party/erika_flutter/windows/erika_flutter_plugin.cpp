@@ -1,4 +1,5 @@
 #include "erika_flutter_plugin.h"
+#include "erika_composition_blend_effect.h"
 
 #include <flutter/event_channel.h>
 #include <flutter/method_channel.h>
@@ -7,9 +8,15 @@
 
 #include <d2d1effects.h>
 #include <d3d11.h>
-#include <dcomp.h>
+#include <DispatcherQueue.h>
 #include <dxgi.h>
+#include <windows.ui.composition.interop.h>
 #include <wrl/client.h>
+
+#include <winrt/Windows.Graphics.Effects.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Windows.UI.Composition.Desktop.h>
+#include <winrt/Windows.UI.Composition.h>
 
 #include <algorithm>
 #include <chrono>
@@ -1134,14 +1141,14 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
     }
     blend_mode = std::move(requested_blend_mode);
     opacity = std::clamp(requested_opacity, 0.0, 1.0);
-    if (composition_mode && composition_device) {
+    if (composition_mode && compositor) {
       ApplyCompositionState();
     }
   }
 
   void SetCompositionMode(bool enabled) {
     if (composition_mode == enabled) {
-      if (enabled && composition_device) {
+      if (enabled && compositor) {
         ApplyCompositionState();
       }
       return;
@@ -1149,7 +1156,7 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
     composition_mode = enabled;
     if (enabled) {
       ShowWindow(hwnd, SW_HIDE);
-      if (composition_device) {
+      if (compositor) {
         ApplyCompositionState();
       }
       return;
@@ -1165,35 +1172,40 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
     next_content.Attach(static_cast<IUnknown*>(raw_content));
     Microsoft::WRL::ComPtr<IDXGISwapChain> swapchain;
     CheckHResult(next_content.As(&swapchain),
-                 "QueryInterface(IDXGISwapChain)");
-    Microsoft::WRL::ComPtr<IDXGIDevice> rendering_device;
-    CheckHResult(
-        swapchain->GetDevice(
-            __uuidof(IDXGIDevice),
-            reinterpret_cast<void**>(rendering_device.GetAddressOf())),
-        "IDXGISwapChain::GetDevice(IDXGIDevice)");
-    EnsureComposition(rendering_device.Get());
+                  "QueryInterface(IDXGISwapChain)");
+    EnsureComposition();
     if (composition_content.Get() == next_content.Get()) {
       return;
     }
-    CheckHResult(content_visual->SetContent(next_content.Get()),
-                 "IDCompositionVisual::SetContent");
+
+    winrt::Windows::UI::Composition::ICompositionSurface next_surface{
+        nullptr};
+    auto interop = compositor.as<
+        ABI::Windows::UI::Composition::ICompositorInterop>();
+    CheckHResult(
+        interop->CreateCompositionSurfaceForSwapChain(
+            swapchain.Get(),
+            reinterpret_cast<
+                ABI::Windows::UI::Composition::ICompositionSurface**>(
+                winrt::put_abi(next_surface))),
+        "ICompositorInterop::CreateCompositionSurfaceForSwapChain");
+
+    composition_surface = std::move(next_surface);
+    surface_brush.Surface(composition_surface);
     composition_content = std::move(next_content);
     ApplyCompositionState();
   }
 
   void ClearCompositionContent() {
-    if (!composition_device || !content_visual) {
+    if (!compositor) {
       composition_content.Reset();
       return;
     }
-    CheckHResult(content_visual->SetContent(nullptr),
-                 "IDCompositionVisual::SetContent(null)");
+    composition_surface = nullptr;
+    surface_brush.Surface(composition_surface);
     composition_content.Reset();
-    CheckHResult(composition_target->SetRoot(nullptr),
-                 "IDCompositionTarget::SetRoot(null)");
-    CheckHResult(composition_device->Commit(),
-                 "IDCompositionDevice::Commit(clear)");
+    composition_target.Root(
+        winrt::Windows::UI::Composition::Visual{nullptr});
   }
 
   void SetFrame(double x,
@@ -1224,7 +1236,7 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
 
     if (composition_mode) {
       ShowWindow(hwnd, SW_HIDE);
-      if (composition_device) {
+      if (compositor) {
         ApplyCompositionState();
       }
       return;
@@ -1307,118 +1319,150 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
     }
   }
 
-  void EnsureComposition(IDXGIDevice* rendering_device) {
-    if (flutter == nullptr) {
-      throw PluginError("No Flutter HWND is available for DirectComposition.");
-    }
-    if (rendering_device == nullptr) {
-      throw PluginError(
-          "No DXGI rendering device is available for DirectComposition.");
-    }
-    Microsoft::WRL::ComPtr<IUnknown> rendering_device_identity;
-    CheckHResult(rendering_device->QueryInterface(
-                     IID_PPV_ARGS(rendering_device_identity.GetAddressOf())),
-                 "QueryInterface(IUnknown for DXGI device)");
-    if (composition_device && composition_rendering_device_identity.Get() ==
-                                  rendering_device_identity.Get()) {
+  void EnsureDispatcherQueue() {
+    using winrt::Windows::System::DispatcherQueue;
+    using winrt::Windows::System::DispatcherQueueController;
+
+    // A DispatcherQueue belongs to the UI thread, not to one overlay target.
+    // Keep the controller alive if the Flutter HWND changes and the overlay
+    // object is replaced; shutting down the queue underneath the new
+    // Compositor can otherwise invalidate its target asynchronously.
+    static thread_local DispatcherQueueController queue_controller{nullptr};
+    if (DispatcherQueue::GetForCurrentThread()) {
       return;
     }
-    if (composition_device) {
-      ShutdownComposition();
+
+    DispatcherQueueOptions options{
+        sizeof(DispatcherQueueOptions),
+        DQTYPE_THREAD_CURRENT,
+        DQTAT_COM_STA,
+    };
+    DispatcherQueueController next_controller{nullptr};
+    CheckHResult(
+        CreateDispatcherQueueController(
+            options,
+            reinterpret_cast<ABI::Windows::System::
+                                 IDispatcherQueueController**>(
+                winrt::put_abi(next_controller))),
+        "CreateDispatcherQueueController");
+    queue_controller = std::move(next_controller);
+  }
+
+  void EnsureComposition() {
+    if (flutter == nullptr) {
+      throw PluginError("No Flutter HWND is available for Windows Composition.");
+    }
+    if (compositor) {
+      return;
     }
 
-    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> next_desktop_device;
-    Microsoft::WRL::ComPtr<IDCompositionDevice3> next_composition_device;
-    Microsoft::WRL::ComPtr<IDCompositionTarget> next_composition_target;
-    Microsoft::WRL::ComPtr<IDCompositionVisual2> next_root_visual;
-    Microsoft::WRL::ComPtr<IDCompositionVisual2> next_content_visual;
-    Microsoft::WRL::ComPtr<IDCompositionEffectGroup> next_opacity_effect;
-    Microsoft::WRL::ComPtr<IDCompositionBlendEffect>
-        next_overlay_blend_effect;
-    CheckHResult(
-        DCompositionCreateDevice3(
-            rendering_device, __uuidof(IDCompositionDesktopDevice),
-            reinterpret_cast<void**>(next_desktop_device.GetAddressOf())),
-        "DCompositionCreateDevice3");
-    CheckHResult(next_desktop_device.As(&next_composition_device),
-                 "QueryInterface(IDCompositionDevice3)");
-    CheckHResult(next_composition_device->CreateVisual(
-                     next_root_visual.GetAddressOf()),
-                 "IDCompositionDevice::CreateVisual(root)");
-    CheckHResult(next_composition_device->CreateVisual(
-                     next_content_visual.GetAddressOf()),
-                 "IDCompositionDevice::CreateVisual(content)");
-    CheckHResult(next_root_visual->AddVisual(next_content_visual.Get(), FALSE,
-                                             nullptr),
-                 "IDCompositionVisual::AddVisual");
-    CheckHResult(next_composition_device->CreateEffectGroup(
-                     next_opacity_effect.GetAddressOf()),
-                 "IDCompositionDevice::CreateEffectGroup");
-    CheckHResult(next_content_visual->SetEffect(next_opacity_effect.Get()),
-                 "IDCompositionVisual::SetEffect(opacity)");
-    CheckHResult(next_composition_device->CreateBlendEffect(
-                     next_overlay_blend_effect.GetAddressOf()),
-                 "IDCompositionDevice3::CreateBlendEffect");
-    CheckHResult(next_overlay_blend_effect->SetMode(D2D1_BLEND_MODE_OVERLAY),
-                 "IDCompositionBlendEffect::SetMode");
-    CheckHResult(next_desktop_device->CreateTargetForHwnd(
-                     flutter, TRUE, next_composition_target.GetAddressOf()),
-                 "IDCompositionDesktopDevice::CreateTargetForHwnd");
+    EnsureDispatcherQueue();
 
-    composition_rendering_device = rendering_device;
-    composition_rendering_device_identity =
-        std::move(rendering_device_identity);
-    desktop_device = std::move(next_desktop_device);
-    composition_device = std::move(next_composition_device);
-    composition_target = std::move(next_composition_target);
-    root_visual = std::move(next_root_visual);
+    using winrt::Windows::Graphics::Effects::IGraphicsEffect;
+    using winrt::Windows::Graphics::Effects::IGraphicsEffectSource;
+    using winrt::Windows::UI::Composition::CompositionEffectBrush;
+    using winrt::Windows::UI::Composition::CompositionEffectSourceParameter;
+    using winrt::Windows::UI::Composition::CompositionStretch;
+    using winrt::Windows::UI::Composition::CompositionSurfaceBrush;
+    using winrt::Windows::UI::Composition::Compositor;
+    using winrt::Windows::UI::Composition::SpriteVisual;
+    using winrt::Windows::UI::Composition::Desktop::DesktopWindowTarget;
+
+    Compositor next_compositor;
+    DesktopWindowTarget next_target{nullptr};
+    auto desktop_interop = next_compositor.as<
+        ABI::Windows::UI::Composition::Desktop::ICompositorDesktopInterop>();
+    CheckHResult(
+        desktop_interop->CreateDesktopWindowTarget(
+            flutter, TRUE,
+            reinterpret_cast<ABI::Windows::UI::Composition::Desktop::
+                                 IDesktopWindowTarget**>(
+                winrt::put_abi(next_target))),
+        "ICompositorDesktopInterop::CreateDesktopWindowTarget");
+
+    CompositionSurfaceBrush next_surface_brush =
+        next_compositor.CreateSurfaceBrush();
+    next_surface_brush.Stretch(CompositionStretch::Fill);
+
+    CompositionEffectSourceParameter background_parameter(L"Backdrop");
+    CompositionEffectSourceParameter foreground_parameter(L"Video");
+    auto background_source =
+        background_parameter.as<IGraphicsEffectSource>();
+    auto foreground_source =
+        foreground_parameter.as<IGraphicsEffectSource>();
+
+    Microsoft::WRL::ComPtr<ErikaCompositionBlendEffect> blend_descriptor;
+    CheckHResult(
+        Microsoft::WRL::MakeAndInitialize<ErikaCompositionBlendEffect>(
+            blend_descriptor.GetAddressOf(),
+            reinterpret_cast<ABI::Windows::Graphics::Effects::
+                                 IGraphicsEffectSource*>(
+                winrt::get_abi(background_source)),
+            reinterpret_cast<ABI::Windows::Graphics::Effects::
+                                 IGraphicsEffectSource*>(
+                winrt::get_abi(foreground_source)),
+            D2D1_BLEND_MODE_OVERLAY),
+        "Create Windows Composition overlay effect description");
+
+    Microsoft::WRL::ComPtr<
+        ABI::Windows::Graphics::Effects::IGraphicsEffect>
+        abi_blend_effect;
+    CheckHResult(blend_descriptor.As(&abi_blend_effect),
+                 "QueryInterface(IGraphicsEffect)");
+    IGraphicsEffect blend_effect{nullptr};
+    winrt::copy_from_abi(blend_effect, abi_blend_effect.Get());
+
+    CompositionEffectBrush next_overlay_brush =
+        next_compositor.CreateEffectFactory(blend_effect).CreateBrush();
+    next_overlay_brush.SetSourceParameter(
+        L"Backdrop", next_compositor.CreateBackdropBrush());
+    next_overlay_brush.SetSourceParameter(L"Video", next_surface_brush);
+
+    SpriteVisual next_content_visual = next_compositor.CreateSpriteVisual();
+    next_content_visual.Brush(next_surface_brush);
+
+    compositor = std::move(next_compositor);
+    composition_target = std::move(next_target);
+    surface_brush = std::move(next_surface_brush);
+    overlay_brush = std::move(next_overlay_brush);
     content_visual = std::move(next_content_visual);
-    opacity_effect = std::move(next_opacity_effect);
-    overlay_blend_effect = std::move(next_overlay_blend_effect);
   }
 
   void ApplyCompositionState() {
-    if (!composition_device) {
+    if (!compositor) {
       return;
     }
-    IDCompositionEffect* effect = blend_mode == "overlay"
-                                     ? overlay_blend_effect.Get()
-                                     : nullptr;
-    CheckHResult(root_visual->SetEffect(effect),
-                 "IDCompositionVisual::SetEffect");
-    CheckHResult(opacity_effect->SetOpacity(static_cast<float>(opacity)),
-                 "IDCompositionEffectGroup::SetOpacity");
-    CheckHResult(content_visual->SetOffsetX(static_cast<float>(
-                     LogicalToPhysical(flutter, logical_x))),
-                 "IDCompositionVisual::SetOffsetX");
-    CheckHResult(content_visual->SetOffsetY(static_cast<float>(
-                     LogicalToPhysical(flutter, logical_y))),
-                 "IDCompositionVisual::SetOffsetY");
-    CheckHResult(
-        composition_target->SetRoot(
-            composition_mode && visible && composition_content
-                ? root_visual.Get()
-                : nullptr),
-        "IDCompositionTarget::SetRoot");
-    CheckHResult(composition_device->Commit(),
-                 "IDCompositionDevice::Commit");
+    if (blend_mode == "overlay") {
+      content_visual.Brush(overlay_brush);
+    } else {
+      content_visual.Brush(surface_brush);
+    }
+    content_visual.Opacity(static_cast<float>(opacity));
+    content_visual.Offset(
+        {static_cast<float>(LogicalToPhysical(flutter, logical_x)),
+         static_cast<float>(LogicalToPhysical(flutter, logical_y)), 0.0f});
+    content_visual.Size({static_cast<float>(PixelWidth()),
+                         static_cast<float>(PixelHeight())});
+    if (composition_mode && visible && composition_content) {
+      composition_target.Root(content_visual);
+    } else {
+      composition_target.Root(
+          winrt::Windows::UI::Composition::Visual{nullptr});
+    }
   }
 
   void ShutdownComposition() {
-    if (composition_target && composition_device) {
-      composition_target->SetRoot(nullptr);
-      composition_device->Commit();
+    if (composition_target) {
+      composition_target.Root(
+          winrt::Windows::UI::Composition::Visual{nullptr});
     }
     composition_content.Reset();
-    overlay_blend_effect.Reset();
-    opacity_effect.Reset();
-    content_visual.Reset();
-    root_visual.Reset();
-    composition_target.Reset();
-    composition_device.Reset();
-    desktop_device.Reset();
-    composition_rendering_device.Reset();
-    composition_rendering_device_identity.Reset();
+    composition_surface = nullptr;
+    content_visual = nullptr;
+    overlay_brush = nullptr;
+    surface_brush = nullptr;
+    composition_target = nullptr;
+    compositor = nullptr;
   }
 
   HWND flutter = nullptr;
@@ -1435,15 +1479,16 @@ struct ErikaFlutterPlugin::ErikaOverlayWindow {
   double opacity = 1.0;
   int64_t active_generation = 0;
   int64_t owner_player_id = 0;
-  Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> desktop_device;
-  Microsoft::WRL::ComPtr<IDCompositionDevice3> composition_device;
-  Microsoft::WRL::ComPtr<IDXGIDevice> composition_rendering_device;
-  Microsoft::WRL::ComPtr<IUnknown> composition_rendering_device_identity;
-  Microsoft::WRL::ComPtr<IDCompositionTarget> composition_target;
-  Microsoft::WRL::ComPtr<IDCompositionVisual2> root_visual;
-  Microsoft::WRL::ComPtr<IDCompositionVisual2> content_visual;
-  Microsoft::WRL::ComPtr<IDCompositionEffectGroup> opacity_effect;
-  Microsoft::WRL::ComPtr<IDCompositionBlendEffect> overlay_blend_effect;
+  winrt::Windows::UI::Composition::Compositor compositor{nullptr};
+  winrt::Windows::UI::Composition::Desktop::DesktopWindowTarget
+      composition_target{nullptr};
+  winrt::Windows::UI::Composition::SpriteVisual content_visual{nullptr};
+  winrt::Windows::UI::Composition::CompositionSurfaceBrush surface_brush{
+      nullptr};
+  winrt::Windows::UI::Composition::CompositionEffectBrush overlay_brush{
+      nullptr};
+  winrt::Windows::UI::Composition::ICompositionSurface composition_surface{
+      nullptr};
   Microsoft::WRL::ComPtr<IUnknown> composition_content;
 };
 

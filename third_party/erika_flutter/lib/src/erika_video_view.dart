@@ -873,8 +873,10 @@ class _ErikaWindowOverlayVideoViewState
       if (!box.hasSize || box.size.isEmpty) {
         return;
       }
-      final origin = box.localToGlobal(Offset.zero);
-      rect = origin & box.size;
+      rect = MatrixUtils.transformRect(
+        box.getTransformTo(null),
+        Offset.zero & box.size,
+      );
     } else {
       rect = Rect.zero;
     }
