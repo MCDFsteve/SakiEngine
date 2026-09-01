@@ -20,7 +20,10 @@ void main() {
 
     await ExitConfirmationDialog.closeApplication();
 
-    expect(methodCalls, containsAllInOrder(['setPreventClose', 'destroy']));
+    expect(
+      methodCalls,
+      containsAllInOrder(['setPreventClose', 'hide', 'destroy']),
+    );
     expect(methodCalls, isNot(contains('close')));
   });
 }

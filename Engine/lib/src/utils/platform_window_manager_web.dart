@@ -70,6 +70,8 @@ class PlatformWindowManager {
     } catch (_) {}
   }
 
+  static Future<void> hide() async {}
+
   static Future<void> close() async {
     await destroy();
   }
