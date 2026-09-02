@@ -32,7 +32,7 @@ class SakiNativeRuntime {
         'elapsedMs=${stopwatch.elapsedMicroseconds / 1000.0}; '
         'Dart fallback enabled: $error',
       );
-      print(stackTrace);
+      sakiDiagnosticLog(stackTrace);
       return false;
     }
   }

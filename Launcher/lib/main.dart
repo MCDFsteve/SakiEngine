@@ -1936,6 +1936,16 @@ CompiledSksBundle? loadGeneratedCompiledSksBundle() {
       if (cleanCode != 0) {
         throw _TaskFailure('flutter clean 失败，已中止构建');
       }
+      final staleCleanPaths = <String>[
+        _joinPath(gameDir.path, 'build'),
+        _joinPath(gameDir.path, '.dart_tool'),
+      ].where((path) => Directory(path).existsSync()).toList();
+      if (staleCleanPaths.isNotEmpty) {
+        throw _TaskFailure(
+          'flutter clean 未完全清除旧构建，请关闭正在运行的游戏或占用文件后重试: '
+          '${staleCleanPaths.join(', ')}',
+        );
+      }
 
       await _prepareProjectForExecution(game, generateIcons: false);
 

@@ -24,6 +24,7 @@ class MoviePlayer extends StatefulWidget {
   final bool looping;
   final int? repeatCount;
   final Duration? loopStart;
+  final Duration initialPosition;
   final bool backgroundMode;
   final bool pingPongLoop;
   final String? pingPongReverseMovieFile;
@@ -48,6 +49,7 @@ class MoviePlayer extends StatefulWidget {
     this.looping = false,
     this.repeatCount,
     this.loopStart,
+    this.initialPosition = Duration.zero,
     this.backgroundMode = false,
     this.pingPongLoop = false,
     this.pingPongReverseMovieFile,
@@ -61,7 +63,8 @@ class MoviePlayer extends StatefulWidget {
     this.videoAlphaMode = MovieVideoAlphaMode.opaque,
     this.videoBlendMode = BlendMode.srcOver,
     this.videoOpacity = 1.0,
-  }) : assert(playbackRate > 0),
+  }) : assert(initialPosition >= Duration.zero),
+       assert(playbackRate > 0),
        assert(videoOpacity >= 0.0 && videoOpacity <= 1.0);
 
   @override
@@ -123,6 +126,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
         oldWidget.movieFile != widget.movieFile ||
         oldWidget.looping != widget.looping ||
         oldWidget.loopStart != widget.loopStart ||
+        oldWidget.initialPosition != widget.initialPosition ||
         oldWidget.backgroundMode != widget.backgroundMode ||
         oldWidget.pingPongLoop != widget.pingPongLoop ||
         oldWidget.pingPongReverseMovieFile != widget.pingPongReverseMovieFile ||
@@ -232,6 +236,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
       await player.setPlaybackRate(widget.playbackRate);
       if (widget.backgroundMode) {
         await player.setVolume(0.0);
+      }
+      if (widget.initialPosition > Duration.zero) {
+        await player.seek(widget.initialPosition);
       }
       if (widget.autoPlay) {
         await player.play();
