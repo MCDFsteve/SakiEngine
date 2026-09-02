@@ -2140,6 +2140,7 @@ class _CompositeCharacterWidgetState extends State<_CompositeCharacterWidget> {
         isFadingOut: widget.isFadingOut,
         enableFadeIn: !widget.isFadingOut,
         skipAnimation: widget.skipAnimation,
+        fit: BoxFit.fitHeight,
       ),
     );
   }

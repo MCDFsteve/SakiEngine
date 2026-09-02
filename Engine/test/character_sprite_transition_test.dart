@@ -10,13 +10,24 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('different sprite ratios keep independent dissolve geometry', () {
-    const canvasSize = Size(299, 1048);
-    final fromRect = calculateDissolveCoverRect(canvasSize, 423, 1049);
-    final toRect = calculateDissolveCoverRect(canvasSize, 299, 1048);
+    const canvasSize = Size(423, 1049);
+    final fromRect = calculateDissolveImageRect(
+      canvasSize,
+      334,
+      984,
+      BoxFit.fitHeight,
+    );
+    final toRect = calculateDissolveImageRect(
+      canvasSize,
+      423,
+      1049,
+      BoxFit.fitHeight,
+    );
 
-    expect(fromRect.width / fromRect.height, closeTo(423 / 1049, 0.000001));
-    expect(toRect.width / toRect.height, closeTo(299 / 1048, 0.000001));
-    expect(fromRect.width, greaterThan(toRect.width));
+    expect(fromRect.height, canvasSize.height);
+    expect(toRect.height, canvasSize.height);
+    expect(fromRect.width / fromRect.height, closeTo(334 / 984, 0.000001));
+    expect(toRect.width / toRect.height, closeTo(423 / 1049, 0.000001));
   });
 
   test('aspect-preserving dissolve shader compiles', () async {

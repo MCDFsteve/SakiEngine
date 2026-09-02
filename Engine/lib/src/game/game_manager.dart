@@ -1310,6 +1310,23 @@ class GameManager {
     return characterAlias;
   }
 
+  ({String pose, String expression}) _resolveCharacterVisualForResource({
+    required CharacterState currentState,
+    required String targetResourceId,
+    String? requestedPose,
+    String? requestedExpression,
+  }) {
+    final resourceChanged = currentState.resourceId != targetResourceId;
+    return (
+      pose:
+          requestedPose ??
+          (resourceChanged ? 'pose1' : (currentState.pose ?? 'pose1')),
+      expression:
+          requestedExpression ??
+          (resourceChanged ? 'happy' : (currentState.expression ?? 'happy')),
+    );
+  }
+
   ({String alias, CharacterConfig config})?
   _resolveCharacterIdentityByAliasOrResourceId(String aliasOrResourceId) {
     final normalized = aliasOrResourceId.trim();
@@ -3006,10 +3023,14 @@ class GameManager {
           );
         }
 
-        // 先计算目标pose和expression，确保使用默认值
-        final targetPose = node.pose ?? currentCharacterState.pose ?? 'pose1';
-        final targetExpression =
-            node.expression ?? currentCharacterState.expression ?? 'happy';
+        final targetVisual = _resolveCharacterVisualForResource(
+          currentState: currentCharacterState,
+          targetResourceId: resourceId,
+          requestedPose: node.pose,
+          requestedExpression: node.expression,
+        );
+        final targetPose = targetVisual.pose;
+        final targetExpression = targetVisual.expression;
 
         tempCharacters[finalCharacterKey] = currentCharacterState.copyWith(
           resourceId: resourceId,
@@ -3350,10 +3371,16 @@ class GameManager {
               //print('[GameManager] ConditionalSay: 角色 $finalCharacterKey 差分切换时继承动画属性: $inheritedAnimationProperties');
             }
 
+            final targetVisual = _resolveCharacterVisualForResource(
+              currentState: currentCharacterState,
+              targetResourceId: targetResourceId,
+              requestedPose: node.pose,
+              requestedExpression: node.expression,
+            );
             final updatedCharacter = currentCharacterState.copyWith(
               resourceId: targetResourceId,
-              pose: node.pose,
-              expression: node.expression,
+              pose: targetVisual.pose,
+              expression: targetVisual.expression,
               // Dialogue aliases auto-render their sprite. If a preceding
               // hide is still fading, speaking again cancels that fade.
               isFadingOut: false,
@@ -3674,10 +3701,16 @@ class GameManager {
                 //print('[GameManager] 角色 $finalCharacterKey 差分切换时继承动画属性: $inheritedAnimationProperties');
               }
 
+              final targetVisual = _resolveCharacterVisualForResource(
+                currentState: currentCharacterState,
+                targetResourceId: targetResourceId,
+                requestedPose: node.pose,
+                requestedExpression: finalExpression,
+              );
               final updatedCharacter = currentCharacterState.copyWith(
                 resourceId: targetResourceId,
-                pose: node.pose,
-                expression: finalExpression,
+                pose: targetVisual.pose,
+                expression: targetVisual.expression,
                 // Dialogue aliases auto-render their sprite. If a preceding
                 // hide is still fading, speaking again cancels that fade.
                 isFadingOut: false,
