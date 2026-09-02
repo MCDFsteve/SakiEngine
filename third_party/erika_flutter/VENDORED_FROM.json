@@ -1,7 +1,13 @@
 {
   "schemaVersion": 1,
   "packageVersion": "0.1.7",
-  "erikaRevision": "5c1bb1001def9fe348262dd9860b115d05bebae9",
+  "erikaRevision": "2c5e470fd33b4a7297fa5b15bb22cb65ace1899e",
+  "localPatches": [
+    {
+      "path": "native/patches/quiet-default-diagnostics.patch",
+      "description": "Make routine native diagnostics opt-in through ERIKA_DIAGNOSTICS or an existing trace flag."
+    }
+  ],
   "runtimes": {
     "macosUniversal": {
       "path": "native/macos/liberika_capi.dylib",
@@ -9,7 +15,7 @@
     },
     "windowsX64": {
       "path": "native/windows/x64/erika_capi.dll",
-      "sha256": "afe81cf758d2c38de73ab434c738f8cf0af0e310723717c8ca544b666b13136e"
+      "sha256": "c8d916224d8f5bf34937f5c4762efc0c82786171e349029b52f7557b5de01108"
     }
   }
 }

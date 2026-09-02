@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made routine native playback diagnostics opt-in through
+  `ERIKA_DIAGNOSTICS=1` or the existing trace environment flags, keeping
+  normal application logs quiet while retaining explicit troubleshooting.
 - Added a packed-alpha video mode that stores color and alpha side by side,
   reconstructs premultiplied transparency in the GPU renderer, and propagates
   the mode through the C ABI and Flutter platform integrations.

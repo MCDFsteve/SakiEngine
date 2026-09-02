@@ -41,6 +41,7 @@ class AudioPlayer {
   LoopMode _loopMode = LoopMode.off;
   ProcessingState _erikaProcessingState = ProcessingState.idle;
   bool _erikaPlaying = false;
+  bool _erikaHasMedia = false;
   bool _disposed = false;
   bool _restartingLoop = false;
 
@@ -105,9 +106,16 @@ class AudioPlayer {
   Future<void> _openErika(ErikaPlayer player, String uri) async {
     _ensureActive();
     _erikaPlaying = false;
+    _erikaHasMedia = false;
     _erikaProcessingState = ProcessingState.loading;
-    await player.open(uri);
-    _erikaProcessingState = ProcessingState.ready;
+    try {
+      await player.open(uri);
+      _erikaHasMedia = true;
+      _erikaProcessingState = ProcessingState.ready;
+    } catch (_) {
+      _erikaProcessingState = ProcessingState.idle;
+      rethrow;
+    }
   }
 
   Future<void> play() async {
@@ -137,10 +145,14 @@ class AudioPlayer {
       return;
     }
     _erikaPlaying = false;
-    _erikaProcessingState = ProcessingState.idle;
     final erikaPlayer = _erikaPlayer;
     if (erikaPlayer != null) {
+      if (!_erikaHasMedia) {
+        _erikaProcessingState = ProcessingState.idle;
+        return;
+      }
       await erikaPlayer.stop();
+      _erikaProcessingState = ProcessingState.idle;
       return;
     }
     await _justAudioPlayer!.stop();
@@ -152,6 +164,7 @@ class AudioPlayer {
     }
     _disposed = true;
     _erikaPlaying = false;
+    _erikaHasMedia = false;
     await _erikaSubscription?.cancel();
     _erikaSubscription = null;
     final erikaPlayer = _erikaPlayer;
@@ -170,6 +183,7 @@ class AudioPlayer {
     if (event.kind == ErikaEventKind.error ||
         event.state == ErikaPlaybackState.error) {
       _erikaPlaying = false;
+      _erikaHasMedia = false;
       _playbackEvents.addError(
         StateError(event.message ?? event.error ?? 'Erika audio error'),
       );
@@ -187,9 +201,11 @@ class AudioPlayer {
       case ErikaPlaybackState.ready:
       case ErikaPlaybackState.playing:
       case ErikaPlaybackState.paused:
+        _erikaHasMedia = true;
         _erikaProcessingState = ProcessingState.ready;
         break;
       case ErikaPlaybackState.stopped:
+        _erikaHasMedia = true;
         if (_erikaPlaying && _loopMode == LoopMode.one) {
           _restartErikaLoop();
         } else {
@@ -200,9 +216,11 @@ class AudioPlayer {
       case ErikaPlaybackState.idle:
       case ErikaPlaybackState.closed:
         _erikaPlaying = false;
+        _erikaHasMedia = false;
         _erikaProcessingState = ProcessingState.idle;
         break;
       case ErikaPlaybackState.error:
+        _erikaHasMedia = false;
         break;
     }
     _playbackEvents.add(event);

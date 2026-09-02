@@ -1927,6 +1927,16 @@ CompiledSksBundle? loadGeneratedCompiledSksBundle() {
     );
 
     try {
+      _appendLog('正在清理旧构建产物，避免残留依赖进入新构建...');
+      final cleanCode = await _runCommand(
+        executable: 'flutter',
+        arguments: const <String>['clean'],
+        workingDirectory: gameDir.path,
+      );
+      if (cleanCode != 0) {
+        throw _TaskFailure('flutter clean 失败，已中止构建');
+      }
+
       await _prepareProjectForExecution(game, generateIcons: false);
 
       final firstPubGet = await _runCommand(
