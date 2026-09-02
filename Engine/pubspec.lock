@@ -100,7 +100,7 @@ packages:
   erika_flutter:
     dependency: "direct main"
     description:
-      path: "../../../RustProject/Erika/packages/erika_flutter"
+      path: "../third_party/erika_flutter"
       relative: true
     source: path
     version: "0.1.7"
@@ -482,13 +482,6 @@ packages:
       relative: true
     source: path
     version: "1.2.1"
-  media_kit_libs_windows_video:
-    dependency: "direct main"
-    description:
-      path: "../third_party/media_kit_libs_windows_video_hotfix"
-      relative: true
-    source: path
-    version: "1.0.11"
   meta:
     dependency: transitive
     description:

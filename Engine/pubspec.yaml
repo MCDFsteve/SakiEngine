@@ -51,7 +51,6 @@ dependencies:
   flutter_svg: ^2.0.10
   erika_flutter:
     path: ../third_party/erika_flutter
-  media_kit_libs_windows_video: ^1.0.10
   media_kit_libs_linux: ^1.1.4
   just_audio: ^0.9.46
   just_audio_media_kit: ^2.1.0
@@ -74,8 +73,6 @@ dev_dependencies:
 dependency_overrides:
   media_kit:
     path: ../third_party/media_kit_hotfix
-  media_kit_libs_windows_video:
-    path: ../third_party/media_kit_libs_windows_video_hotfix
   media_kit_libs_linux:
     path: ../third_party/media_kit_libs_linux_hotfix
 

@@ -511,7 +511,7 @@ Future<void> runSakiEngine({
         android: false,
         iOS: false,
         macOS: false,
-        windows: true,
+        windows: false,
         linux: true,
       );
 

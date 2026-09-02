@@ -12,17 +12,31 @@ import '../../utils/platform_window_manager_io.dart'
 class ExitConfirmationDialog {
   static Future<void> closeApplication() async {
     try {
-      await Future.wait<void>([
-        MusicManager().shutdown(),
-        UISoundManager().shutdown(),
-      ]);
-    } catch (_) {
-      // Audio cleanup must not prevent the application from terminating.
-    }
-
-    try {
       await PlatformWindowManager.setPreventClose(false);
     } catch (_) {}
+
+    if (PlatformWindowManager.isWindows) {
+      // Remove the visible window before native media teardown. Erika owns the
+      // Windows players and releases them with the Flutter plugin, so waiting
+      // for every Dart-side player here only leaves a frozen final frame on
+      // screen while the process is already shutting down.
+      try {
+        await PlatformWindowManager.hide();
+      } catch (_) {}
+      try {
+        await PlatformWindowManager.destroy();
+        return;
+      } catch (_) {}
+    } else {
+      try {
+        await Future.wait<void>([
+          MusicManager().shutdown(),
+          UISoundManager().shutdown(),
+        ]);
+      } catch (_) {
+        // Audio cleanup must not prevent the application from terminating.
+      }
+    }
 
     try {
       // This method exits the application, rather than merely asking the
