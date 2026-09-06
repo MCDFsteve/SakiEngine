@@ -106,6 +106,24 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  test('Windows starts playback without the mobile session handshake', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    mock('com.ryanheise.audio_session', (call) async {
+      if (call.method == 'setConfiguration') {
+        // WinRT can still report the loaded source as paused while just_audio
+        // awaits session activation, overwriting its pending playing state.
+        await emit('com.ryanheise.just_audio.data.$playerId', {'playing': false});
+      }
+      return null;
+    });
+    final player = AudioPlayer();
+    addTearDown(player.dispose);
+    await player.setFilePath('C:/Game/Assets/music/bgm_008.mp3');
+    await player.play();
+    expect(calls.where((call) => call.method == 'play'), hasLength(1));
+    expect(player.playing, isTrue);
+  });
+
   for (final platform in [
     TargetPlatform.windows,
     TargetPlatform.macOS,

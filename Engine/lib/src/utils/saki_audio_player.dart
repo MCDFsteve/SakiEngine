@@ -14,7 +14,15 @@ class AudioPlayer {
     : this._(!kIsWeb && defaultTargetPlatform == TargetPlatform.linux);
 
   AudioPlayer._(bool linux)
-    : _native = linux ? null : native.AudioPlayer(),
+    : _native = linux
+          ? null
+          : native.AudioPlayer(
+              // WinRT needs no audio-focus activation. Waiting for the mobile
+              // session handshake lets a pending Windows paused event cancel
+              // just_audio's play request before it reaches the native player.
+              handleAudioSessionActivation:
+                  kIsWeb || defaultTargetPlatform != TargetPlatform.windows,
+            ),
       _linux = linux ? SakiLinuxAudioPlayer() : null;
 
   final native.AudioPlayer? _native;
