@@ -9,7 +9,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
-import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:sakiengine/src/config/runtime_project_config.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/core/game_module.dart';
@@ -506,14 +505,6 @@ Future<void> runSakiEngine({
           DeviceOrientation.landscapeRight,
         ]);
       }
-
-      JustAudioMediaKit.ensureInitialized(
-        android: false,
-        iOS: false,
-        macOS: false,
-        windows: false,
-        linux: true,
-      );
 
       if (!kIsWeb) {
         await PlatformWindowManager.ensureInitialized();

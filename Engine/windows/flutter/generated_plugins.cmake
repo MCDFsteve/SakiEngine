@@ -7,6 +7,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_avif_windows
   flutter_steamworks
   hotkey_manager_windows
+  just_audio_windows
   screen_retriever_windows
   window_manager
 )

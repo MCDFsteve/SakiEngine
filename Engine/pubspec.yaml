@@ -51,9 +51,11 @@ dependencies:
   flutter_svg: ^2.0.10
   erika_flutter:
     path: ../third_party/erika_flutter
-  media_kit_libs_linux: ^1.1.4
   just_audio: ^0.9.46
-  just_audio_media_kit: ^2.1.0
+  just_audio_windows: ^0.2.3
+  # Later minor versions require Flutter 3.44; retain the existing SDK floor.
+  audioplayers_linux: '>=4.2.1 <4.3.0'
+  audioplayers_platform_interface: '>=7.1.1 <7.2.0'
   flutter_steamworks: ^0.0.4
   saki_native:
     path: packages/saki_native
@@ -69,12 +71,6 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-
-dependency_overrides:
-  media_kit:
-    path: ../third_party/media_kit_hotfix
-  media_kit_libs_linux:
-    path: ../third_party/media_kit_libs_linux_hotfix
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

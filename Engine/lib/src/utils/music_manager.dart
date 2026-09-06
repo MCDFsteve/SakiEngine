@@ -1000,7 +1000,7 @@ class MusicManager extends ChangeNotifier {
         }
         return;
       }
-      if (trimmed.startsWith('/')) {
+      if (p.isAbsolute(trimmed)) {
         if (traceMusic) {
           _musicSourceLog('try setFilePath(absolute): "$trimmed"');
         }
