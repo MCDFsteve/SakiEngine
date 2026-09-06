@@ -21,22 +21,6 @@ class SksParser {
     ).hasMatch(hex);
   }
 
-  /// 为角色对话添加引号（旁白除外）
-  String _formatDialogueWithQuotes(String dialogue, String? character) {
-    // 如果没有角色（旁白），直接返回原文本
-    if (character == null || character.isEmpty) {
-      return dialogue;
-    }
-
-    // 如果已经有引号，直接返回
-    if (dialogue.startsWith('「') && dialogue.endsWith('」')) {
-      return dialogue;
-    }
-
-    // 为角色对话添加引号
-    return '「$dialogue」';
-  }
-
   String? _activeSourceFile;
   int _activeSourceLine = -1;
 
@@ -1330,7 +1314,7 @@ class SksParser {
 
       return SayNode(
         character: character,
-        dialogue: _formatDialogueWithQuotes(dialogue, character),
+        dialogue: dialogue,
         pose: pose,
         inlineApiToken: inlineApiToken,
         dialogueTag: tailMeta.dialogueTag,
@@ -1453,7 +1437,7 @@ class SksParser {
       }
 
       return ConditionalSayNode(
-        dialogue: _formatDialogueWithQuotes(dialogue, character),
+        dialogue: dialogue,
         character: character,
         inlineApiToken: inlineApiToken,
         dialogueTag: tailMeta.dialogueTag,
@@ -1491,7 +1475,7 @@ class SksParser {
       if (simpleMatch != null) {
         final tailMeta = _parseDialogueTail(simpleMatch.group(2));
         return SayNode(
-          dialogue: _formatDialogueWithQuotes(simpleMatch.group(1)!, null),
+          dialogue: simpleMatch.group(1)!,
           dialogueTag: tailMeta.dialogueTag,
           tailCharacter: tailMeta.tailCharacter,
           tailPose: tailMeta.tailPose,
@@ -1512,7 +1496,7 @@ class SksParser {
     if (beforeQuote.isEmpty) {
       // Narration: "dialogue"
       return SayNode(
-        dialogue: _formatDialogueWithQuotes(dialogue, null),
+        dialogue: dialogue,
         dialogueTag: tailMeta.dialogueTag,
         tailCharacter: tailMeta.tailCharacter,
         tailPose: tailMeta.tailPose,
@@ -1610,7 +1594,7 @@ class SksParser {
 
       return SayNode(
         character: character,
-        dialogue: _formatDialogueWithQuotes(dialogue, character),
+        dialogue: dialogue,
         inlineApiToken: inlineApiToken,
         dialogueTag: tailMeta.dialogueTag,
         tailCharacter: tailMeta.tailCharacter,
@@ -1630,7 +1614,7 @@ class SksParser {
 
     return SayNode(
       character: character,
-      dialogue: _formatDialogueWithQuotes(dialogue, character),
+      dialogue: dialogue,
       inlineApiToken: inlineApiToken,
       dialogueTag: tailMeta.dialogueTag,
       tailCharacter: tailMeta.tailCharacter,

@@ -1,0 +1,24 @@
+diff --git a/crates/erika/src/trace.rs b/crates/erika/src/trace.rs
+index ab5a090..c0a0959 100644
+--- a/crates/erika/src/trace.rs
++++ b/crates/erika/src/trace.rs
+@@ -19,10 +19,16 @@ pub(crate) fn log(line: impl AsRef<str>) {
+     append_line(line.as_ref(), default_trace_path());
+ }
+ 
+-/// Emits an unconditional operational diagnostic. Decoder/backend transitions
+-/// use this path because a hardware fallback must remain visible even when the
+-/// optional playback trace is disabled.
++/// Emits an opt-in operational diagnostic.
++///
++/// Host integrations already receive playback failures through the event and
++/// error APIs. Keeping routine decoder and lifecycle transitions off stderr by
++/// default prevents normal playback from flooding application logs. Set
++/// `ERIKA_DIAGNOSTICS=1` or one of the trace flags to inspect these events.
+ pub(crate) fn diagnostic(line: impl AsRef<str>) {
++    if !enabled() && !env_flag("ERIKA_DIAGNOSTICS") {
++        return;
++    }
+     let line = line.as_ref();
+     #[cfg(target_os = "android")]
+     android_log(line);

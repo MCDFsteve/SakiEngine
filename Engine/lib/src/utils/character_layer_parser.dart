@@ -38,12 +38,14 @@ class CharacterLayerParser {
 
     if (itemExists) {
       // 这是一个物件，使用简化的图层结构
-      print('[CharacterLayerParser] 检测到物件: $resourceId，使用items文件夹');
-      layers.add(CharacterLayerInfo(
-        assetName: itemAssetName,
-        layerLevel: 0,
-        layerType: 'item',
-      ));
+      sakiDiagnosticLog('[CharacterLayerParser] 检测到物件: $resourceId，使用items文件夹');
+      layers.add(
+        CharacterLayerInfo(
+          assetName: itemAssetName,
+          layerLevel: 0,
+          layerType: 'item',
+        ),
+      );
 
       // 缓存结果
       _layerCache[cacheKey] = layers;
@@ -58,24 +60,30 @@ class CharacterLayerParser {
 
     if (!poseExists) {
       // 寻找可用的pose图层（level 0相当于pose层）
-      final availablePoses =
-          await AssetManager.getAvailableCharacterLayers(resourceId);
-      final poseLayersOnly =
-          availablePoses.where((layer) => !layer.contains('-')).toList();
+      final availablePoses = await AssetManager.getAvailableCharacterLayers(
+        resourceId,
+      );
+      final poseLayersOnly = availablePoses
+          .where((layer) => !layer.contains('-'))
+          .toList();
       if (poseLayersOnly.isNotEmpty) {
         actualPose = poseLayersOnly.first;
       }
     }
 
-    layers.add(CharacterLayerInfo(
-      assetName: 'characters/$resourceId-$actualPose',
-      layerLevel: 0,
-      layerType: 'pose',
-    ));
+    layers.add(
+      CharacterLayerInfo(
+        assetName: 'characters/$resourceId-$actualPose',
+        layerLevel: 0,
+        layerType: 'pose',
+      ),
+    );
 
     // 2. 解析expression，支持多级图层并处理默认值
-    final expressionLayers =
-        await _parseExpressionLayers(resourceId, expression);
+    final expressionLayers = await _parseExpressionLayers(
+      resourceId,
+      expression,
+    );
     layers.addAll(expressionLayers);
 
     // 3. 可选的姿势前景层。用于手臂、道具等必须覆盖在表情之上的部件，
@@ -88,11 +96,13 @@ class CharacterLayerParser {
     final foregroundExists =
         await AssetManager().findAsset(foregroundAssetName) != null;
     if (foregroundExists) {
-      layers.add(CharacterLayerInfo(
-        assetName: foregroundAssetName,
-        layerLevel: 98,
-        layerType: 'pose_foreground',
-      ));
+      layers.add(
+        CharacterLayerInfo(
+          assetName: foregroundAssetName,
+          layerLevel: 98,
+          layerType: 'pose_foreground',
+        ),
+      );
     }
 
     // 4. 检查是否需要添加帽子图层（仅针对特定角色和姿势）
@@ -191,8 +201,10 @@ class CharacterLayerParser {
 
     if (!exists) {
       // 查找该级别下字母顺序第一个可用的图层
-      final defaultLayer =
-          await AssetManager.getDefaultLayerForLevel(resourceId, layerLevel);
+      final defaultLayer = await AssetManager.getDefaultLayerForLevel(
+        resourceId,
+        layerLevel,
+      );
       if (defaultLayer != null) {
         finalExpression = defaultLayer;
       }
@@ -229,7 +241,9 @@ class CharacterLayerParser {
 
   /// 解析帽子图层
   static Future<CharacterLayerInfo?> _parseHatLayer(
-      String resourceId, String pose) async {
+    String resourceId,
+    String pose,
+  ) async {
     // 帽子图层的资源命名：characters/xiayo1-hat
     // 帽子图层应该在所有差分图层之上，使用层级99
     final hatAssetName = 'characters/$resourceId-hat';

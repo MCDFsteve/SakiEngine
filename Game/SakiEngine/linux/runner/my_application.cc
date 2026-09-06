@@ -1,6 +1,8 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+#include <limits.h>
+#include <unistd.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -14,6 +16,30 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+static gchar* read_bundle_setting(const gchar* file_name,
+                                  const gchar* fallback) {
+  gchar executable_path[PATH_MAX + 1] = {};
+  const ssize_t length =
+      readlink("/proc/self/exe", executable_path, PATH_MAX);
+  if (length <= 0) {
+    return g_strdup(fallback);
+  }
+  executable_path[length] = '\0';
+  g_autofree gchar* executable_dir = g_path_get_dirname(executable_path);
+  g_autofree gchar* setting_path =
+      g_build_filename(executable_dir, file_name, nullptr);
+  gchar* contents = nullptr;
+  if (!g_file_get_contents(setting_path, &contents, nullptr, nullptr)) {
+    return g_strdup(fallback);
+  }
+  g_strchomp(contents);
+  if (contents[0] == '\0') {
+    g_free(contents);
+    return g_strdup(fallback);
+  }
+  return contents;
+}
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
@@ -24,6 +50,8 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  g_autofree gchar* product_name =
+      read_bundle_setting("saki_product_name.txt", "SakiEngine");
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -45,11 +73,11 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "SakiEngine");
+    gtk_header_bar_set_title(header_bar, product_name);
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "SakiEngine");
+    gtk_window_set_title(window, product_name);
   }
 
   gtk_window_set_default_size(window, 1280, 720);
@@ -140,9 +168,15 @@ MyApplication* my_application_new() {
   // like GTK and desktop environments map this running application to its
   // corresponding .desktop file. This ensures better integration by allowing
   // the application to be recognized beyond its binary name.
-  g_set_prgname(APPLICATION_ID);
+  g_autofree gchar* application_id =
+      read_bundle_setting("saki_application_id.txt", APPLICATION_ID);
+  if (!g_application_id_is_valid(application_id)) {
+    g_clear_pointer(&application_id, g_free);
+    application_id = g_strdup(APPLICATION_ID);
+  }
+  g_set_prgname(application_id);
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID, "flags",
+                                     "application-id", application_id, "flags",
                                      G_APPLICATION_NON_UNIQUE, nullptr));
 }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:sakiengine/src/utils/bundle_asset_path_probe.dart';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
@@ -7,6 +6,7 @@ import 'package:sakiengine/src/config/saki_pack_store.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:sakiengine/src/game/unified_game_data_manager.dart';
 import 'package:sakiengine/src/config/project_info_manager.dart';
+import 'package:sakiengine/src/utils/saki_audio_player.dart';
 
 /// 音频轨道类型枚举
 enum AudioTrackType {
@@ -888,7 +888,22 @@ class MusicManager extends ChangeNotifier {
     if (sessionGeneration != _audioSessionGeneration) {
       return;
     }
-    await player.play();
+    // `AudioPlayer.play()` completes when playback finishes or is interrupted
+    // on the native just_audio backends. Awaiting it would therefore block the
+    // SKS executor for the full duration of a one-shot sound, and forever for a
+    // looping ambience cue. Only source/setup work belongs to this Future; keep
+    // actual playback detached, matching the music and voice channels.
+    final playFuture = player.play();
+    unawaited(
+      playFuture.catchError((Object error, StackTrace stackTrace) {
+        if (kEngineDebugMode) {
+          print(
+            '[MusicManager] sound.play async failed: $assetPath, error=$error',
+          );
+          print(stackTrace);
+        }
+      }),
+    );
 
     if (fadeTransition) {
       // 音效淡入（通常时间较短）
@@ -985,7 +1000,7 @@ class MusicManager extends ChangeNotifier {
         }
         return;
       }
-      if (trimmed.startsWith('/')) {
+      if (p.isAbsolute(trimmed)) {
         if (traceMusic) {
           _musicSourceLog('try setFilePath(absolute): "$trimmed"');
         }
@@ -1403,10 +1418,10 @@ class MusicManager extends ChangeNotifier {
     );
   }
 
-  /// 返回主菜单时释放本局剧情使用过的 mpv 音效核心和解码源。
+  /// 返回主菜单时释放本局剧情使用过的音效核心和解码源。
   ///
   /// 主音乐播放器继续保留给菜单音乐复用；音效主轨与重叠播放器按需重建，
-  /// 从而让已经启动的 mpv worker/demux 线程和其缓冲真正退出。
+  /// 从而让已经启动的媒体 worker/demux 线程和其缓冲真正退出。
   Future<void> releaseGameAudioResources() async {
     final activeRelease = _gameAudioReleaseFuture;
     if (activeRelease != null) {
@@ -1474,7 +1489,7 @@ class MusicManager extends ChangeNotifier {
     }
   }
 
-  /// 在 Flutter/Dart 运行时销毁前等待所有 mpv 后台线程退出。
+  /// 在 Flutter/Dart 运行时销毁前等待所有媒体后台线程退出。
   Future<void> shutdown() async {
     final activeShutdown = _shutdownFuture;
     if (activeShutdown != null) {
@@ -1514,8 +1529,6 @@ class MusicManager extends ChangeNotifier {
       }),
       eagerError: false,
     );
-    // 给 media_kit 的事件端口一个事件循环周期来完成注销。
-    await Future<void>.delayed(const Duration(milliseconds: 100));
   }
 
   @override

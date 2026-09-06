@@ -43,11 +43,13 @@ class GpuCompositeResult {
   /// 释放所有图层资源（减少引用计数，必要时真正释放纹理）
   void dispose() {
     if (_disposed) return;
+    _disposed = true;
     for (final handle in _handles) {
       _releaseLayer(handle.cacheKey);
     }
-    _handles.clear();
-    _disposed = true;
+    // `_handles` is intentionally created with `growable: false`. Clearing it
+    // throws during LRU eviction; retaining this short-lived list is harmless
+    // once the result itself is removed from every cache.
   }
 }
 

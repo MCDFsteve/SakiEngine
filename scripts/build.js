@@ -7,6 +7,7 @@ const readline = require('readline');
 const { spawnSync } = require('child_process');
 
 const assetUtils = require('./asset-utils.js');
+const { buildCrossDesktop } = require('./cross-desktop.js');
 
 const colors = {
   reset: '\x1b[0m',
@@ -325,7 +326,7 @@ async function chooseGameProject() {
 async function choosePlatform() {
   const host = detectHostPlatform();
   let options = [];
-  if (host === 'macos') options = ['macos', 'ios', 'android', 'web'];
+  if (host === 'macos') options = ['macos', 'linux', 'windows', 'ios', 'android', 'web'];
   else if (host === 'linux') options = ['linux', 'android', 'web'];
   else if (host === 'windows') options = ['windows', 'android', 'web'];
   else options = ['macos', 'linux', 'windows', 'android', 'ios', 'web'];
@@ -462,7 +463,16 @@ async function main() {
 
     colorLog(`正在构建 ${platform} ...`, 'yellow');
     if (platform === 'macos') runFlutter(['build', 'macos', '--release'], gameDir);
-    else if (platform === 'linux') runFlutter(['build', 'linux', '--release'], gameDir);
+    else if (
+      detectHostPlatform() === 'macos' &&
+      (platform === 'linux' || platform === 'windows')
+    ) {
+      buildCrossDesktop({
+        gameDir,
+        target: platform,
+        flutterBin: process.env.SAKI_FLUTTER_BIN || 'flutter',
+      });
+    } else if (platform === 'linux') runFlutter(['build', 'linux', '--release'], gameDir);
     else if (platform === 'windows') runFlutter(['build', 'windows', '--release'], gameDir);
     else if (platform === 'android') {
       runFlutter(['build', 'apk', '--release', '--target-platform', 'android-arm64'], gameDir);

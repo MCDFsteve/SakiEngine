@@ -80,3 +80,7 @@ Engine/.flutter-plugins-dependencies
 /Launcher/linux/flutter/ephemeral
 /third_party/media_kit_libs_macos_video_hotfix/macos/Frameworks
 /third_party/media_kit_libs_macos_video_hotfix/macos/.cache
+
+# SakiEngine 的离线 Erika Windows 运行库必须随仓库分发。
+!/third_party/erika_flutter/native/windows/x64/
+!/third_party/erika_flutter/native/windows/x64/erika_capi.dll

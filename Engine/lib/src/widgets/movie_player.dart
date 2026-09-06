@@ -5,6 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/utils/smart_asset_image.dart';
 
+enum MovieVideoAlphaMode { opaque, packedAlphaRight }
+
+extension on MovieVideoAlphaMode {
+  ErikaVideoAlphaMode get erikaValue => switch (this) {
+    MovieVideoAlphaMode.opaque => ErikaVideoAlphaMode.opaque,
+    MovieVideoAlphaMode.packedAlphaRight =>
+      ErikaVideoAlphaMode.packedAlphaRight,
+  };
+}
+
 class MoviePlayer extends StatefulWidget {
   final String movieFile;
   final VoidCallback? onVideoEnd;
@@ -14,6 +24,7 @@ class MoviePlayer extends StatefulWidget {
   final bool looping;
   final int? repeatCount;
   final Duration? loopStart;
+  final Duration initialPosition;
   final bool backgroundMode;
   final bool pingPongLoop;
   final String? pingPongReverseMovieFile;
@@ -24,6 +35,9 @@ class MoviePlayer extends StatefulWidget {
   final String? placeholderImageAssetName;
   final double playbackRate;
   final Color backgroundColor;
+  final MovieVideoAlphaMode videoAlphaMode;
+  final BlendMode videoBlendMode;
+  final double videoOpacity;
 
   const MoviePlayer({
     super.key,
@@ -35,6 +49,7 @@ class MoviePlayer extends StatefulWidget {
     this.looping = false,
     this.repeatCount,
     this.loopStart,
+    this.initialPosition = Duration.zero,
     this.backgroundMode = false,
     this.pingPongLoop = false,
     this.pingPongReverseMovieFile,
@@ -45,7 +60,12 @@ class MoviePlayer extends StatefulWidget {
     this.placeholderImageAssetName,
     this.playbackRate = 1.0,
     this.backgroundColor = Colors.black,
-  }) : assert(playbackRate > 0);
+    this.videoAlphaMode = MovieVideoAlphaMode.opaque,
+    this.videoBlendMode = BlendMode.srcOver,
+    this.videoOpacity = 1.0,
+  }) : assert(initialPosition >= Duration.zero),
+       assert(playbackRate > 0),
+       assert(videoOpacity >= 0.0 && videoOpacity <= 1.0);
 
   @override
   State<MoviePlayer> createState() => _MoviePlayerState();
@@ -76,6 +96,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
   ErikaPlaybackState _playbackState = ErikaPlaybackState.idle;
   Completer<void>? _surfaceAttachedCompleter;
   Completer<void>? _secondarySurfaceAttachedCompleter;
+  Completer<void>? _secondaryPlaybackProgressCompleter;
 
   bool get _hasSequentialFollowUp =>
       widget.sequentialMovieFile?.trim().isNotEmpty == true;
@@ -105,11 +126,13 @@ class _MoviePlayerState extends State<MoviePlayer> {
         oldWidget.movieFile != widget.movieFile ||
         oldWidget.looping != widget.looping ||
         oldWidget.loopStart != widget.loopStart ||
+        oldWidget.initialPosition != widget.initialPosition ||
         oldWidget.backgroundMode != widget.backgroundMode ||
         oldWidget.pingPongLoop != widget.pingPongLoop ||
         oldWidget.pingPongReverseMovieFile != widget.pingPongReverseMovieFile ||
         oldWidget.sequentialMovieFile != widget.sequentialMovieFile ||
-        oldWidget.sequentialLooping != widget.sequentialLooping;
+        oldWidget.sequentialLooping != widget.sequentialLooping ||
+        oldWidget.videoAlphaMode != widget.videoAlphaMode;
     if (shouldReinitialize) {
       unawaited(_initializeVideo());
       return;
@@ -152,6 +175,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
       _videoHeight = 0;
       _playbackState = ErikaPlaybackState.idle;
     });
+    _secondaryPlaybackProgressCompleter = null;
     final surfaceAttachedCompleter = Completer<void>();
     _surfaceAttachedCompleter = surfaceAttachedCompleter;
 
@@ -183,6 +207,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
       final player = ErikaPlayer(
         allowBackgroundPlayback: widget.backgroundMode,
+        videoAlphaMode: widget.videoAlphaMode.erikaValue,
       );
       _player = player;
       _eventSubscription = player.events.listen(
@@ -212,6 +237,9 @@ class _MoviePlayerState extends State<MoviePlayer> {
       if (widget.backgroundMode) {
         await player.setVolume(0.0);
       }
+      if (widget.initialPosition > Duration.zero) {
+        await player.seek(widget.initialPosition);
+      }
       if (widget.autoPlay) {
         await player.play();
       }
@@ -229,7 +257,10 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   Future<void> _initializeSecondaryPlayer(String path, int generation) async {
-    final player = ErikaPlayer(allowBackgroundPlayback: widget.backgroundMode);
+    final player = ErikaPlayer(
+      allowBackgroundPlayback: widget.backgroundMode,
+      videoAlphaMode: widget.videoAlphaMode.erikaValue,
+    );
     _secondaryPlayer = player;
     _secondarySurfaceAttachedCompleter = Completer<void>();
     _secondaryEventSubscription = player.events.listen(
@@ -274,10 +305,14 @@ class _MoviePlayerState extends State<MoviePlayer> {
       case ErikaEventKind.videoParamsChanged:
         if (event.video.width > 0 && event.video.height > 0) {
           _hasVideoParams = true;
-          if (_videoWidth != event.video.width ||
+          final logicalWidth =
+              widget.videoAlphaMode == MovieVideoAlphaMode.packedAlphaRight
+              ? event.video.width ~/ 2
+              : event.video.width;
+          if (_videoWidth != logicalWidth ||
               _videoHeight != event.video.height) {
             setState(() {
-              _videoWidth = event.video.width;
+              _videoWidth = logicalWidth;
               _videoHeight = event.video.height;
             });
           }
@@ -315,6 +350,13 @@ class _MoviePlayerState extends State<MoviePlayer> {
       if (completer != null && !completer.isCompleted) {
         completer.complete();
       }
+    } else if (event.kind == ErikaEventKind.positionChanged) {
+      final completer = _secondaryPlaybackProgressCompleter;
+      if (_secondaryHasStartedPlayback &&
+          completer != null &&
+          !completer.isCompleted) {
+        completer.complete();
+      }
     }
   }
 
@@ -346,12 +388,6 @@ class _MoviePlayerState extends State<MoviePlayer> {
       final secondaryPlayer = _secondaryPlayer;
       if (secondaryPlayer != null &&
           (widget.pingPongLoop || _hasSequentialFollowUp)) {
-        if (mounted) {
-          setState(() {
-            _showSecondaryPlayer = true;
-          });
-        }
-        await WidgetsBinding.instance.endOfFrame;
         await _secondarySurfaceAttachedCompleter?.future.timeout(
           const Duration(seconds: 1),
           onTimeout: () {},
@@ -361,7 +397,25 @@ class _MoviePlayerState extends State<MoviePlayer> {
         }
         await secondaryPlayer.seek(Duration.zero);
         if (widget.autoPlay) {
+          final playbackProgressCompleter = Completer<void>();
+          _secondaryPlaybackProgressCompleter = playbackProgressCompleter;
+          _secondaryHasStartedPlayback = true;
           await secondaryPlayer.play();
+          await playbackProgressCompleter.future.timeout(
+            const Duration(milliseconds: 500),
+            onTimeout: () {},
+          );
+          if (identical(
+            _secondaryPlaybackProgressCompleter,
+            playbackProgressCompleter,
+          )) {
+            _secondaryPlaybackProgressCompleter = null;
+          }
+        }
+        if (mounted && _player == player) {
+          setState(() {
+            _showSecondaryPlayer = true;
+          });
         }
         return;
       }
@@ -495,6 +549,7 @@ class _MoviePlayerState extends State<MoviePlayer> {
     _secondaryEventSubscription = null;
     _surfaceAttachedCompleter = null;
     _secondarySurfaceAttachedCompleter = null;
+    _secondaryPlaybackProgressCompleter = null;
     final player = _player;
     final secondaryPlayer = _secondaryPlayer;
     _player = null;
@@ -513,7 +568,12 @@ class _MoviePlayerState extends State<MoviePlayer> {
   }
 
   Widget _buildVideoLayer(BuildContext context, ErikaPlayer player) {
-    final texture = ErikaTextureVideoView(player: player);
+    final texture = ErikaTextureVideoView(
+      key: ObjectKey(player),
+      player: player,
+      blendMode: widget.videoBlendMode,
+      opacity: widget.videoOpacity,
+    );
     if (_videoWidth <= 0 || _videoHeight <= 0) {
       return SizedBox.expand(child: texture);
     }
@@ -581,6 +641,8 @@ class _MoviePlayerState extends State<MoviePlayer> {
           fit: StackFit.expand,
           children: [
             if (_hasPlaceholderImage) _buildPlaceholderLayer(),
+            if (secondaryPlayer != null && !_showSecondaryPlayer)
+              _buildVideoLayer(context, secondaryPlayer),
             _buildVideoLayer(context, player),
             if (secondaryPlayer != null && _showSecondaryPlayer)
               _buildVideoLayer(context, secondaryPlayer),

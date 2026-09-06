@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:sakiengine/src/config/asset_manager.dart';
 import 'package:sakiengine/src/config/game_path_resolver.dart';
@@ -10,6 +9,7 @@ import 'package:sakiengine/src/config/saki_pack_store.dart';
 import 'package:sakiengine/src/game/unified_game_data_manager.dart';
 import 'package:sakiengine/src/utils/bundle_asset_path_probe.dart';
 import 'package:sakiengine/src/utils/foundation_compat.dart';
+import 'package:sakiengine/src/utils/saki_audio_player.dart';
 
 /// UI interaction sound manager (hover/click).
 class UISoundManager {

@@ -9,7 +9,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
-import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:sakiengine/src/config/runtime_project_config.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/core/game_module.dart';
@@ -145,12 +144,9 @@ Future<void> _openShowcaseResourceDirectoryIfNeeded() async {
     if (Platform.isMacOS) {
       opened = await _startDetachedProcess('open', <String>[path]);
     } else if (Platform.isWindows) {
-      opened = await _startDetachedProcess(
-          'explorer',
-          <String>[
-            path,
-          ],
-          runInShell: true);
+      opened = await _startDetachedProcess('explorer', <String>[
+        path,
+      ], runInShell: true);
     } else if (Platform.isLinux) {
       opened = await _startDetachedProcess('xdg-open', <String>[path]);
       if (!opened) {
@@ -425,7 +421,7 @@ class _GameContainerState extends State<GameContainer> with WindowListener {
             final sessionKey = saveSlot == null
                 ? 'new_game:${initialScript.isEmpty ? 'start' : initialScript}'
                 : 'save:${saveSlot.id}:${saveSlot.currentScript}:'
-                    '${saveSlot.saveTime.microsecondsSinceEpoch}';
+                      '${saveSlot.saveTime.microsecondsSinceEpoch}';
             currentScreen = gameModule.createGamePlayScreen(
               key: ValueKey(sessionKey),
               saveSlotToLoad: saveSlot,
@@ -449,6 +445,7 @@ Future<void> runSakiEngine({
   String? gamePath,
   int steamAppId = 3536120,
   bool enableSteamworks = true,
+  bool restoreStartupWindowBounds = true,
   bool useNearestNeighborSampling = false,
 }) async {
   setupDebugLogger();
@@ -509,14 +506,6 @@ Future<void> runSakiEngine({
         ]);
       }
 
-      JustAudioMediaKit.ensureInitialized(
-        android: false,
-        iOS: false,
-        macOS: false,
-        windows: true,
-        linux: true,
-      );
-
       if (!kIsWeb) {
         await PlatformWindowManager.ensureInitialized();
         await PlatformWindowManager.setPreventClose(true);
@@ -529,11 +518,9 @@ Future<void> runSakiEngine({
 
       await SakiEngineConfig().loadConfig();
       await SettingsManager().init();
-      if (!kIsWeb) {
-        await PlatformWindowManager.applyStartupWindowSizeForAspectRatio(
-          SettingsManager().currentGameWindowAspectRatio,
-        );
-      }
+      final startupWindowAspectRatio = !kIsWeb && restoreStartupWindowBounds
+          ? SettingsManager().currentGameWindowAspectRatio
+          : null;
       frameRateBinding.attachSettingsSync();
       await LocalizationManager().init();
       await UISoundManager().initialize();
@@ -558,6 +545,19 @@ Future<void> runSakiEngine({
       );
 
       runApp(const SakiEngineApp());
+      if (startupWindowAspectRatio != null) {
+        // Resizing the native macOS window before Flutter has submitted its
+        // first surface frame makes ResizeSynchronizer wait and time out.
+        // Restore the persisted bounds only after a frame can satisfy the
+        // resize handshake.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(
+            PlatformWindowManager.applyStartupWindowSizeForAspectRatio(
+              startupWindowAspectRatio,
+            ),
+          );
+        });
+      }
     },
     zoneSpecification: ZoneSpecification(
       print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
@@ -656,7 +656,8 @@ class _SakiEngineAppState extends State<SakiEngineApp> {
                     GlobalWidgetsLocalizations.delegate,
                     GlobalCupertinoLocalizations.delegate,
                   ],
-                  theme: customTheme ??
+                  theme:
+                      customTheme ??
                       ThemeData(
                         primarySwatch: Colors.blue,
                         fontFamily: 'SourceHanSansCN',

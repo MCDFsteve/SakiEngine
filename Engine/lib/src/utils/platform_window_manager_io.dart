@@ -75,6 +75,12 @@ class PlatformWindowManager {
     }
   }
 
+  static Future<void> hide() async {
+    if (_isDesktop) {
+      await windowManager.hide();
+    }
+  }
+
   static Future<void> close() async {
     if (_isDesktop) {
       await windowManager.close();

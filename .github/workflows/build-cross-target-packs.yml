@@ -1,0 +1,220 @@
+name: Build Offline Desktop Cross Target Packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: Exact Flutter version embedded packs must match
+        required: true
+        default: '3.44.0'
+      erika_ref:
+        description: Erika source revision used by the Flutter plugin
+        required: true
+        default: 'main'
+      erika_source_build:
+        description: Rebuild Erika C API from source instead of its verified release bundle
+        required: true
+        type: boolean
+        default: false
+  push:
+    branches:
+      - codex/cross-compilation
+    paths:
+      - .github/workflows/build-cross-target-packs.yml
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: ${{ inputs.flutter_version || '3.44.0' }}
+  ERIKA_REF: ${{ inputs.erika_ref || 'main' }}
+  ERIKA_FORCE_SOURCE_BUILD: ${{ inputs.erika_source_build && '1' || '0' }}
+
+jobs:
+  snapshotter:
+    name: macOS x64 AOT snapshotter
+    runs-on: macos-15-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          architecture: x64
+          cache: true
+      - name: Export snapshotter
+        shell: bash
+        run: |
+          set -euo pipefail
+          erika_macos=third_party/erika_flutter/native/macos/liberika_capi.dylib
+          test -f "$erika_macos"
+          lipo "$erika_macos" -verify_arch arm64 x86_64
+          flutter precache --macos
+          flutter_root="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+          engine_revision="$(tr -d '\r\n' < "$flutter_root/bin/cache/engine.stamp")"
+          source="$flutter_root/bin/cache/artifacts/engine/darwin-x64-release/gen_snapshot"
+          test -x "$source"
+          mkdir -p cross-pack/snapshotter
+          cp "$source" cross-pack/snapshotter/gen_snapshot
+          chmod +x cross-pack/snapshotter/gen_snapshot
+          jq -n \
+            --arg flutterVersion "$FLUTTER_VERSION" \
+            --arg engineRevision "$engine_revision" \
+            '{flutterVersion:$flutterVersion,engineRevision:$engineRevision,flutterSnapshotDirectory:"darwin-x64-release"}' \
+            > cross-pack/snapshotter/metadata.json
+          file cross-pack/snapshotter/gen_snapshot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saki-cross-snapshotter
+          path: cross-pack/snapshotter
+          compression-level: 0
+          retention-days: 14
+
+  linux-runner:
+    name: Linux x64 SakiEngine runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev libkeybinder-3.0-dev \
+            libmpv-dev libasound2-dev libass-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build native runner and plugins
+        working-directory: Game/SakiEngine
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Git does not retain the empty asset directories declared by the
+          # engine template, while Flutter validates every pubspec entry.
+          mkdir -p Assets/gui Assets/images/cg/chapter1 Assets/images/items \
+            Assets/music Assets/sound Assets/voice
+          flutter config --enable-linux-desktop
+          flutter pub get
+          flutter build linux --release
+      - name: Export runner template
+        working-directory: Game/SakiEngine
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir=build/linux/x64/release/bundle
+          runner_path="$(find "$source_dir" -maxdepth 1 -type f -perm -111 -print -quit)"
+          test -n "$runner_path"
+          runner_executable="$(basename "$runner_path")"
+          mkdir -p ../../cross-pack/linux-x64/template
+          cp -a "$source_dir/." ../../cross-pack/linux-x64/template/
+          rm -rf ../../cross-pack/linux-x64/template/data/flutter_assets
+          rm -f ../../cross-pack/linux-x64/template/lib/libapp.so
+          jq -n \
+            --arg runnerExecutable "$runner_executable" \
+            --argjson plugins "$(jq '[.plugins.linux[] | select(.native_build == true and .dev_dependency != true) | .name] | sort' .flutter-plugins-dependencies)" \
+            '{targetPlatform:"linux-x64",runnerExecutable:$runnerExecutable,nativePlugins:$plugins}' \
+            > ../../cross-pack/linux-x64/metadata.json
+          find ../../cross-pack/linux-x64/template -type f -maxdepth 4 -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saki-cross-linux-x64
+          path: cross-pack/linux-x64
+          compression-level: 0
+          retention-days: 14
+
+  windows-runner:
+    name: Windows x64 SakiEngine runner
+    runs-on: windows-2022
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Erika package source
+        if: env.ERIKA_FORCE_SOURCE_BUILD == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          erika_root="$(cd "$GITHUB_WORKSPACE/../.." && pwd)/RustProject/Erika"
+          mkdir -p "$(dirname "$erika_root")"
+          git clone --depth 1 --branch "$ERIKA_REF" https://github.com/AimesSoft/Erika.git "$erika_root"
+          echo "ERIKA_REPO_ROOT=$erika_root" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.ERIKA_FORCE_SOURCE_BUILD == '1'
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: msys2/setup-msys2@v2
+        if: env.ERIKA_FORCE_SOURCE_BUILD == '1'
+        with:
+          msystem: UCRT64
+          release: false
+          update: false
+          path-type: inherit
+          install: >-
+            make
+            tar
+            diffutils
+            coreutils
+            pkgconf
+            perl
+            zip
+      - name: Install Erika native build tools
+        if: env.ERIKA_FORCE_SOURCE_BUILD == '1'
+        shell: pwsh
+        run: |
+          choco install -y --no-progress nasm llvm
+          pip install --quiet meson ninja
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\LLVM\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\NASM"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build native runner and plugins
+        working-directory: Game/SakiEngine
+        shell: bash
+        env:
+          ERIKA_FORCE_SOURCE_BUILD: ${{ env.ERIKA_FORCE_SOURCE_BUILD }}
+          ERIKA_NATIVE_PROFILE: lgpl
+          ERIKA_NATIVE_TARGET: x86_64-pc-windows-msvc
+        run: |
+          set -euo pipefail
+          # Git does not retain the empty asset directories declared by the
+          # engine template, while Flutter validates every pubspec entry.
+          mkdir -p Assets/gui Assets/images/cg/chapter1 Assets/images/items \
+            Assets/music Assets/sound Assets/voice
+          flutter config --enable-windows-desktop
+          flutter pub get
+          flutter build windows --release
+      - name: Export runner template
+        working-directory: Game/SakiEngine
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir=build/windows/x64/runner/Release
+          runner_path="$(find "$source_dir" -maxdepth 1 -type f -iname '*.exe' -print -quit)"
+          test -n "$runner_path"
+          runner_executable="$(basename "$runner_path")"
+          mkdir -p ../../cross-pack/windows-x64/template
+          cp -a "$source_dir/." ../../cross-pack/windows-x64/template/
+          rm -rf ../../cross-pack/windows-x64/template/data/flutter_assets
+          rm -f ../../cross-pack/windows-x64/template/data/app.so
+          jq -n \
+            --arg runnerExecutable "$runner_executable" \
+            --argjson plugins "$(jq '[.plugins.windows[] | select(.native_build == true and .dev_dependency != true) | .name] | sort' .flutter-plugins-dependencies)" \
+            '{targetPlatform:"windows-x64",runnerExecutable:$runnerExecutable,nativePlugins:$plugins}' \
+            > ../../cross-pack/windows-x64/metadata.json
+          find ../../cross-pack/windows-x64/template -type f -maxdepth 4 -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saki-cross-windows-x64
+          path: cross-pack/windows-x64
+          compression-level: 0
+          retention-days: 14

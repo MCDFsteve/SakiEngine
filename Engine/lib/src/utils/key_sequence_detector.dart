@@ -36,12 +36,8 @@ class KeySequenceDetector {
     _isListening = true;
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
 
-    if (kEngineDebugMode) {
-      final sequenceNames = _targetSequence
-          .map((key) => key.debugName)
-          .join('-');
-      print('按键序列检测器: 开始监听序列 $sequenceNames');
-    }
+    final sequenceNames = _targetSequence.map((key) => key.debugName).join('-');
+    sakiDiagnosticLog('按键序列检测器: 开始监听序列 $sequenceNames');
   }
 
   /// 停止监听键盘事件
@@ -53,9 +49,7 @@ class KeySequenceDetector {
     HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     _currentSequence.clear();
 
-    if (kEngineDebugMode) {
-      print('按键序列检测器: 停止监听');
-    }
+    sakiDiagnosticLog('按键序列检测器: 停止监听');
   }
 
   bool _handleKeyEvent(KeyEvent event) {
@@ -89,17 +83,14 @@ class KeySequenceDetector {
         _currentSequence.add(key);
         _resetTimeout();
 
-        if (kEngineDebugMode) {
-          print(
-            '按键序列检测器: 按键 ${key.debugName} 匹配，当前序列长度: ${_currentSequence.length}/${_targetSequence.length}',
-          );
-        }
+        sakiDiagnosticLog(
+          '按键序列检测器: 按键 ${key.debugName} 匹配，当前序列长度: '
+          '${_currentSequence.length}/${_targetSequence.length}',
+        );
 
         // 检查序列是否完成
         if (_currentSequence.length == _targetSequence.length) {
-          if (kEngineDebugMode) {
-            print('按键序列检测器: 序列完成！');
-          }
+          sakiDiagnosticLog('按键序列检测器: 序列完成！');
           _onSequenceComplete();
           _resetSequence();
           return false;
@@ -110,9 +101,7 @@ class KeySequenceDetector {
       } else {
         // 按键不匹配，重置序列
         if (_currentSequence.isNotEmpty) {
-          if (kEngineDebugMode) {
-            print('按键序列检测器: 按键 ${key.debugName} 不匹配，重置序列');
-          }
+          sakiDiagnosticLog('按键序列检测器: 按键 ${key.debugName} 不匹配，重置序列');
           _resetSequence();
         }
       }
@@ -124,9 +113,7 @@ class KeySequenceDetector {
   void _resetTimeout() {
     _cancelTimeoutTimer();
     _timeoutTimer = Timer(_sequenceTimeout, () {
-      if (kEngineDebugMode) {
-        print('按键序列检测器: 序列超时，重置');
-      }
+      sakiDiagnosticLog('按键序列检测器: 序列超时，重置');
       _resetSequence();
     });
   }

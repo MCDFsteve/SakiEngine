@@ -212,6 +212,7 @@ class CharacterAnimationController {
   Map<String, double> _baseProperties = {};
   Map<String, double> _currentProperties = {};
   Map<String, double> _originalBaseProperties = {}; // 保存真正的初始基础位置，永不改变
+  double _layoutXOffset = 0;
   bool _shouldStop = false; // 用于控制无限循环的停止
   bool _isInfiniteLoop = false;
 
@@ -251,11 +252,12 @@ class CharacterAnimationController {
 
     _currentProperties = Map.from(_baseProperties);
     _originalBaseProperties = Map.from(baseProperties); // 保存真正的初始位置（不包含预设属性）
+    _layoutXOffset = 0;
     _shouldStop = false; // 重置停止标志
     _isInfiniteLoop = repeatCount == 0;
     // Ren'Py ATL 会先应用 transform 的初始属性，再开始关键帧。
     // 立即发布预设状态，避免上一段动画的最终状态残留一帧。
-    onAnimationUpdate?.call(Map.from(_currentProperties));
+    onAnimationUpdate?.call(currentProperties);
 
     return _playConfiguredAnimation(animDef.keyframes, vsync, repeatCount);
   }
@@ -369,7 +371,7 @@ class CharacterAnimationController {
             startValue + (endValue - startValue) * progress;
       }
 
-      onAnimationUpdate?.call(Map.from(_currentProperties));
+      onAnimationUpdate?.call(currentProperties);
     });
 
     final completer = Completer<void>();
@@ -464,7 +466,7 @@ class CharacterAnimationController {
       }
 
       // 调用实时更新回调
-      onAnimationUpdate?.call(Map.from(_currentProperties));
+      onAnimationUpdate?.call(currentProperties);
     });
 
     final completer = Completer<void>();
@@ -478,7 +480,20 @@ class CharacterAnimationController {
     await completer.future;
   }
 
-  Map<String, double> get currentProperties => Map.from(_currentProperties);
+  /// Move the active animation with its layout slot without restarting its
+  /// keyframes. Subsequent ticks and history snapshots share the new origin.
+  void rebaseXCenter(double xcenter) {
+    _layoutXOffset = xcenter - (_currentProperties['xcenter'] ?? 0.0);
+  }
+
+  Map<String, double> _withLayoutOffset(Map<String, double> properties) => {
+    ...properties,
+    if (properties.containsKey('xcenter'))
+      'xcenter': properties['xcenter']! + _layoutXOffset,
+  };
+
+  Map<String, double> get currentProperties =>
+      _withLayoutOffset(_currentProperties);
 
   /// 返回有限动画应写入历史快照的确定末帧。
   ///
@@ -489,10 +504,11 @@ class CharacterAnimationController {
     if (_isInfiniteLoop || name == null || _originalBaseProperties.isEmpty) {
       return null;
     }
-    return AnimationManager.resolveFinalProperties(
+    final properties = AnimationManager.resolveFinalProperties(
       name,
       _originalBaseProperties,
     );
+    return properties == null ? null : _withLayoutOffset(properties);
   }
 
   /// 停止无限循环动画

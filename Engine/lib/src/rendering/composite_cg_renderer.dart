@@ -20,6 +20,27 @@ ui.FilterQuality _resolveFilterQuality(bool preferSpeed) {
   );
 }
 
+@visibleForTesting
+ui.Rect calculateDissolveImageRect(
+  ui.Size canvasSize,
+  int imageWidth,
+  int imageHeight,
+  BoxFit fit,
+) {
+  assert(fit == BoxFit.cover || fit == BoxFit.fitHeight);
+  final scaleX = canvasSize.width / imageWidth;
+  final scaleY = canvasSize.height / imageHeight;
+  final scale = fit == BoxFit.fitHeight ? scaleY : math.max(scaleX, scaleY);
+  final targetWidth = imageWidth * scale;
+  final targetHeight = imageHeight * scale;
+  return ui.Rect.fromLTWH(
+    (canvasSize.width - targetWidth) / 2,
+    (canvasSize.height - targetHeight) / 2,
+    targetWidth,
+    targetHeight,
+  );
+}
+
 /// 基于预合成图像的CG角色渲染器
 ///
 /// 替代原有的多层实时渲染方式，直接使用预合成的单张图像
@@ -1291,6 +1312,7 @@ class DirectCgDisplay extends StatefulWidget {
   final bool isFadingOut;
   final bool enableFadeIn;
   final bool skipAnimation;
+  final BoxFit fit;
 
   const DirectCgDisplay({
     super.key,
@@ -1299,6 +1321,7 @@ class DirectCgDisplay extends StatefulWidget {
     this.isFadingOut = false,
     this.enableFadeIn = false,
     this.skipAnimation = false,
+    this.fit = BoxFit.cover,
   });
 
   @override
@@ -1428,6 +1451,7 @@ class _DirectCgDisplayState extends State<DirectCgDisplay>
                   fromImage: fromImage,
                   toImage: image,
                   opacity: overallAlpha,
+                  fit: widget.fit,
                 ),
               );
             },
@@ -1444,6 +1468,7 @@ class _DirectCgDisplayState extends State<DirectCgDisplay>
                 isFadingOut: widget.isFadingOut,
                 enableFadeIn: widget.enableFadeIn && !_hasShownOnce,
                 preferSpeed: widget.skipAnimation,
+                fit: widget.fit,
               ),
             );
           },
@@ -1461,6 +1486,7 @@ class DirectCgPainter extends CustomPainter {
   final bool isFadingOut;
   final bool enableFadeIn;
   final bool preferSpeed;
+  final BoxFit fit;
 
   DirectCgPainter({
     required this.currentImage,
@@ -1469,6 +1495,7 @@ class DirectCgPainter extends CustomPainter {
     required this.isFadingOut,
     required this.enableFadeIn,
     this.preferSpeed = false,
+    this.fit = BoxFit.cover,
   });
 
   @override
@@ -1500,21 +1527,11 @@ class DirectCgPainter extends CustomPainter {
   ) {
     if (opacity <= 0) return;
 
-    final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-    final scaleX = size.width / imageSize.width;
-    final scaleY = size.height / imageSize.height;
-    final scale = math.max(scaleX, scaleY);
-
-    final targetWidth = imageSize.width * scale;
-    final targetHeight = imageSize.height * scale;
-    final offsetX = (size.width - targetWidth) / 2;
-    final offsetY = (size.height - targetHeight) / 2;
-
-    final targetRect = ui.Rect.fromLTWH(
-      offsetX,
-      offsetY,
-      targetWidth,
-      targetHeight,
+    final targetRect = calculateDissolveImageRect(
+      size,
+      image.width,
+      image.height,
+      fit,
     );
 
     final paint = ui.Paint()
@@ -1537,7 +1554,8 @@ class DirectCgPainter extends CustomPainter {
         progress != oldDelegate.progress ||
         isFadingOut != oldDelegate.isFadingOut ||
         enableFadeIn != oldDelegate.enableFadeIn ||
-        preferSpeed != oldDelegate.preferSpeed;
+        preferSpeed != oldDelegate.preferSpeed ||
+        fit != oldDelegate.fit;
   }
 }
 
@@ -1967,6 +1985,7 @@ class _DissolveShaderPainter extends CustomPainter {
   final ui.Image fromImage;
   final ui.Image toImage;
   final double opacity;
+  final BoxFit fit;
 
   _DissolveShaderPainter({
     required this.program,
@@ -1974,26 +1993,46 @@ class _DissolveShaderPainter extends CustomPainter {
     required this.fromImage,
     required this.toImage,
     required this.opacity,
+    this.fit = BoxFit.cover,
   });
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     if (size.isEmpty) return;
 
-    final targetRect = _calculateCoverRect(size, toImage.width, toImage.height);
+    // Each image gets its own aspect-preserving rectangle. The shader still
+    // performs the exact same per-pixel mix used by ordinary expression diffs,
+    // but resource sets with different canvas ratios no longer stretch the
+    // outgoing image into the incoming image's bounds.
+    final fromRect = calculateDissolveImageRect(
+      size,
+      fromImage.width,
+      fromImage.height,
+      fit,
+    );
+    final toRect = calculateDissolveImageRect(
+      size,
+      toImage.width,
+      toImage.height,
+      fit,
+    );
 
     final shader = program.fragmentShader();
     shader
       ..setFloat(0, progress.clamp(0.0, 1.0))
-      ..setFloat(1, targetRect.width)
-      ..setFloat(2, targetRect.height)
+      ..setFloat(1, fromRect.width)
+      ..setFloat(2, fromRect.height)
       ..setFloat(3, fromImage.width.toDouble())
       ..setFloat(4, fromImage.height.toDouble())
-      ..setFloat(5, toImage.width.toDouble())
-      ..setFloat(6, toImage.height.toDouble())
-      ..setFloat(7, targetRect.left)
-      ..setFloat(8, targetRect.top)
-      ..setFloat(9, opacity.clamp(0.0, 1.0));
+      ..setFloat(5, toRect.width)
+      ..setFloat(6, toRect.height)
+      ..setFloat(7, toImage.width.toDouble())
+      ..setFloat(8, toImage.height.toDouble())
+      ..setFloat(9, fromRect.left)
+      ..setFloat(10, fromRect.top)
+      ..setFloat(11, toRect.left)
+      ..setFloat(12, toRect.top)
+      ..setFloat(13, opacity.clamp(0.0, 1.0));
 
     // 让 shader 采样跟随引擎的最近邻配置（像素风立绘）。
     // dissolve.frag 使用单点 texture() 采样，插值方式由 sampler 决定。
@@ -2006,7 +2045,10 @@ class _DissolveShaderPainter extends CustomPainter {
 
     final paint = ui.Paint()..shader = shader;
 
-    canvas.drawRect(targetRect, paint);
+    // Paint the union rather than clipping to the incoming image's widget
+    // bounds. The shader makes pixels outside each image rect transparent, so
+    // a wider outgoing sprite remains fully visible during the dissolve.
+    canvas.drawRect(fromRect.expandToInclude(toRect), paint);
   }
 
   @override
@@ -2015,7 +2057,8 @@ class _DissolveShaderPainter extends CustomPainter {
         fromImage != oldDelegate.fromImage ||
         toImage != oldDelegate.toImage ||
         program != oldDelegate.program ||
-        opacity != oldDelegate.opacity;
+        opacity != oldDelegate.opacity ||
+        fit != oldDelegate.fit;
   }
 }
 

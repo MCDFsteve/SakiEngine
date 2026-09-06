@@ -1,0 +1,13 @@
+{
+  "targetPlatform": "linux-x64",
+  "runnerExecutable": "SakiEngine",
+  "nativePlugins": [
+    "flutter_avif_linux",
+    "flutter_steamworks",
+    "hotkey_manager_linux",
+    "media_kit_libs_linux",
+    "saki_native",
+    "screen_retriever_linux",
+    "window_manager"
+  ]
+}

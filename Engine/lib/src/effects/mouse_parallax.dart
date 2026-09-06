@@ -1,5 +1,38 @@
+import 'dart:math' as math;
+
 import 'package:sakiengine/src/utils/foundation_compat.dart';
 import 'package:flutter/material.dart';
+
+/// 计算覆盖最大视差位移所需的最小等比缩放。
+///
+/// [padding] 会在每条边额外保留少量安全区域，避免像素取整或采样在极限
+/// 位移处产生细缝。
+@visibleForTesting
+double resolveParallaxBleedScale({
+  required Size viewportSize,
+  required Offset maxOffset,
+  required double depth,
+  double padding = 1.0,
+}) {
+  if (!viewportSize.width.isFinite ||
+      !viewportSize.height.isFinite ||
+      viewportSize.width <= 0 ||
+      viewportSize.height <= 0) {
+    return 1.0;
+  }
+
+  final safePadding = math.max(0.0, padding);
+  final effectiveDepth = depth.abs();
+  final horizontalScale =
+      1.0 +
+      (2.0 * (maxOffset.dx.abs() * effectiveDepth + safePadding)) /
+          viewportSize.width;
+  final verticalScale =
+      1.0 +
+      (2.0 * (maxOffset.dy.abs() * effectiveDepth + safePadding)) /
+          viewportSize.height;
+  return math.max(horizontalScale, verticalScale);
+}
 
 /// 在鼠标移动时为子组件提供视差偏移能力的封装组件。
 class MouseParallax extends StatefulWidget {
@@ -177,7 +210,9 @@ class ParallaxAware extends StatelessWidget {
     required this.child,
     this.customMaxOffset,
     this.invert = true,
-  });
+    this.reserveBleed = false,
+    this.bleedPadding = 1.0,
+  }) : assert(bleedPadding >= 0);
 
   /// 深度系数，越大移动越明显。
   final double depth;
@@ -190,6 +225,12 @@ class ParallaxAware extends StatelessWidget {
 
   /// 是否反向移动（默认背景->鼠标反向）。
   final bool invert;
+
+  /// 是否自动等比放大内容，为最大视差位移预留出血区域。
+  final bool reserveBleed;
+
+  /// 出血区域在最大位移之外额外保留的安全像素。
+  final double bleedPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -204,19 +245,43 @@ class ParallaxAware extends StatelessWidget {
 
     final maxOffset = customMaxOffset ?? scope.maxOffset;
 
-    return ValueListenableBuilder<Offset>(
-      valueListenable: scope.offsetListenable,
-      builder: (context, normalized, widgetChild) {
-        final effectiveOffset = scope.enabled ? normalized : Offset.zero;
-        final direction = invert ? -1.0 : 1.0;
-        final dx = effectiveOffset.dx * maxOffset.dx * depth * direction;
-        final dy = effectiveOffset.dy * maxOffset.dy * depth * direction;
-        return Transform.translate(
-          offset: Offset(dx, dy),
-          child: widgetChild,
+    Widget buildTranslatedChild(Widget transformedChild) {
+      return ValueListenableBuilder<Offset>(
+        valueListenable: scope.offsetListenable,
+        builder: (context, normalized, widgetChild) {
+          final effectiveOffset = scope.enabled ? normalized : Offset.zero;
+          final direction = invert ? -1.0 : 1.0;
+          final dx = effectiveOffset.dx * maxOffset.dx * depth * direction;
+          final dy = effectiveOffset.dy * maxOffset.dy * depth * direction;
+          return Transform.translate(
+            offset: Offset(dx, dy),
+            child: widgetChild,
+          );
+        },
+        child: transformedChild,
+      );
+    }
+
+    if (!reserveBleed) {
+      return buildTranslatedChild(child);
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bleedScale = resolveParallaxBleedScale(
+          viewportSize: Size(constraints.maxWidth, constraints.maxHeight),
+          maxOffset: maxOffset,
+          depth: depth,
+          padding: bleedPadding,
+        );
+        return buildTranslatedChild(
+          Transform.scale(
+            scale: bleedScale,
+            alignment: Alignment.center,
+            child: child,
+          ),
         );
       },
-      child: child,
     );
   }
 }
