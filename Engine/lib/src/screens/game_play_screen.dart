@@ -551,7 +551,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
   bool get _isBlockingCinematicInput {
     final gameState = _gameManager.currentState;
-    return gameState.movieFile != null ||
+    return (_dialogueProgressionManagerReference?.currentTypewriter
+                ?.blocksGameInput ?? false) ||
+        gameState.movieFile != null ||
         (gameState.scriptCanvasId != null &&
             gameState.scriptCanvasDurationSeconds > 0);
   }
@@ -1069,11 +1071,7 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                         _isAnyCommandMenuOpen;
 
                                     final isBlockingCinematic =
-                                        gameState.movieFile != null ||
-                                        (gameState.scriptCanvasId != null &&
-                                            gameState
-                                                    .scriptCanvasDurationSeconds >
-                                                0);
+                                        _isBlockingCinematicInput;
 
                                     // 只有在没有弹窗及阻断式演出时才推进剧情。
                                     if (!hasOverlayOpen &&

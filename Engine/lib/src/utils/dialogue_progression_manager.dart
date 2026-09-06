@@ -33,6 +33,10 @@ class DialogueProgressionManager {
   /// 
   /// 所有推进对话的操作都应该调用这个方法，而不是直接调用 gameManager.next()
   void progressDialogue({bool isAutomated = false}) {
+    if (_currentTypewriter?.canProgressDialogue(isAutomated: isAutomated) ==
+        false) {
+      return;
+    }
     if (!isAutomated) {
       onManualProgress?.call();
     }

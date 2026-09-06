@@ -50,6 +50,11 @@ class TypewriterAnimationManager extends ChangeNotifier {
   bool get isCompleted => _state == TypewriterState.completed || _state == TypewriterState.skipped;
   bool get isTyping => _state == TypewriterState.typing;
   double get progress => _cleanedText.isEmpty ? 0.0 : _currentCharIndex / _cleanedText.length;
+
+  /// Project typewriters may reserve a line for authored playback. Defaults
+  /// preserve ordinary click-to-complete, auto-play and fast-forward behavior.
+  bool get blocksGameInput => false;
+  bool canProgressDialogue({required bool isAutomated}) => true;
   
   /// 设置快进模式
   void setFastForwardMode(bool enabled) {
@@ -277,8 +282,13 @@ class TypewriterAnimationManager extends ChangeNotifier {
 
   Future<void> _loadSettings() async {
     final settings = SettingsManager();
-    _charsPerSecond = await settings.getTypewriterCharsPerSecond();
-    _skipPunctuation = await settings.getSkipPunctuationDelay();
+    final charsPerSecond = await settings.getTypewriterCharsPerSecond();
+    final skipPunctuation = await settings.getSkipPunctuationDelay();
+    if (!_isInitialized) return;
+    updateSettings(
+      charsPerSecond: charsPerSecond,
+      skipPunctuation: skipPunctuation,
+    );
   }
 
   void updateSettings({
