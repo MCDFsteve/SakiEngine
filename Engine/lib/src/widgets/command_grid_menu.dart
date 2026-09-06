@@ -13,6 +13,9 @@ class CommandGridMenu extends StatefulWidget {
   final List<CommandWheelOption> options;
   final String? currentOptionId;
   final Offset center;
+  final Size maxSize;
+  final Alignment? alignment;
+  final BoxFit imageFit;
   final ValueChanged<String> onHighlightedOptionChanged;
   final ValueChanged<String>? onOptionDoubleTap;
   final CommandGridPreviewBuilder? previewBuilder;
@@ -23,6 +26,9 @@ class CommandGridMenu extends StatefulWidget {
     required this.title,
     required this.options,
     required this.center,
+    this.maxSize = const Size(880, 620),
+    this.alignment,
+    this.imageFit = BoxFit.cover,
     required this.onHighlightedOptionChanged,
     this.onOptionDoubleTap,
     this.previewBuilder,
@@ -81,29 +87,38 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
       return const SizedBox.shrink();
     }
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          widget.onDismiss?.call();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Positioned.fill(
+    return Positioned.fill(
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.escape) {
+            widget.onDismiss?.call();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
         child: LayoutBuilder(
           builder: (context, constraints) {
             final size = constraints.biggest;
-            final menuWidth = size.width.clamp(560.0, 880.0);
-            final menuHeight = size.height.clamp(360.0, 620.0);
-            final left = (widget.center.dx - menuWidth / 2).clamp(
-              12.0,
-              size.width - menuWidth - 12.0,
+            final marginX = size.width < 24 ? size.width / 2 : 12.0;
+            final marginY = size.height < 24 ? size.height / 2 : 12.0;
+            final menuWidth = (size.width - marginX * 2).clamp(
+              0.0,
+              widget.maxSize.width,
             );
-            final top = (widget.center.dy - menuHeight / 2).clamp(
-              12.0,
-              size.height - menuHeight - 12.0,
+            final menuHeight = (size.height - marginY * 2).clamp(
+              0.0,
+              widget.maxSize.height,
+            );
+            final center = widget.alignment?.alongSize(size) ?? widget.center;
+            final left = (center.dx - menuWidth / 2).clamp(
+              marginX,
+              size.width - menuWidth - marginX,
+            );
+            final top = (center.dy - menuHeight / 2).clamp(
+              marginY,
+              size.height - menuHeight - marginY,
             );
 
             return Stack(
@@ -178,6 +193,7 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
                                 return _GridCell(
                                   option: option,
                                   selected: selected,
+                                  imageFit: widget.imageFit,
                                   preview: widget.previewBuilder?.call(
                                     context,
                                     option.id,
@@ -225,6 +241,7 @@ class _CommandGridMenuState extends State<CommandGridMenu> {
 class _GridCell extends StatelessWidget {
   final CommandWheelOption option;
   final bool selected;
+  final BoxFit imageFit;
   final Widget? preview;
   final VoidCallback onHover;
   final VoidCallback? onDoubleTap;
@@ -232,6 +249,7 @@ class _GridCell extends StatelessWidget {
   const _GridCell({
     required this.option,
     required this.selected,
+    required this.imageFit,
     this.preview,
     required this.onHover,
     this.onDoubleTap,
@@ -276,7 +294,7 @@ class _GridCell extends StatelessWidget {
                                 option.imagePath!.isNotEmpty
                             ? SmartImage.asset(
                                 option.imagePath!,
-                                fit: BoxFit.cover,
+                                fit: imageFit,
                                 width: double.infinity,
                                 height: double.infinity,
                                 errorWidget: const _GridFallbackIcon(),

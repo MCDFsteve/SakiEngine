@@ -6,6 +6,7 @@ import 'package:sakiengine/src/screens/save_load_screen.dart';
 import 'package:sakiengine/src/config/saki_engine_config.dart';
 import 'package:sakiengine/src/config/project_info_manager.dart';
 import 'package:sakiengine/src/core/script_canvas.dart';
+import 'package:sakiengine/src/core/debug_command_menu.dart';
 import 'package:sakiengine/src/game/game_manager.dart';
 import 'package:sakiengine/src/sks_parser/sks_ast.dart';
 import 'package:sakiengine/src/utils/binary_serializer.dart';
@@ -245,6 +246,9 @@ abstract class GameModule {
   /// Named canvas effects available to `canvas <id>` and Shift+V tooling.
   List<ScriptCanvasRegistration> get scriptCanvases => const [];
 
+  /// Project-specific Shift shortcuts shown in the standard debug command grid.
+  List<DebugCommandMenu> get debugCommandMenus => const [];
+
   /// 创建自定义状态指示器层（如快进/自动播放/暂停）。
   /// 返回 `null` 时使用引擎默认处理。
   Widget? createStatusIndicatorLayer({
@@ -479,6 +483,8 @@ bool _parseScriptApiBool(String? raw, {required bool defaultValue}) {
 
 /// 默认游戏模块实现 - 使用src/下的默认组件
 class DefaultGameModule implements GameModule {
+  @override
+  List<DebugCommandMenu> get debugCommandMenus => const [];
   @override
   String get initialScript => 'start';
 

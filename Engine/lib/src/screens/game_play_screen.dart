@@ -22,6 +22,7 @@ import 'package:sakiengine/src/widgets/smart_image.dart';
 import 'package:sakiengine/src/screens/review_screen.dart';
 import 'package:sakiengine/src/screens/main_menu_screen.dart';
 import 'package:sakiengine/src/core/game_module.dart';
+import 'package:sakiengine/src/core/debug_command_menu.dart';
 import 'package:sakiengine/src/widgets/common/exit_confirmation_dialog.dart';
 import 'package:sakiengine/src/utils/game_flowchart_mixin.dart';
 import 'package:sakiengine/src/rendering/cg_character_renderer.dart';
@@ -95,7 +96,14 @@ Key characterCompositeRenderKey(String characterKey) =>
 Key characterPositionedRenderKey(String characterKey) =>
     ValueKey('positioned-$characterKey');
 
-enum _CommandDebugMenuMode { expression, character, background, canvas, music }
+enum _CommandDebugMenuMode {
+  expression,
+  character,
+  background,
+  canvas,
+  music,
+  project,
+}
 
 class GamePlayScreen extends StatefulWidget {
   final SaveSlot? saveSlotToLoad;
@@ -159,6 +167,11 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   bool _showFloatingScriptEditor = false; // 悬浮脚本编辑器显示状态（Debug）
   bool _isShiftKeyPressed = false; // Shift按键按住状态（Debug）
   _CommandDebugMenuMode? _activeCommandMenuMode;
+  DebugCommandMenu? _projectDebugMenu;
+  DebugCommandMenuSession? _projectDebugSession;
+  int _projectDebugRequest = 0;
+  bool _projectDebugLoading = false;
+  bool _projectDebugApplying = false;
   HotKey? _reloadHotKey;
   HotKey? _developerPanelHotKey; // Shift+D快捷键
   HotKey? _floatingScriptEditorHotKey; // Shift+P 快捷键
@@ -225,6 +238,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
   Uint8List? _frozenSaveThumbnailFrame;
 
   bool get _isAnyCommandMenuOpen =>
+      _projectDebugSession != null ||
+      _projectDebugLoading ||
+      _projectDebugApplying ||
       _showExpressionWheel ||
       _showCharacterWheel ||
       _showBackgroundGridMenu ||
@@ -781,6 +797,9 @@ class _GamePlayScreenState extends State<GamePlayScreen>
 
   @override
   void dispose() {
+    _projectDebugRequest++;
+    _projectDebugSession?.onClose();
+    _projectDebugSession = null;
     _settingsManager.removeListener(_settingsChangedListener);
 
     // 取消注册系统热键（只在桌面平台）
@@ -1375,6 +1394,34 @@ class _GamePlayScreenState extends State<GamePlayScreen>
                                           },
                                           onDismiss:
                                               _dismissCommandMenuForEscape,
+                                        ),
+                                      if (kEngineDebugMode &&
+                                          _projectDebugSession != null)
+                                        CommandGridMenu(
+                                          title: _projectDebugSession!.title,
+                                          applyHint: _projectDebugApplying
+                                              ? 'Applying...'
+                                              : _projectDebugSession!.applyHint,
+                                          options: _projectDebugSession!.options,
+                                          maxSize: _projectDebugSession!.maxSize,
+                                          alignment:
+                                              _projectDebugSession!.alignment,
+                                          imageFit: _projectDebugSession!.imageFit,
+                                          currentOptionId:
+                                              _projectDebugSession!.currentOptionId,
+                                          center:
+                                              _expressionWheelCenter ??
+                                              MediaQuery.sizeOf(context).center(
+                                                Offset.zero,
+                                              ),
+                                          onHighlightedOptionChanged: (id) {
+                                            if (!_projectDebugApplying) {
+                                              _projectDebugSession?.onPreview(id);
+                                            }
+                                          },
+                                          onOptionDoubleTap:
+                                              _applyProjectDebugSelection,
+                                          onDismiss: _dismissCommandMenuForEscape,
                                         ),
                                       if (kEngineDebugMode &&
                                           _showFloatingScriptEditor)

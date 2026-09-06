@@ -9,6 +9,7 @@ export 'src/config/runtime_project_config.dart'
         clearRuntimeProjectConfig;
 export 'src/config/saki_engine_config.dart';
 export 'src/core/game_module.dart';
+export 'src/core/debug_command_menu.dart';
 export 'src/core/script_canvas.dart';
 export 'src/core/module_registry.dart' show registerProjectModule;
 export 'src/utils/asset_path_utils.dart' show isFileSystemAssetPath;

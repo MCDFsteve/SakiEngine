@@ -365,6 +365,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         return _gameManager.currentState;
       },
       shouldIgnoreHotkey: () =>
+          _isAnyCommandMenuOpen ||
           _showFloatingScriptEditor ||
           _showDeveloperPanel ||
           _showDebugPanel ||
@@ -406,6 +407,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         event.logicalKey != LogicalKeyboardKey.escape) {
       return false;
     }
+    if (_projectDebugApplying) return true;
 
     final hadEditorOpen =
         _showFloatingScriptEditor ||
@@ -436,6 +438,18 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
   bool _handleExpressionWheelKeyEvent(KeyEvent event) {
     final logicalKey = event.logicalKey;
+    DebugCommandMenu? requestedProjectMenu;
+    if (!HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed &&
+        !HardwareKeyboard.instance.isAltPressed) {
+      for (final menu
+          in widget.gameModule?.debugCommandMenus ?? <DebugCommandMenu>[]) {
+        if (menu.matchesShortcut(logicalKey)) {
+          requestedProjectMenu = menu;
+          break;
+        }
+      }
+    }
     final isShiftKey =
         logicalKey == LogicalKeyboardKey.shiftLeft ||
         logicalKey == LogicalKeyboardKey.shiftRight ||
@@ -491,7 +505,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           unawaited(_applyCharacterWheelSelectionAndClose());
         } else if (_showBackgroundGridMenu ||
             _showCanvasGridMenu ||
-            _showMusicGridMenu) {
+            _showMusicGridMenu ||
+            _projectDebugSession != null ||
+            _projectDebugLoading) {
           // 网格菜单采用“常驻+双击应用”，Shift松开不做自动应用。
           if (kSakiDiagnosticLogs) {
             print(
@@ -505,13 +521,16 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
       }
     }
 
+    if (_projectDebugApplying) return true;
+
     if (event is KeyRepeatEvent &&
         _isShiftKeyPressed &&
         (isShortcutA ||
             isShortcutC ||
             isShortcutB ||
             isShortcutV ||
-            isShortcut1)) {
+            isShortcut1 ||
+            requestedProjectMenu != null)) {
       return true;
     }
 
@@ -527,12 +546,17 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         requestedMode = _CommandDebugMenuMode.canvas;
       } else if (isShortcut1) {
         requestedMode = _CommandDebugMenuMode.music;
+      } else if (requestedProjectMenu != null) {
+        requestedMode = _CommandDebugMenuMode.project;
       }
 
       if (requestedMode != null) {
         if (_isGridMenuMode(requestedMode)) {
           if (_activeCommandMenuMode == requestedMode &&
-              _isGridMenuVisibleForMode(requestedMode)) {
+              _isGridMenuVisibleForMode(requestedMode) &&
+              (requestedMode != _CommandDebugMenuMode.project ||
+                  _projectDebugMenu?.shortcutKey ==
+                      requestedProjectMenu?.shortcutKey)) {
             if (requestedMode == _CommandDebugMenuMode.music) {
               unawaited(_restoreMusicPreviewIfNeeded());
             }
@@ -544,7 +568,14 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
             }
             _clearCommandMenuState();
             _activeCommandMenuMode = requestedMode;
-            _scheduleCommandMenuOpen(requestedMode);
+            _projectDebugMenu = requestedProjectMenu;
+            if (requestedProjectMenu != null) {
+              // Persistent project grids open on the chord itself. Releasing
+              // Shift while their assets load must not cancel the request.
+              unawaited(_openProjectDebugMenu());
+            } else {
+              _scheduleCommandMenuOpen(requestedMode);
+            }
           }
           return true;
         }
@@ -559,6 +590,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
 
         bool isTargetVisible;
         switch (requestedMode) {
+          case _CommandDebugMenuMode.project:
+            isTargetVisible = _projectDebugSession != null;
+            break;
           case _CommandDebugMenuMode.expression:
             isTargetVisible = _showExpressionWheel;
             break;
@@ -580,6 +614,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
           _activeCommandMenuMode = requestedMode;
           if (kSakiDiagnosticLogs) {
             final modeName = switch (requestedMode) {
+              _CommandDebugMenuMode.project => 'project',
               _CommandDebugMenuMode.expression => 'expression',
               _CommandDebugMenuMode.character => 'character',
               _CommandDebugMenuMode.background => 'background',
@@ -604,11 +639,14 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   bool _isGridMenuMode(_CommandDebugMenuMode mode) {
     return mode == _CommandDebugMenuMode.background ||
         mode == _CommandDebugMenuMode.canvas ||
+        mode == _CommandDebugMenuMode.project ||
         mode == _CommandDebugMenuMode.music;
   }
 
   bool _isGridMenuVisibleForMode(_CommandDebugMenuMode mode) {
     switch (mode) {
+      case _CommandDebugMenuMode.project:
+        return _projectDebugSession != null;
       case _CommandDebugMenuMode.background:
         return _showBackgroundGridMenu;
       case _CommandDebugMenuMode.canvas:
@@ -629,6 +667,9 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         print('ExpressionWheel: open timer fired mode=$mode');
       }
       switch (mode) {
+        case _CommandDebugMenuMode.project:
+          unawaited(_openProjectDebugMenu());
+          break;
         case _CommandDebugMenuMode.expression:
           unawaited(_openExpressionWheelIfPossible());
           break;
@@ -657,9 +698,69 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
         !_showFlowchart &&
         !_showDeveloperPanel &&
         !_showDebugPanel &&
+        !_showFloatingScriptEditor &&
         !_showExpressionSelector &&
         !_isShowingMenu &&
         !_isBlockingCinematicInput;
+  }
+
+  Future<void> _openProjectDebugMenu() async {
+    final menu = _projectDebugMenu;
+    if (!mounted ||
+        !_isShiftKeyPressed ||
+        menu == null ||
+        !_canShowExpressionWheel() ||
+        _gameManager.currentState.isPaused ||
+        GlobalRightClickUIManager().isUIHidden) {
+      return;
+    }
+    final request = ++_projectDebugRequest;
+    _autoPlayManager?.stopAutoPlay();
+    _setStateIfMounted(() => _projectDebugLoading = true);
+    try {
+      final session = await menu.open(_gameManager);
+      if (!mounted ||
+          request != _projectDebugRequest ||
+          _activeCommandMenuMode != _CommandDebugMenuMode.project) {
+        session?.onClose();
+        return;
+      }
+      _setStateIfMounted(() {
+        _projectDebugLoading = false;
+        _projectDebugSession = session;
+        _expressionWheelCenter = _lastPointerPosition;
+      });
+    } catch (error) {
+      if (mounted && request == _projectDebugRequest) {
+        _clearCommandMenuState();
+        _showNotificationMessage(
+          error is FormatException ? error.message : '$error',
+        );
+      }
+    }
+  }
+
+  Future<void> _applyProjectDebugSelection(String id) async {
+    final session = _projectDebugSession;
+    if (session == null || session.onApply == null || _projectDebugApplying) {
+      return;
+    }
+    _setStateIfMounted(() => _projectDebugApplying = true);
+    try {
+      await session.onApply!(id);
+      if (mounted) _showNotificationMessage('已应用: $id');
+    } catch (error) {
+      if (mounted) {
+        _showNotificationMessage(
+          error is FormatException ? error.message : '$error',
+        );
+      }
+    } finally {
+      if (mounted) {
+        _projectDebugApplying = false;
+        if (identical(_projectDebugSession, session)) _clearCommandMenuState();
+      }
+    }
   }
 
   Future<void> _openCharacterWheelIfPossible() async {
@@ -1751,6 +1852,7 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   void _dismissCommandMenuForEscape() {
+    if (_projectDebugApplying) return;
     if (_showMusicGridMenu) {
       unawaited(_restoreMusicPreviewIfNeeded());
     }
@@ -1758,6 +1860,11 @@ extension _GamePlayScreenInteractions on _GamePlayScreenState {
   }
 
   void _resetCommandMenuFields() {
+    _projectDebugRequest++;
+    _projectDebugSession?.onClose();
+    _projectDebugSession = null;
+    _projectDebugMenu = null;
+    _projectDebugLoading = false;
     _showExpressionWheel = false;
     _showCharacterWheel = false;
     _showBackgroundGridMenu = false;
